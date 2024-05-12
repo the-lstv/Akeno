@@ -63,7 +63,7 @@ let
     lsdb = require("./addons/lsdb_mysql.js"),
     db,
 
-    PATH = "/www/content/extragon/api/" // Sadly, Node seems to always work with the wrong relative path instead of the one the file is actually in. May be fixed later but please use this now.
+    PATH = "/www/content/akeno/" // Sadly, Node seems to always work with the wrong relative path instead of the one the file is actually in. May be fixed later but please use this now.
 ;
 
 let

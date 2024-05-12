@@ -1,6 +1,6 @@
 let ThisAPP
 	fs = require("fs"),
-	cachePath = "/www/content/extragon/api/addons/data/currencyCache.json",
+	cachePath = "/www/content/akeno/addons/data/currencyCache.json",
 	memoryCache = null
 ;
 
