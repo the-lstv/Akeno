@@ -1,0 +1,10 @@
+
+
+version ("1.1b0");
+
+web {
+    locations:
+        "/www/content/web/*",
+        "/www/proj/glitter/demo/",
+        "/www/content/shared/wss/web/*"
+}

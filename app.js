@@ -392,7 +392,7 @@ var AddonCache = {}, Backend, config;
 
         refreshConfig(){
             Backend.log("Refreshing configuration")
-            config = Backend.config = parse(fs.readFileSync(PATH + "../config", "utf8"), true);
+            config = Backend.config = parse(fs.readFileSync(PATH + "./config", "utf8"), true);
             Backend.configTools = configTools(config)
         },
 
