@@ -380,7 +380,7 @@ API._latest = Math.max(...apiVersions.map(e=>+e));
 var AddonCache = {}, Backend, config;
 
 (private => {
-    let testKey = "VTn41aWQl78Upx3O1KCv2ZhZOPOhP5f8l8QJALzqX01W8mfSdjcGGRq4xYhnx5O1+Z0uFTSApu4EHts8s23ngecJmZvLiwzrXP/Apjh+4bk=";
+    let testKey = process.env.AKENO_KEY;
 
     Backend = {
         isDev,
