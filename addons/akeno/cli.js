@@ -18,7 +18,7 @@ let exec = require("child_process").execSync,
 
 
 let version = "0", //TODO: Get this from the config
-    PATH = "/www/content/extragon/api/",
+    PATH = "/www/content/akeno/",
     COMMAND_PATH = "/www/cmd/bin/",
     info = "",
     infoLines = []
