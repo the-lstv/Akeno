@@ -22,7 +22,7 @@ let isDev = false, // Do not change - its now inherited from Backend.isDev when 
     fileMetadataCache = {}
 ;
 
-var Path = "/www/content/extragon/api/cdn",
+var Path = "/www/content/akeno/cdn",
     CompiledPath = Path + "/ls/compiled/",
     SourcePath = Path + "/ls/source/"
 ;
