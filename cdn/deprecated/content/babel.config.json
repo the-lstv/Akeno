@@ -1,0 +1,18 @@
+{
+    "sourceType": "script",
+    "presets": [
+      [
+        "@ssbabel/preset-env",
+        {
+          "targets": {
+            "chrome": "%69"
+          }
+        }
+      ]
+    ],
+    "plugins": [
+      "transform-remove-strict-mode",
+      "@babel/plugin-transform-optional-chaining",
+      "some shit"
+    ]
+}
