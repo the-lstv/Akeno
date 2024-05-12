@@ -1,0 +1,4 @@
+#!/bin/bash
+
+cd /www/content/extragon/cdn
+node ./compress
