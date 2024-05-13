@@ -14,9 +14,35 @@ web {
 }
 
 plugins {
-    guardian;
-    web;
-    cdn;
+    # Add or remove plugins
+
+    guardian: {
+        captcha: auth.lstv.space;
+    };
+
+    http: {
+        proxy: nginx;
+        port: 7007;
+    }
+
+    web: {
+        parser; # Parse special Akeno syntax
+        code-compression; # Auto compress HTML, CSS, and JS
+        cache-management; # Automatically set cahce and update based on file mtime
+
+        # Default config for all webservers
+        defaults: {
+            server {
+                allow-backend; # Allow the api option - allows to configure custom API endpoints
+            }
+        }
+    };
+
+    cdn: {
+        files;
+        ls;
+    };
+
     api;
     cli;
     intersocket;
