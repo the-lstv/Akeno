@@ -826,7 +826,7 @@ function get_content(app, url, file){
     if(waterfall.resources["ls-js"]){
         hasLS = true
 
-        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/${Backend.isDev? "js" : "js.min"}/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: fs.readFileSync("/www/content/extragon/cdn/ls/source/version.info", "utf8")}/${waterfall.resources["ls-js"].join(",")}`;
+        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/${Backend.isDev? "js" : "js.min"}/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8")}/${waterfall.resources["ls-js"].join(",")}`;
 
         if(waterfall.resources["defer-js"]){
             waterfall.deferResources.push("js:" + url)
@@ -840,7 +840,7 @@ function get_content(app, url, file){
     }
 
     if(waterfall.resources["ls-css"]){
-        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/css/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: fs.readFileSync("/www/content/extragon/cdn/ls/source/version.info", "utf8")}/${waterfall.resources["ls-css"].join(",")}`;
+        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/css/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8")}/${waterfall.resources["ls-css"].join(",")}`;
         
         if(waterfall.resources["defer-css"]){
             waterfall.deferResources.push("css:" + url)

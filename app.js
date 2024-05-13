@@ -360,7 +360,7 @@ async function build(){
     })
 
     server.listen({port}, ()=>{
-        console.log(`[system] [ ${Date.now()} ] > ExtraGon API has started and is listening on port ${port}! Total hits so far: ${total_hits}`)
+        console.log(`[system] [ ${Date.now()} ] > Akeno Webserver has started and is listening on port ${port}! Total hits so far: ${total_hits}`)
     });
 }
 
