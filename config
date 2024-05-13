@@ -1,10 +1,29 @@
 
 
-version ("1.1b0");
+version ("1.3.0:arch=3"); # Akeno version that the config was made for - DO NOT CHANGE (if you dont know what it could do :D)
+
 
 web {
     locations:
+        # website locations
         "/www/content/web/*",
+        "/www/content/akeno/web/*",
         "/www/proj/glitter/demo/",
         "/www/content/shared/wss/web/*"
+    ;
+}
+
+plugins {
+    guardian;
+    web;
+    cdn;
+    api;
+    cli;
+    intersocket;
+}
+
+environment {
+    git: {
+        managed;
+    }
 }
