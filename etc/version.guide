@@ -32,8 +32,22 @@ What's the purpose of a security bump?
  If the security patch differs, the app is forced to upate and block the user from entering.
  This digit is may not be needed in some other scenarios.
  If omitted, it is always assumed that the version represents the latest security patch.
- It is strongly recommened to bump the regular patch and security patch at the same time to make it more clear that a change has been made.
+ It is strongly recommened to bump the regular patch and security patch at the same time to make it more clear that a change has been made for places that omit the patch number.
+ (eg. 2.5.0.0 => 2.5.1.1, skipping 2.5.1.0)
 
 NOTE:
  In some cases during developmenmt, the version alone may NOT accurately represent the state of the code.
  In developmenmt, you shouldn't rely on versions (the same version may represent 2 different branches and so on), so it is recommended that you use the commit ID instead .
+
+
+In binary, the version may be represented like this (all unsigned):
+
+<8 bit>.<16 bit>.<16 bit>.<32 bit>
+
+Totalling to 72 bits.
+
+Meaning that this is the potentialy highest possible version number:
+- In hex: ff.ffff.ffff.ffffffff
+- In decimal: 255.65535.65535.4294967295
+- Binary (hex): ffffffffffffffffff
+- (You get the point)
