@@ -24,3 +24,16 @@ API changes - what version bump is approperiate
 - If critical security update has been made, bump the sercurity
 - If a larger non-breaking change was made, like a new feature, bump minor
 - If a large breaking change was made to the API structure, bump major
+
+What's the purpose of a security bump?
+ If you were wondering about the security patch digit, and why is it sometimes safe to remove:
+ This digit has special beahvior in some cases.
+ When apps compare versions, in cases that only the patch has been modified, they might take it at a lower priority.
+ If the security patch differs, the app is forced to upate and block the user from entering.
+ This digit is may not be needed in some other scenarios.
+ If omitted, it is always assumed that the version represents the latest security patch.
+ It is strongly recommened to bump the regular patch and security patch at the same time to make it more clear that a change has been made.
+
+NOTE:
+ In some cases during developmenmt, the version alone may NOT accurately represent the state of the code.
+ In developmenmt, you shouldn't rely on versions (the same version may represent 2 different branches and so on), so it is recommended that you use the commit ID instead .
