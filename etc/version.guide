@@ -1,0 +1,26 @@
+The versioning we use:
+- major.minor.sercurity.patch[channel]
+
+Shortened version:
+- major.minor.patch
+
+Example:
+- 3.5.0.20 = 3rd major update, 5th minor update, 20th patch
+- The above is the same as: 3.5.20
+
+Channels:
+b = Beta
+a = Alpha
+d = Developmnet
+Default channel is production.
+
+(eg. 3.5.0b = beta)
+
+Note that in some situations the security patch and channel parts may be omitted.
+
+
+API changes - what version bump is approperiate
+- If minimal, non-breaking changes were added, bump the patch
+- If critical security update has been made, bump the sercurity
+- If a larger non-breaking change was made, like a new feature, bump minor
+- If a large breaking change was made to the API structure, bump major
