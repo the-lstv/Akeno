@@ -224,7 +224,7 @@ async function resolve(command){
     let thing, domain, data;
 
     switch(command[0]) {
-        case "reload":            
+        case "reload":
             if(process.argv.includes("--host")){
                 return (()=>{
                     log(`${signature} Reloading the host server\n`);
@@ -254,6 +254,7 @@ async function resolve(command){
             exec("pm2 reload egapi")
             log(`${signature} API Server sucessfully reloaded.`);
         break;
+
         case "list": case "ls":
             thing = await(await fetch(api + "/list")).json();
             
@@ -263,6 +264,7 @@ async function resolve(command){
             
             return log(box(thing.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}`).join("\n---\n")))
         break;
+
         case "parse-config":
             let file = !process.argv.includes("-t"), input;
 
@@ -283,12 +285,14 @@ async function resolve(command){
 
             return log(data)
         break;
+
         case "get-config":
 
             if(process.argv.includes("--source")) return log(fs.readFileSync(PATH + "../config", "utf8"));
 
             return log(JSON.stringify(parse(fs.readFileSync(PATH + "../config", "utf8"), true), null, process.argv.includes("-p")? 4 : 0))
         break;
+
         case "temp-hostname":
             (async()=>{
                 thing = await(await fetch(api + "/list")).json();
@@ -308,6 +312,7 @@ async function resolve(command){
                 log(await(await fetch(`${api}/temporaryDomain?app=${app}`)).text())
             })()
         break;
+
         case "bundle":
             thing = await(await fetch(api + "/list")).json();
 
@@ -383,6 +388,7 @@ async function resolve(command){
             
             log(`${signature} \x1b[32mSUCCESS!\x1b[0m Bundle has been created.`)
         break;
+
         case "logs":
             if(command[1]) log(`${signature} Showing only lines including "${command[1]}"`);
 
@@ -409,6 +415,7 @@ async function resolve(command){
                 process.stderr.write(buffer)
             });
         break;
+
         case "renew-cert":
             if(!command[1] || command[1].length < 1 || !command[1].includes(".")){
                 return log(`${signature} \x1b[31mDomain "${command[1]}" seems to be invalid.\x1b[0m`)
@@ -509,7 +516,9 @@ async function resolve(command){
 
                             while(complete){
                                 log("Fetching DNS records")
+
                                 let currentRecords = await TXT("_acme-challenge." + domain)
+
                                 if(currentRecords.find((a)=> a[0] == records[0]) && currentRecords.find((a)=> a[0] == records[1])){
                                     complete = false;
                                     console.log("Found the records! Preparing..")

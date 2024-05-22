@@ -149,6 +149,13 @@ server = {
                 return
             }
 
+            let manifestPath = files_try(path + "/app.manifest", path + "/app.conf", path + "/v3.manifest", path + "/app.info", path + "/manifest", path + "/index.manifest", path + "/app.main", path + "/manifest.app");
+
+            if(!manifestPath){
+                server.log.debug("Loading of web application (at " + path + ") was skipped (couldn't find a config file)");
+                return
+            }
+
             server.log.verbose("Loading web application (at " + path + ")");
                 
             let files = fs.readdirSync(path), basename = nodePath.basename(path), manifest = {};
@@ -316,8 +323,6 @@ server = {
                 }
             }
 
-            let manifestPath = files_try(path + "/app.manifest", path + "/app.conf", path + "/v3.manifest", path + "/app.info", path + "/manifest", path + "/index.manifest", path + "/app.main", path + "/manifest.app");
-
             if(manifestPath) {
                 for(let block of parse(fs.readFileSync(manifestPath, "utf8"), true, app.path)){
                     if(!typeof block == "object") continue;
@@ -352,14 +357,15 @@ server = {
         }
 
         for(let location of locations){
-            if(location.endsWith("*")){
-                let path = (location.replace("*", "") + "/").replaceAll("//", "/");
-                locations.push(...fs.readdirSync(path).map(location => path + location))
+
+            if(!fs.existsSync(location.replace("/*", ""))) {
+                server.log.warn("Web application directory (" + location + ") does not exist");
                 continue
             }
 
-            if(!fs.existsSync(location)) {
-                server.log.warn("Web application directory (" + location + ") does not exist");
+            if(location.endsWith("*")){
+                let path = (location.replace("*", "") + "/").replaceAll("//", "/");
+                locations.push(...fs.readdirSync(path).map(location => path + location).filter(path => fs.statSync(path).isDirectory()))
                 continue
             }
 
