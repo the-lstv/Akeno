@@ -42,10 +42,12 @@ let permissions = {
         :10,
     'info.password.change'
         :11,
-    'info.password.validate'
-        :12,
-    'pockets.read'
-        :13
+    'info.password.validate' :12,
+    'pockets.read' :14,
+    'cloud.services.list' :15,
+    'cloud.services.link' :16,
+    'cloud.services.manage' :17,
+    'cloud.bucket.manage' :18,
 }
 
 function encodePermissions(list) {

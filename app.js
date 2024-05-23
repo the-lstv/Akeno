@@ -597,27 +597,31 @@ extra	tinytext []
         pockets: {
             transaction(pocket, source, target, value = 0, options = {}, callback = (error, data) => {}){
 
+
+                // WARNING: This is a low-level transaction API and should never be exposed to the internet directly.
+                // Transactions are taken as-is and only have standard security measures and validations to make sure the transaction is valid, but it does not check for things like if the transaction has been authorized by the user or the pocket.
+                // ALWAYS validate the request heavily depending on your use before passing it here.
+                // Failing to do so might have undesired consequences.
+
                 /*
                     pocket = Pocket ID. Not the wallet ID.
-                    source = Source wallet
-                    target = Target wallet
-                    value = Value
+                    source = Source wallet to transfer FROM
+                    target = Target wallet to transfer TO
+                    value = Value to transfer
                 */
 
                 // Step 1) verify the transaction author and that he has enough balance
-
-                return;
 
                 db.database("extragon").query(
                     'SELECT balance, holder FROM `pockets_wallets` WHERE `pocket` = ? AND `identifier` = ?',
                     [pocket, source],
 
                     function(err, result){
-                        if(err) callback(err);
+                        if(err) return callback(err);
 
-                        if(result[0].holder !== source){
-                            callback("The transaction author does not own the pocket.")
-                        }
+                        // if(result[0].holder !== source){
+                        //     callback("The transaction author does not own the pocket.")
+                        // }
 
                         db.database("extragon").table("pockets_transactions").insert({
                             ...options,
@@ -627,10 +631,14 @@ extra	tinytext []
                             merchant: options.merchant || null,
                             pending: true
                         }, (err, result) => {
-                            if(err) callback(err);
+                            if(err) return callback(err);
         
                             let transaction_id = result.insertId;
                             
+                            db.database("extragon").query(
+                                'SELECT balance, holder FROM `pockets_wallets` WHERE `pocket` = ? AND `identifier` = ?',
+                                [pocket, source],
+                            )
                         })
 
                     }

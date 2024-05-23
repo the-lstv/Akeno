@@ -17,7 +17,7 @@ let exec = require("child_process").execSync,
 ;
 
 
-let version = "0", //TODO: Get this from the config
+let version = "0", // TODO: Get this from the config
     PATH = "/www/content/akeno/",
     COMMAND_PATH = "/www/cmd/bin/",
     info = "",
@@ -68,10 +68,12 @@ function gradient(text) {
     }
 
     let gradientText = "", i = -1;
+
     for (let line of lines) {
         i++
         gradientText += gradientColors[i] + line + "\n";
     }
+
     gradientText += "\x1b[0m";
 
     return gradientText;
@@ -142,9 +144,10 @@ Base command list:
     \x1b[1mhelp | --help | -h          \x1b[90m│\x1b[0m  Display command help
     \x1b[1minfo | --info | -i          \x1b[90m│\x1b[0m  Display some current information about the server and its status
     \x1b[1mreload                      \x1b[90m│\x1b[0m  Reload the API server
-       \x1b[90m⤷\x1b[0m -h | --hot             \x1b[90m│\x1b[0m  Hot-reload of the web addon (for when you add/remove apps)
+       \x1b[90m⤷\x1b[0m --hot                  \x1b[90m│\x1b[0m  Hot-reload of the web addon (for when you add/remove apps)
        \x1b[90m⤷\x1b[0m -a | --app             \x1b[90m│\x1b[0m  Hot-reload a specific web application (basic configuration)
        \x1b[90m⤷\x1b[0m --host                 \x1b[90m│\x1b[0m  Reload the host server (eg. Nginx, DNS...)
+       \x1b[90m⤷\x1b[0m --logs                 \x1b[90m│\x1b[0m  Display live logs while loading the server
   \x1b[93m•\x1b[0m \x1b[1mlist | ls                   \x1b[90m│\x1b[0m  List web applications
     \x1b[1mlogs [filter]               \x1b[90m│\x1b[0m  View server logs
   \x1b[93m•\x1b[0m \x1b[1mfabricate <path>            \x1b[90m│\x1b[0m  Simulate a GET request to the server
@@ -192,7 +195,6 @@ web application management system with integrated API, CDN and a webserver!
     Server is ${isOnline? `\x1b[32monline\x1b[0m for \x1b[36m\x1b[1m${grep_value("uptime")}\x1b[0m`: "\x1b[31moffline\x1b[0m"}
     ${isOnline?`Running in \x1b[36m\x1b[1m${fs.existsSync("/www/__dev__")? "development": "production"}\x1b[0m environment and received \x1b[36m\x1b[1m${getHits()}\x1b[0m hits so far.
     It is currently using \x1b[36m\x1b[1m${grep_value("Used Heap Size")}\x1b[0m of its heap size (RAM).`:''}
-
 ---
 Some command examples:
     akeno\x1b[1m reload                   \x1b[90m│\x1b[0m  Reload the API server
@@ -221,13 +223,14 @@ Some command examples:
 let values = process.argv.slice(2).filter(arg => !arg.startsWith("-")), api = "http://0.0.0.0:7007/internal";
 
 async function resolve(command){
-    let thing, domain, data;
+    let thing, domain, data; // Theese mean NOTHING for most commands, its there just for commands that define the same variable name as you cannot do that inside a switch.
 
     switch(command[0]) {
         case "reload":
             if(process.argv.includes("--host")){
                 return (()=>{
                     log(`${signature} Reloading the host server\n`);
+
                     let thing = spawn(COMMAND_PATH + "reload");
     
                     thing.stderr.on("data", ()=>{
@@ -244,11 +247,17 @@ async function resolve(command){
                 })()
             }
 
-            if(process.argv.includes("-h") || process.argv.includes("--hot")){
+            if(process.argv.includes("--hot")){
                 log(`${signature} Hot-reloading web server...`);
+
                 await fetch(`${api}/reload`)
-                log(`${signature} Web server sucessfully reloaded!`);
+
+                log(`${signature} Web server config sucessfully reloaded!`);
                 return
+            }
+
+            if(process.argv.includes("--logs")){
+                await resolve(["logs"])
             }
 
             exec("pm2 reload egapi")
@@ -433,9 +442,6 @@ async function resolve(command){
             let
                 config = JSON.parse(fs.readFileSync(configPath, "utf8").replace(/\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g, (m, g) => g ? "" : m))
             ;
-
-
-            
 
             // log(config);
 

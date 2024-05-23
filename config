@@ -9,7 +9,8 @@ web {
         "/www/content/web/*",
         "/www/content/akeno/web/*",
         "/www/proj/glitter/demo/",
-        "/www/content/shared/wss/web/*"
+        "/www/content/shared/wss/web/*",
+        "/www/proj/creator/*"
     ;
 }
 
