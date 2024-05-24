@@ -928,9 +928,11 @@ async function resolve(method, req, res, message, options = {}){
         reply.success = true;
     }
 
+    let index = 0;
+
     function shift(){
-        let result = segments.shift();
-        return result || ""
+        index++
+        return segments[index] || null;
     }
 
     function send(message){
