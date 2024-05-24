@@ -17,6 +17,7 @@ let
     connections = {},
 
     bcrypt = require("bcrypt"),
+    crypto = require('crypto'),
     uuid = (require("uuid")).v4,
     jwt = require('jsonwebtoken'),
     
@@ -579,22 +580,32 @@ var AddonCache = {}, Backend, config;
             }
         },
 
-/*
-id	int(11) Auto Increment	
-source	int(11) NULL	
-author	int(6) unsigned NULL	
-target	int(6) unsigned NULL	
-value	double	
-comment	mediumtext []	
-date	bigint(20)	
-merchant	int(11) NULL	
-message	text []	
-extra	tinytext []
-
-
-*/
-
         pockets: {
+            createWallet(pocket, holder, options, callback = (error, address) => {}){
+                let address = Backend.pockets.generateAddress();
+
+                db.database("extragon").table("pockets_wallets").insert({
+                    comment: null,
+                    ...options,
+
+                    pocket,
+                    identifier: address,
+                    balance: 0,
+                    created: Date.now(),
+                    holder
+
+                }, (err, result) => {
+                    if(err || !result) return callback(err);
+                    callback(null, address)
+                })
+            },
+
+            generateAddress(length = 64) {
+                const buffer = crypto.randomBytes(Math.ceil(length * 3 / 4)); // 3/4 factor because base64 encoding
+
+                return buffer.toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, length);
+            },
+
             transaction(pocket, source, target, value = 0, options = {}, callback = (error, data) => {}){
 
 
@@ -618,26 +629,63 @@ extra	tinytext []
 
                     function(err, result){
                         if(err) return callback(err);
+                        if(result.length < 1) return callback("Source pocket not found");
 
                         // if(result[0].holder !== source){
                         //     callback("The transaction author does not own the pocket.")
                         // }
 
+                        let initBalance = result[0].balance;
+
                         db.database("extragon").table("pockets_transactions").insert({
                             ...options,
         
-                            source: pocket, author: source, target, value,
+                            pocket,
+                            source,
+                            target,
+
+                            value,
+                            initBalance,
                             date: Date.now(),
                             merchant: options.merchant || null,
-                            pending: true
+                            pending: true,
+                            failed: false
+
                         }, (err, result) => {
                             if(err) return callback(err);
         
                             let transaction_id = result.insertId;
-                            
+
                             db.database("extragon").query(
-                                'SELECT balance, holder FROM `pockets_wallets` WHERE `pocket` = ? AND `identifier` = ?',
-                                [pocket, source],
+                                'SELECT holder, balance FROM `pockets_wallets` WHERE `pocket` = ? AND `identifier` = ?',
+                                [pocket, target],
+
+                                function(err, result){
+                                    if(err) return callback(err);
+                                    if(result.length < 1) return callback("Target pocket not found");
+
+                                    let targetInitBalance = result[0].balance;
+
+                                    db.database("extragon").table("pockets_wallets").update("WHERE identifier='" + source.replaceAll("'", "") + "'", {
+                                        balance: initBalance - value
+                                    }, (err, result) => {
+                                        if(err) return callback(err);
+
+                                        db.database("extragon").table("pockets_wallets").update("WHERE identifier='" + target.replaceAll("'", "") + "'", {
+                                            balance: targetInitBalance + value
+                                        }, (err, result) => {
+                                            if(err) return callback(err);
+
+                                            db.database("extragon").table("pockets_transactions").update("WHERE id='" + transaction_id + "'", {
+                                                pending: false
+                                            }, (err, result) => {
+                                                if(err) return callback(err);
+        
+                                                callback(null, transaction_id)
+                                            })
+                                        })
+                                    })
+                                }
                             )
                         })
 

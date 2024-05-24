@@ -123,11 +123,23 @@ main = {
 
         switch(shift()){
 
-            case"ping":
+            case "ping":
                 send("pong");
             break;
 
-            case"start":
+            case "test":
+                backend.pockets.transaction(0, "5BATGBHQ2UvUNzzw6YKcz7NY6317VetyJER5BGb9UYdihhvwLt7W4FwPf0jK", "WUcjYxTQEiAwmieH8kE2tdWXk9UCAq7H", value = 1000, {}, (error, id) => {
+                    console.log(error, id);
+                })
+            break;
+
+            case "new":
+                backend.pockets.createWallet(0, 0, {}, (error, id) => {
+                    console.log(error, id);
+                })
+            break;
+
+            case "start":
                 backend.dispatch("start", ["635", "minecraft", "start", "-", "52000"])
 
                 backend.HostSocket.on("app.stdout.636", function(data){
@@ -135,13 +147,13 @@ main = {
                 })
             break;
 
-            case"status":
+            case "status":
                 send(
                     await backend.ask("status", 635)
                 )
             break;
 
-            case"say":
+            case "say":
                 res.wait = true;
                 req.parseBody(async (data, fail) => {
                     if(fail){
