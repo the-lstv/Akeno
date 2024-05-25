@@ -164,7 +164,7 @@ api = {
 
         let file;
 
-        let first = shift();
+        let first = segments.shift();
         
     
         switch(method){
