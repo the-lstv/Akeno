@@ -176,7 +176,7 @@ API = {
     async HandleRequest({User, req, res, segments, reply, error, success, assign, shift, send, message}){
         let r;
         switch(shift()){
-            case "":
+            case "": case null:
                 send({
                     auth: "/user/",
                     user_fragment: User,
@@ -283,7 +283,7 @@ API = {
                     default:
                         id = +id;
                         switch(shift()){
-                            case "send":case "post":
+                            case "send": case "post":
                                 if(typeof req.body !== "object" || !req.body.message || !id){
                                     return error(2)
                                 }
@@ -330,7 +330,7 @@ API = {
                                     return error(2)
                                 }
 
-                                r = await mazeDatabase.query(`SELECT id, text, attachments, mentions, author, timestamp FROM messages WHERE room=? ORDER BY id DESC LIMIT ${(+req.query.limit) || 10} OFFSET ${(+req.query.offset) || 0}`[id])
+                                r = await mazeDatabase.query(`select id, text, attachments, mentions, author, timestamp FROM messages WHERE room=? ORDER BY id DESC LIMIT ${(+req.query.limit) || 10} OFFSET ${(+req.query.offset) || 0}`, [id])
                                 
                                 if(!r.err){
                                     send(r.result)
@@ -343,10 +343,11 @@ API = {
                                 if(!id){
                                     return error(2)
                                 }
-                                r = await mazeDatabase.query(`SELECT * FROM rooms wher id=? LIMIT 1`, [id])
+                                r = await mazeDatabase.query(`select * from rooms where id=? LIMIT 1`, [id])
                                 if(!r.err){
                                     send(r.result[0])
                                 } else {
+                                    reply.asd = r.err
                                     return error(24)
                                 }
                         }

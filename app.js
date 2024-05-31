@@ -932,7 +932,7 @@ async function resolve(method, req, res, message, options = {}){
 
     function shift(){
         index++
-        return segments[index] || null;
+        return segments[index] || "";
     }
 
     function send(message){

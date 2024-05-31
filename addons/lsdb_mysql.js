@@ -65,10 +65,10 @@ lsdb = {
                     if(_this.using == dbName) return;
 
                     return new Promise(resolve=>{
+                        _this.using = dbName
                         return _this.pool.query(`USE ${dbName};`, function(err, result){
-                            if(!err){
-                                _this.using = dbName
-                            }
+                            // if(!err){
+                            // }
 
                             if(callback) callback(err, result)
                             resolve({err, result})
