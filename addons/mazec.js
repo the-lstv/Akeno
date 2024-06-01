@@ -13,7 +13,9 @@ let enc = new TextEncoder,
         "listen",
         "update",
         "typing",
-        "authorize"
+        "authorize",
+        "edit",
+        "delete"
     ],
 
 
@@ -174,7 +176,8 @@ API = {
         mazeDatabase = db.database("chat")
     },
     async HandleRequest({User, req, res, segments, reply, error, success, assign, shift, send, message}){
-        let r;
+        let response;
+
         switch(shift()){
             case "": case null:
                 send({
@@ -183,7 +186,7 @@ API = {
                     latest_client: "0.1.20",
                     lowest_client: "0.1.9",
                     sockets: [
-                        `ws://${req.hostname}/ws/mazec/`
+                        `ws://${req.hostname}/v2/mazec/`
                     ]
                 })
             break;
@@ -284,58 +287,160 @@ API = {
                         id = +id;
                         switch(shift()){
                             case "send": case "post":
-                                if(typeof req.body !== "object" || !req.body.message || !id){
-                                    return error(2)
-                                }
+                                res.wait = true;
 
-                                let msg = {
-                                    text: ""+req.body.message+"",
-                                    mentions: Array.isArray(req.body.mentions) ? req.body.mentions.map(e=>+e).filter(e=>!isNaN(e)) : "[]",
-                                    attachments: req.body.attachments || "[]",
-                                    author: User.id,
-                                    room: id,
-                                    timestamp: Date.now()
-                                }
-
-                                r = await mazeDatabase.table("messages").insert(msg)
-                                
-                                if(!r.err){
-                                    msg.id = r.result.insertId;
-
-                                    for(let v of Object.values(clients)){
-                                        if(v.listeners.message.includes(id)){
-                                            v.write([
-                                                eventList.get("message"),
-                                                msg.author,
-                                                msg.room,
-                                                msg.id,
-                                                msg.timestamp - globalTimeStart,
-                                                msg.attachments.replace(/[\[\]]/g, ""),
-                                                msg.mentions.replace(/[\[\]]/g, ""),
-                                                msg.text
-                                            ])
-                                        }
+                                req.parseBody(async (data, fail) => {
+                                    if(fail){
+                                        error(fail)
+                                        return send()
                                     }
 
-                                    send({id: msg.id});
-                                } else {
-                                    console.log(r.err);
-                                    reply.asd = r.err
-                                    return error(24)
-                                }
+                                    data = data.json;
+
+                                    if(typeof data !== "object" || !data.text || !id){
+                                        error(2)
+                                        return send()
+                                    }
+
+                                    let msg = {
+                                        text: "" + data.text + "",
+                                        mentions: Array.isArray(data.mentions) ? data.mentions.map(e => +e ).filter(e => !isNaN(e)) : "[]",
+                                        attachments: data.attachments || "[]",
+                                        author: User.id,
+                                        room: id,
+                                        timestamp: Date.now()
+                                    }
+    
+                                    response = await mazeDatabase.table("messages").insert(msg)
+                                    
+                                    if(!response.err){
+                                        msg.id = response.result.insertId;
+    
+                                        for(let v of Object.values(clients)){
+                                            if(v.listeners.message.includes(id)){
+                                                v.write([
+                                                    eventList.get("message"),
+                                                    msg.author,
+                                                    msg.room,
+                                                    msg.id,
+                                                    msg.timestamp - globalTimeStart,
+                                                    msg.attachments.replace(/[\[\]]/g, ""),
+                                                    msg.mentions.replace(/[\[\]]/g, ""),
+                                                    msg.text
+                                                ])
+                                            }
+                                        }
+    
+                                        send({id: msg.id});
+                                    } else {
+                                        console.log(response.err);
+                                        reply.asd = response.err
+                                        return error(24)
+                                    }
+                                }).data()
+                            break;
+                            
+                            case "edit":
+                                res.wait = true;
+
+                                req.parseBody(async (data, fail) => {
+                                    if(fail){
+                                        error(fail)
+                                        return send()
+                                    }
+
+                                    data = data.json;
+
+                                    if(typeof data !== "object" || !data.text || !data.id || !id){
+                                        error(2)
+                                        return send()
+                                    }
+
+                                    let patch = {
+                                        edited: true
+                                    }
+
+                                    if(data.text) patch.text = "" + data.text + "";
+                                    if(data.mentions) patch.mentions = data.mentions;
+                                    if(data.attachments) patch.attachments = data.attachments;
+    
+                                    response = await mazeDatabase.table("messages").update("where id=" + (+data.id), patch)
+                                    
+                                    if(!response.err){
+                                        for(let v of Object.values(clients)){
+                                            if(v.listeners.message.includes(id)){
+                                                v.write([
+                                                    eventList.get("edit"),
+                                                    id,
+                                                    (+data.id),
+                                                    (patch.text || ""),
+                                                    (patch.mentions || "").replace(/[\[\]]/g, ""),
+                                                    (patch.attachments || "").replace(/[\[\]]/g, "")
+                                                ])
+                                            }
+                                        }
+    
+                                        send({success: true});
+                                    } else {
+                                        return error(24)
+                                    }
+                                }).data()
                             break;
 
-                            case "read":
+                            case "delete":
+                                res.wait = true;
+
+                                req.parseBody(async (data, fail) => {
+                                    if(fail){
+                                        error(fail)
+                                        return send()
+                                    }
+
+                                    data = data.json;
+
+                                    if(typeof data !== "object" || !data.id || !id){
+                                        error(2)
+                                        return send()
+                                    }
+
+                                    let patch = {
+                                        deleted: true
+                                    }
+    
+                                    response = await mazeDatabase.table("messages").update("where id=" + (+data.id), patch)
+                                    
+                                    if(!response.err){
+                                        for(let v of Object.values(clients)){
+                                            if(v.listeners.message.includes(id)){
+                                                v.write([
+                                                    eventList.get("delete"),
+                                                    id,
+                                                    (+data.id)
+                                                ])
+                                            }
+                                        }
+    
+                                        send({success: true});
+                                    } else {
+                                        return error(24)
+                                    }
+                                }).data()
+                            break;
+
+                            case "read": case "get":
                                 if(!id){
                                     return error(2)
                                 }
 
-                                r = await mazeDatabase.query(`select id, text, attachments, mentions, author, timestamp FROM messages WHERE room=? ORDER BY id DESC LIMIT ${(+req.query.limit) || 10} OFFSET ${(+req.query.offset) || 0}`, [id])
+                                response = await mazeDatabase.query(...typeof req.query.id == "number"? [`select id, text, attachments, mentions, author, timestamp, edited FROM messages WHERE room=? and deleted = false and id =?`, [id, (+req.query.id) || 0]] : [`select id, text, attachments, mentions, author, timestamp, edited FROM messages WHERE room=? and deleted = false ORDER BY id DESC LIMIT ${(+req.query.limit) || 10} OFFSET ${(+req.query.offset) || 0}`, [id]])
                                 
-                                if(!r.err){
-                                    send(r.result)
+                                if(!response.err){
+                                    send(response.result.map(message => {
+                                        message.edited = !!message.edited[0]
+                                        return message
+                                    }))
                                 } else {
-                                    return error(r.err)
+                                    return error(response.err)
                                 }
                             break;
 
@@ -343,11 +448,11 @@ API = {
                                 if(!id){
                                     return error(2)
                                 }
-                                r = await mazeDatabase.query(`select * from rooms where id=? LIMIT 1`, [id])
-                                if(!r.err){
-                                    send(r.result[0])
+                                response = await mazeDatabase.query(`select * from rooms where id=? LIMIT 1`, [id])
+                                if(!response.err){
+                                    send(response.result[0])
                                 } else {
-                                    reply.asd = r.err
+                                    reply.asd = response.err
                                     return error(24)
                                 }
                         }
@@ -359,7 +464,7 @@ API = {
                     return error(2)
                 }
 
-                r = await mazeDatabase.table("rooms").insert({
+                response = await mazeDatabase.table("rooms").insert({
                     author: User.id,
                     participants: req.body.participants ? JSON.stringify(req.body.participants) : "[]",
                     name: req.body.name,
@@ -370,8 +475,8 @@ API = {
                     burn: req.body.burn ? 1 : 0,
                 })
 
-                if(!r.err){
-                    send(r.result.insertId)
+                if(!response.err){
+                    send(response.result.insertId)
                 } else {
                     return error(24)
                 }
@@ -380,6 +485,7 @@ API = {
                 error(1)
         }
     },
+
     HandleSocket({getAuth, req, ws, send, message, shift}){
         with(Backend){
             switch(req.event){
@@ -427,14 +533,14 @@ API = {
                         if(!ws.authorized && data[0]!=="authorize") continue;
 
                         switch(data[0]){
-                            case"heartbeat":
+                            case "heartbeat":
                                 // Heartbeat
                                 ws.alive = true;
                                 ws.write([0])
                                 continue;
                             break;
 
-                            case"authorize":
+                            case "authorize":
                                 let user = getAuth(data[1])
 
                                 if(user.error) {
@@ -445,9 +551,9 @@ API = {
                                 }
                             break;
 
-                            case"message": break;
+                            case "message": break;
 
-                            case"listen":
+                            case "listen":
                                 switch(data[2]){ //Event type
                                     case 0:
                                         // Message
