@@ -3,6 +3,44 @@
 version ("1.3.0:arch=3"); # Akeno version that the config was made for - DO NOT CHANGE (if you dont know what it could do :D)
 
 
+server {
+    # The port to use for listening
+    port: 7007;
+
+    enableSSL;
+    sslPort: 443;
+
+    # Enable server; Enable sub-host
+    enableBuild;
+    enableHost: prod;
+
+    hostSocketName: "eg_persistentHost";
+
+    # Required. Path to where Akeno is located.
+    PATH: "/www/content/akeno/";
+}
+
+performance {
+    # How many threads to spawn for multi-threading. Range between 1 to the amount of your CPU cores.
+    threads: 2;
+
+    # Compressor - shared or dedicated and how much RAM to dedicate per socket.
+    compressor: dedicated 32kb;
+
+    # Compress JS, HTML, CSS on the fly
+    code-compression;
+
+    # Enable caching for individual files in-memory.
+    file-cache;
+
+    # Enable the ?mtime query to be added to requests, automatically refreshing files that have been changed while caching still works.
+    mtime-query;
+
+    # Either uWS or Express - uWS is a low-level native socket, Express uses Node.JS APIs. uWS is faster, Express is more dynamic.
+    backend: uWS;
+    # Support is not guaranted.
+}
+
 web {
     locations:
         # website locations

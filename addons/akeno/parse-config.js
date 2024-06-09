@@ -623,9 +623,11 @@ function configTools(parsed){
         block(name){
             return parsed.find(block => block.key == name)
         },
+
         blocks(name){
             return parsed.filter(block => block.key == name)
         },
+
         valueOf(name){
             let block = tools.block(name);
             return block? block.values[0].join("") : null

@@ -133,9 +133,9 @@ server = {
             Backend.refreshConfig()
         }
 
-        version = Backend.configTools.valueOf("version") || "unknown";
+        version = Backend.config.valueOf("version") || "unknown";
     
-        let webConfig = Backend.configTools.block("web");
+        let webConfig = Backend.config.block("web");
     
         locations = webConfig && webConfig.properties.locations? webConfig.properties.locations : []
     
