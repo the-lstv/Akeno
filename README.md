@@ -13,7 +13,7 @@ Required: `node`, `pm2` (npm i -g pm2), ``
 ```sh
 sudo curl run.lstv.space/install-akeno -s | bash
 ```
-To run automatically and enable `akeno -i`:
+To run automatically on startup and enable `akeno -i`:
 ```sh
 sudo pm2 start /www/content/akeno/app.js --name egapi
 ```
