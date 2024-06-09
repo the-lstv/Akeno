@@ -6,6 +6,13 @@ It uses its universal config system to make it easy to manage large quantities o
 It has a performance-first webserver, with automated caching, code compression, and a custom HTML parser which allows you to write clean and easier-to-read code, with less maintenance needed.
 
 ---
+Quick installation (Fedora Linux Server Edition)
+```sh
+curl run.lstv.space/install-akeno -s | bash
+```
+
+---
+<br>
 
 ![🚀 Fast](https://github.com/the-lstv/Akeno/assets/62482747/d7f3466c-c833-4fca-a57b-e93f7aca0882)
 ---
@@ -20,10 +27,16 @@ Akeno automatically compresses all of your HTML, CSS and JS code on the fly - sa
 Just write the code and watch the magic happen in real time.
 
 
+<br><br>
+
+
 ![🗃️ Modular](https://github.com/the-lstv/Akeno/assets/62482747/dceb9b55-d46d-468b-9338-95369bb568d7)
 ---
 Akeno is also fully modular. On first startup, it only loads what is necesarry. Everything else is loaded as requested, on the fly.
 This includes API extensions - simply create a JS file with your server-side API in your web app's directory, hot-reload the config and your API is ready to use.
+
+
+<br><br>
 
 
 ![🖥️ CLI](https://github.com/the-lstv/Akeno/assets/62482747/924f2a21-91f4-4a42-9c22-bbe25f44ec48)
