@@ -1,6 +1,4 @@
-<img src="https://cdn.extragon.cloud/file/3e1df84164d20daef3e178bd1c08b9e5.png?size=140" alt="Akeno icon">
-
-# Akeno
+<img src="https://github.com/the-lstv/Akeno/assets/62482747/3679a250-13d7-4ff9-ac46-d55d1b6b6ddc" alt="Akeno icon">
 
 Akeno is a fast, rich, modular, mostly automated Node.JS web, websocket, CDN, and API server.<br>
 It uses its universal config system to make it easy to manage large quantities of projects or servers all at once.<br>
@@ -9,8 +7,9 @@ It has a performance-first webserver, with automated caching, code compression, 
 
 ---
 
-![🚀 Fast](https://github.com/the-lstv/Akeno/assets/62482747/ab7031f0-9fb4-4908-81dc-b91cafcc66c4)
+![🚀 Fast](https://github.com/the-lstv/Akeno/assets/62482747/d7f3466c-c833-4fca-a57b-e93f7aca0882)
 ---
+
 Akeno excels in top-notch performance.
 
 The entire server is started and ready in **5ms** or less on average (making it faster than most modern large servers which can take minutes), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
@@ -20,5 +19,14 @@ On top of that, Akeno has smart caching directly to memory, automatic cache head
 Akeno automatically compresses all of your HTML, CSS and JS code on the fly - saving you the hassle of having to make copies or compress yourself.
 Just write the code and watch the magic happen in real time.
 
+
+![🗃️ Modular](https://github.com/the-lstv/Akeno/assets/62482747/dceb9b55-d46d-468b-9338-95369bb568d7)
+---
 Akeno is also fully modular. On first startup, it only loads what is necesarry. Everything else is loaded as requested, on the fly.
+This includes API extensions - simply create a JS file with your server-side API in your web app's directory, hot-reload the config and your API is ready to use.
+
+
+![🖥️ CLI](https://github.com/the-lstv/Akeno/assets/62482747/924f2a21-91f4-4a42-9c22-bbe25f44ec48)
+---
+Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats, manage apps, or interact with its API.
 
