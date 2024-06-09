@@ -5,7 +5,7 @@ let ThisAPP
 ;
 
 ThisAPP = {
-    async HandleRequest({send, res}){
+    async HandleRequest({res}){
 
 		res.wait = true;
 
@@ -17,7 +17,7 @@ ThisAPP = {
 			fs.writeFileSync(cachePath, memoryCache)
 		}
 
-        send(memoryCache || fs.readFileSync(cachePath, "utf8"))
+        res.send(memoryCache || fs.readFileSync(cachePath, "utf8"))
     }
 }
 

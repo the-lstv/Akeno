@@ -67,7 +67,7 @@ let
 
 
     
-function save_hits(){
+async function save_hits(){
     const buffer = Buffer.alloc(4);
 
     buffer.writeUInt32LE(total_hits, 0);
@@ -231,14 +231,16 @@ function build(){
     db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', 'xsD6SicFy2MMc.-')
 
     // Set up multer for file uploads
-    const storage = multer.diskStorage({
-        destination: '/www/ram/',
-        filename: (req, file, callback) => {
-            callback(null, Backend.uuid());
-        }
-    });
+    // const storage = multer.diskStorage({
+    //     destination: '/www/ram/',
+    //     filename: (req, file, callback) => {
+    //         callback(null, Backend.uuid());
+    //     }
+    // });
 
-    const upload = multer({ storage }), wss = {
+    // const upload = multer({ storage })
+    
+    let wss = {
 
         /* There are many common helper features */
         idleTimeout: 32,
@@ -274,79 +276,177 @@ function build(){
     
     };
 
-    async function resolve(res, req) {
+    let types = {
+        json: "application/json; charset=utf-8",
+        js: "application/javascript; charset=utf-8",
+        css: "text/css; charset=utf-8",
+        html: "text/html; charset=utf-8",
+    }
+
+    let version = Backend.config.valueOf("version") || "unknown";
+
+    async function resolve(res, req, secured) {
         total_hits++
         if((total_hits - saved_hits) > 2) save_hits();
 
         res.onData((chunk, isLast) => {
-            console.log("data: ", chunk, isLast);
+            // console.log("data: ", chunk, isLast);
         })
-    
+
         res.onAborted(() => {
             abort = true;
         })
 
         // Helper variables
-        req.method = req.getMethod().toLowerCase();
-        req.domain = req.getHeader("host");
-        req.path = req.getUrl();
+        req.method = req.getMethod().toUpperCase(); // Lowercase would be pretty but harder to adapt
+        req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
+        // req.port = +req.getHeader("host").match(/:([0-9]+)/)[1];
 
-        let segments = req.path.split("/").filter(trash => trash),
+        req.path = req.getUrl();
+        req.secured = secured; // If the communication is done over HTTP or HTTPS
+
+        res.writeHeaders = (headers) => {
+            if(!headers) return;
+            
+            for(let header in headers){
+                res.writeHeader(header, headers[header])
+            }
+        }
+
+        res.send = (message, headers, status) => {
+            // OUTDATED!
+            // Should be avoided for performance reasons
+        
+            if(typeof message !== "string" || !message instanceof ArrayBuffer || !message instanceof Uint8Array || !message instanceof DataView) {
+                if(typeof message === "object") {
+                    res.type("json")
+                }
+
+                message = JSON.stringify(message);
+                Backend.log.verbose("Warning: You are not properly encoding your data before sending. The data were automatically stringified using JSON.stringify, but this has a bad impact on performance. If possible, either send a string, binary data or stringify using fast-json-stringify.")
+            }
+
+            res.cork(() => {
+                res.writeHeaders(headers)
+
+                if(status) res.writeStatus(status + "")
+
+                res.end(message)
+            });
+        }
+
+        res.stream = (stream) => {
+            stream.on('data', (chunk) => {
+                let buffer = Buffer.from(chunk), lastOffset = res.getWriteOffset();
+
+                // Try writing the chunk
+                const [ok, done] = res.tryEnd(buffer, buffer.length);
+
+                if (!done && !ok) {
+                    // Backpressure handling
+                    stream.pause();
+
+                    // Resume once the client is ready
+                    res.onWritable((offset) => {
+                        const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), buffer.length);
+                        if (done) {
+                            stream.close();
+                        } else if (ok) {
+                            stream.resume();
+                        }
+                        return ok;
+                    });
+                } else if (done) {
+                    // Stream is done, close it
+                    stream.close();
+                }
+            });
+
+            stream.on('end', () => {
+                // Ensure the response ends when the stream ends
+                if (res.getWriteOffset() === 0) {
+                    res.end();
+                }
+            });
+
+            stream.on('error', (err) => {
+                // Handle errors
+                console.error('Stream error:', err);
+                res.writeStatus('500 Internal Server Error').end('Internal Server Error');
+            });
+
+            // If the connection is closed by the client, stop reading the file
+            res.onAborted(() => {
+                stream.destroy();
+            });
+        }
+
+        res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
+        res.writeHeader("Access-Control-Allow-Origin", "*");
+        res.writeHeader("Access-Control-Allow-Credentials", "true");
+        res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS,POST,PUT");
+        res.writeHeader("Access-Control-Allow-Headers", "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization");
+
+        res.type = (type) => {
+            res.writeHeader("Content-Type", types[type] || type)
+        }
+
+        let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment)),
             abort = false
         ;
 
-        let index = -1, ver = segments[0] ? +(segments[0].slice(1)) : 0;
 
-        if(ver && segments[0].toLowerCase().startsWith("v")){
-            segments.shift()
-        }
+        function error(error, code){
+            if(typeof error == "number" && Backend.Errors[error]){
+                let _code = code;
+                code = error;
+                error = (_code? code : "") + Backend.Errors[code]
+            }
 
-        ver = (ver? ver : API._default);
-
-        if(API[ver]){
-            await API[ver]["HandleRequest"]({
-                req,
-                res,
-                segments,
-                // reply,
-
-                error(error, code){
-                    if(typeof error == "number" && Backend.Errors[error]){
-                        let _code = code;
-                        code = error;
-                        error = (_code? code : "") + Backend.Errors[code]
-                    }
-            
-                    // if(method == "WEBSOCKET"){
-                    //     res.send("ERROR: " + error); return res.close()
-                    // }
-            
-                    res.cork(() => {
-                        res.writeHeader("Content-Type", "application/json; charset=utf-8").end(`{"success":false,"code":${+code},"error":"${error.replaceAll('"', '\\"')}"}`);
-                    })
-                },
-
-                shift(){
-                    index++
-                    return segments[index] || "";
-                },
-
-                // success,
-
-                send(message){
-                    // OUTDATED!
-                    sent = true
-                    res.cork(() => {
-                        res.end(message)
-                    });
-                },
-
-                // message
+            res.cork(() => {
+                res.writeStatus('400').writeHeader("Content-Type", "application/json; charset=utf-8").end(`{"success":false,"code":${+code},"error":"${error.replaceAll('"', '\\"')}"}`);
             })
-        } else {
-            error(0)
         }
 
+        function shift(){
+            index++
+            return segments[index] || "";
+        }
+
+        // Handle the builtin CDN
+        if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
+            Backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
+        }
+        
+        // Handle the builtin API
+        else if(req.domain.startsWith("api.")){
+            let ver = segments[0] ? +(segments[0].slice(1)) : 0;
+
+            if(ver && segments[0].toLowerCase().startsWith("v")){
+                segments.shift()
+            }
+    
+            ver = (ver? ver : API._default);
+    
+            if(API[ver]){
+                await API[ver]["HandleRequest"]({
+                    req,
+                    res,
+                    segments,
+                    shift,
+                    error
+                })
+            } else {
+                error(0)
+            }
+            return;
+        }
+
+
+        else {
+            // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
+            Backend.addon("akeno/web").HandleRequest({segments, req, res})
+        }
     }
 
     // Create server instances
@@ -357,7 +457,7 @@ function build(){
     app.ws('/*', wss)
     
     // Initialize WebServer
-    app.any('/*', resolve)
+    app.any('/*', (res, req) => resolve(res, req, true))
     
     app.listen(port, (listenSocket) => {
         if (listenSocket) {
@@ -367,7 +467,7 @@ function build(){
             if(SSLApp) {
                 SSLApp.ws('/*', wss)
 
-                SSLApp.any('/*', resolve)
+                SSLApp.any('/*', (res, req) => resolve(res, req, true))
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
 
@@ -568,7 +668,8 @@ function build(){
 
             getAuth(req){
                 if(req.User) return req.User;
-                let token = typeof req == "string"? req : decodeURIComponent(req.headers.authorization || req.cookies.token || "").replace('Bearer ','').replace('APIKey ','');
+                // TODO: || req.cookies.token - parse cookies
+                let token = typeof req == "string"? req : decodeURIComponent(req.getHeader("authorization") || "").replace('Bearer ','').replace('APIKey ','');
             
                 if(!token) return {error: 13};
             

@@ -125,17 +125,15 @@ api = {
         Backend = Backend_;
         isDev = Backend.isDev;
     },
-    async HandleRequest({method, segments, shift, error, req, res}){+
-        res.setHeader( 'X-Powered-By', 'ExtraGon CDN/1.2' );
-
+    async HandleRequest({segments, shift, error, req, res}){
         function send(data = {}, cache = false, type = null, isFilePath){
             let mime = type || (typeof data == "object"? "application/json" : typeof data == "string" ? "text/plain" : "application/octet-stream");
 
-            res.setHeader('cache-control', (cache === false? "no-cache" : (typeof cache == "number" ? `public, max-age=${cache}` : cache)) || "max-age=60")
-            res.setHeader('content-type', `${mime}; charset=UTF-8`);
+            res.writeHeader('cache-control', (cache === false? "no-cache" : (typeof cache == "number" ? `public, max-age=${cache}` : cache)) || "max-age=60")
+            res.writeHeader('content-type', `${mime}; charset=UTF-8`);
 
             if(isFilePath){
-                const range = req.headers.range;
+                const range = req.getHeader("range");
 
                 if (range) {
                     const fileSize = fs.statSync(data).size;
@@ -146,38 +144,36 @@ api = {
                     const chunkSize = end - start + 1;
                     const file = fs.createReadStream(data, { start, end });
 
-                    res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
-                    res.setHeader('Accept-Ranges', 'bytes');
-                    res.setHeader('Content-Length', chunkSize);
-                    res.setHeader('Content-Type', 'video/mp4');
+                    res.writeStatus('206');
+                    res.writeHeaders({
+                        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                        'Accept-Ranges': 'bytes',
+                        'Content-Length': chunkSize
+                    });
 
-                    res.status(206);
-                    file.pipe(res);
+                    res.stream(file);
                 } else {
-                    fs.createReadStream(data).pipe(res);
+                    res.stream(fs.createReadStream(data));
+                    // fs.createReadStream(data).pipe(res);
                 }
                 return
             }
 
-            res[(!type && (Array.isArray(data) || (typeof data == "object" && Object.prototype.toString.call(data) === '[object Object]'))? "json" : "send")](data);
+            // res[(!type && (Array.isArray(data) || (typeof data == "object" && Object.prototype.toString.call(data) === '[object Object]'))? "json" : "send")](data);
+            res.send(data);
         }
 
         let file;
 
         let first = segments.shift();
-        
-    
-        switch(method){
-            case"GET":
+
+        switch(req.method){
+            case "GET":
                 switch(first){
                     case"file":
 
                         if(!segments[0]){
-                            res.setHeader('cache-control', "no-cache");
-                            return res.json({
-                                success: false,
-                                error: "This endpoint is currently not supported directly as for unstable behavior. Use /file/[hash][.format][?options] instead."
-                            })
+                            return res.send(`{"success":false,"error":"This endpoint is currently not supported directly as for unstable behavior. Use /file/[hash][.format][?options] instead."}`, {'cache-control': "no-cache"}, 400)
                         }
 
                         let fileName = segments[segments[0].length < 32? 1 : 0] || "";
@@ -191,30 +187,24 @@ api = {
                         ;
                         
                         if(segments[0] == "check"){
-                            res.setHeader('cache-control', "no-cache");
-
-                            return res.json({
-                                exists
-                            })
+                            return res.send(`{"exists":${exists}}`, {'cache-control': "no-cache"})
                         }
 
                         if(segments[0] == "info"){
-                            res.setHeader('cache-control', "no-cache");
-
                             if(fileMetadataCache[file[0]]){
                                 return res.json({
                                     ...fileMetadataCache[file[0]],
                                     likelyMimeType: mostCommonItem(fileMetadataCache[file[0]].mimeTypeHistory),
                                     likelyName: mostCommonItem(fileMetadataCache[file[0]].nameHistory),
                                     likelyExtension: mostCommonItem(fileMetadataCache[file[0]].extensionHistory),
-                                })
+                                }, {'cache-control': "no-cache"})
                             } else {
                                 return res.json({
                                     success: false,
                                     code: 43,
                                     error: "File metadata not found.",
                                     file: file[0]
-                                })
+                                }, {'cache-control': "no-cache"})
                             }
                         }
 

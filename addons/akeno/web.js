@@ -83,6 +83,12 @@ function files_try(...files){
 }
 
 // Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
+// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
+// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
+// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
+// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
+// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
+// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
 
 function cachedFile(file){
     file = nodePath.normalize(file);
@@ -180,7 +186,7 @@ server = {
                 basename,
                 enabled: true,
 
-                serve({domain, method, segments, req, res}){
+                serve({segments, req, res}){
                     try {
 
                         let url = ("/" + segments.join("/")), file;
@@ -218,22 +224,22 @@ server = {
 
                         if(file) file = nodePath.normalize(file);
     
-                        server.log.verbose(`[${basename}] [${Date.now()}] Serving request for ${domain}, path ${url}, file ${file || "<not found>"}, client ${req.ip}`)
+                        server.log.verbose(`[${basename}] [${Date.now()}] Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}, client ${req.ip}`)
 
                         if(!file){
-                            res.status(404);
-
                             file = get_error_page(404);
 
                             if(!file){
-                                return res.send(url + " not found");
+                                return res.send(url + " not found", null, 404);
                             }
                         }
                         
+                        let headers = {};
+
                         // TODO: Extend this functionality
                         if(fs.statSync(file).isDirectory()){
 
-                            res.send("You have landed in " + url + " - which is a directory - and there is no support for browsing this yet.");
+                            res.send("You have landed in " + url + " - which is a directory - and there is no support for browsing this yet.", headers);
 
                         } else {
 
@@ -249,18 +255,18 @@ server = {
 
                             let mimeType = mime.types[extension] || "text/plain";
 
-                            res.header('content-type', `${mimeType}; charset=UTF-8`);
-                            
+                            headers['content-type'] = `${mimeType}; charset=UTF-8`;
+
                             if(["html", "js", "css"].includes(extension)){
 
-                                res.header('Cache-Control', cacheByFile[extension]);
-                                res.header('X-Content-Type-Options', "no-sniff");
+                                headers['cache-control'] = cacheByFile[extension];
+                                headers['x-content-type-options'] = "no-sniff";
 
                                 if(typeof cache === "string") {
                                     
                                     // Great, content is cached and up to date, lets load the cache:
 
-                                    res.send(cache)
+                                    res.send(cache, headers)
                                     return
                                     
                                 } else {
@@ -275,18 +281,18 @@ server = {
 
                                     switch(extension){
                                         case "html":
-                                            res.header('content-type', `text/html; charset=UTF-8`);
+                                            headers['content-type'] = `text/html; charset=UTF-8`;
                                             // TODO: Allow the application to choose custom caching
                                             content = get_content(app, url, file)
                                         break;
                                         case "css":
-                                            res.header('content-type', `text/css; charset=UTF-8`);
+                                            headers['content-type'] = `text/css; charset=UTF-8`;
 
                                             fc = fs.readFileSync(file, "utf8");
                                             content = CleanCSS.minify(fc).styles || fc // Try to compres the file and fallback to the original content
                                         break;
                                         case "js":
-                                            res.header('content-type', `application/javascript; charset=UTF-8`);
+                                            headers['content-type'] = `application/javascript; charset=UTF-8`;
 
                                             fc = fs.readFileSync(file, "utf8");
 
@@ -297,7 +303,7 @@ server = {
                                         break;
                                     }
 
-                                    res.send(content)
+                                    res.send(content, headers)
                                     updateCache(file, content)
 
                                     return
@@ -305,20 +311,23 @@ server = {
 
                             } else {
 
-                                res.header('cache-control', `public, max-age=${50000}`)
-                                res.send(fs.readFileSync(file))
+                                headers['cache-control'] = `public, max-age=${50000}`;
+                                
+                                res.writeHeaders(headers)
+                                res.stream(fs.createReadStream(file));
+                                // res.send(fs.readFileSync(file), headers)
 
                             }
 
                         }
 
                     } catch(error) {
-                        res.status(500);
-
                         server.log.error("Error when serving app \"" + path + "\", requesting \"" + req.path + "\": ")
                         console.error(error)
 
-                        try { res.send("<b>Internal Server Error - Incident log was saved.</b> <br> Don't know what this means? Something went wrong on our side - the staff was notified of this issue and will look into what caused this. Try again later, or contact the website admin.") } catch {}
+                        try {
+                            res.send("<b>Internal Server Error - Incident log was saved.</b> <br> Don't know what this means? Something went wrong on our side - the staff was notified of this issue and will look into what caused this. Try again later, or contact the website admin.", null, 500)
+                        } catch {}
                     }
                 }
             }
@@ -421,33 +430,23 @@ server = {
         }
     },
 
-    async HandleRequest({domain, method, segments, req, res}){
+    async HandleRequest({segments, req, res}){
         // This is the main handler for websites/webapps.
 
-        segments = segments.map(segment => decodeURIComponent(segment))
+        if(req.domain.startsWith("www.")) req.domain = req.domain.replace("www.", "");
 
-        res.setHeader( 'X-Powered-By', 'Akeno Server/' + version );
-
-        if(domain.startsWith("www.")) domain = domain.replace("www.", "");
-
-        // Since Chrome 122+ is a bitch and refuses to resolve any 2nd level domain form the hosts file, periods have to be stupidly
-        // replaced with underscores to bypass that. Why? I honestly have no clue. Probably some stupid new "security" mechanism.
-        if(Backend.isDev && !domain.includes(".")) domain = domain.replaceAll("_", ".");
-        // This workaround certainly isnt clean but it is the only way... (f#ck you google!)
-
-        let appPath = assignedDomains[domain] ?? assignedDomains[":default"], app;
+        let appPath = assignedDomains[req.domain] ?? assignedDomains[":default"], app;
 
         if(typeof appPath !== "undefined") {
             app = applications.find(app => app.path == appPath)
 
             if(app.manifest.server.properties.redirect_https && !Backend.isDev && !req.secured){
-                res.redirect(301, `https://${req.headers.host}${req.url}`);
+                res.redirect(301, `https://${req.getHeader("host")}${req.url}`);
                 return
             }
 
             if(!app.enabled){
-                res.status(422)
-                res.send("This website is temporarily disabled.")
+                res.send("This website is temporarily disabled.", null, 422)
                 return
             }
 
@@ -468,9 +467,9 @@ server = {
                 return
             }
 
-            app.serve({ domain, method, segments, req, res })
+            app.serve({ segments, req, res })
         } else {
-            res.send("404 - Website not found (it may not exist), and nothing to handle the missing page was found :P")
+            res.send("404 - Website not found (it may not exist), and nothing to handle the missing page was found :P", null, 404)
         }
     }
 }
