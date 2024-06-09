@@ -1,9 +1,11 @@
-<img src="https://github.com/the-lstv/Akeno/assets/62482747/3679a250-13d7-4ff9-ac46-d55d1b6b6ddc" alt="Akeno icon">
+<p align="center"><img src="https://github.com/the-lstv/Akeno/assets/62482747/d29fb374-aef6-444f-88b1-43aede48fe41" alt="Akeno icon"></p>
 
 Akeno is a fast, rich, modular, mostly automated Node.JS web (static and dynamic), WebSocket, CDN, and API server which comes as a full-featured suite with DNS, SSL, DB and user management (all available optionally as addons).<br>
 It uses its universal config system to make it easy to manage large quantities of projects or servers all at once.<br>
 <br>
 It has a performance-first webserver, with automated caching, code compression, and a custom HTML parser which allows you to write clean and easier-to-read code, with less maintenance needed.
+
+**WARNING:** The latest update has bought MANY breaking changes to the server!
 
 ---
 Quick installation (Fedora Linux Server Edition) <br>
@@ -11,7 +13,7 @@ Required: `node`, `pm2` (npm i -g pm2), ``
 ```sh
 sudo curl run.lstv.space/install-akeno -s | bash
 ```
-To run automatically and enable `akeno -i`:
+To run automatically on startup and enable `akeno -i`:
 ```sh
 sudo pm2 start /www/content/akeno/app.js --name egapi
 ```
