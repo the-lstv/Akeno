@@ -6,9 +6,14 @@ It uses its universal config system to make it easy to manage large quantities o
 It has a performance-first webserver, with automated caching, code compression, and a custom HTML parser which allows you to write clean and easier-to-read code, with less maintenance needed.
 
 ---
-Quick installation (Fedora Linux Server Edition)
+Quick installation (Fedora Linux Server Edition) <br>
+Required: `node`, `pm2` (npm i -g pm2), ``
 ```sh
-curl run.lstv.space/install-akeno -s | bash
+sudo curl run.lstv.space/install-akeno -s | bash
+```
+To run automatically and enable `akeno -i`:
+```sh
+sudo pm2 start /www/content/akeno/app.js --name egapi
 ```
 
 ---
