@@ -13,7 +13,7 @@ It has a performance-first webserver, with automated caching, code compression, 
 ---
 Akeno excels in top-notch performance.
 
-The entire server is started and ready in 5ms or less on average, and uses uWebSockets for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [this](https://github.com/uNetworking/uWebSockets.js)).
+The entire server is started and ready in **5ms** or less on average (making it faster than most modern large servers which can take minutes), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
 
 On top of that, Akeno has smart caching directly to memory, automatic cache header, automatic ?mtime query parametter for file changes, and much more.
 
@@ -21,3 +21,4 @@ Akeno automatically compresses all of your HTML, CSS and JS code on the fly - sa
 Just write the code and watch the magic happen in real time.
 
 Akeno is also fully modular. On first startup, it only loads what is necesarry. Everything else is loaded as requested, on the fly.
+
