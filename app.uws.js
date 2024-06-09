@@ -838,7 +838,7 @@ if(isDev){
     Backend.log("NOTE: API is running in developmenmt mode.")
 }
 
-port = (!Backend.config.block("server").properties.port) || 7007;
+port = (+Backend.config.block("server").properties.port) || 7007;
 doHost = Backend.config.block("server").properties.enableHost == "prod"? !isDev: Backend.config.block("server").properties.enableHost;
 doBuild = Backend.config.block("server").properties.enableBuild;
 
