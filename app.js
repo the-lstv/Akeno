@@ -1,18 +1,23 @@
 let
     // Modules
+    uws = require('uWebSockets.js'),
 
-    http = require("http"),
-    express = require("express"),
+    fastJson = require("fast-json-stringify"),
+
+    // Temporary
+    // http = require("http"),
+    // express = require("express"),
+    // bodyParser = require('body-parser'),
+    // compression = require("compression"),
+    // cors = require("cors"),
+    cookieParser = require('cookie-parser'),
+
     fs = require("fs"),
     url = require("url"),
 
-    // fastify = (require("fastify"))(),
-
     app,
+    SSLApp,
     server,
-
-    ws = require("ws"),
-    wss = new ws.Server({ noServer: true }),
 
     connections = {},
 
@@ -20,11 +25,6 @@ let
     crypto = require('crypto'),
     uuid = (require("uuid")).v4,
     jwt = require('jsonwebtoken'),
-    
-    cookieParser = require('cookie-parser'),
-    bodyParser = require('body-parser'),
-    compression = require("compression"),
-    // cors = require("cors"),
 
     ipc,
     { exec, spawn } = require('child_process'),
@@ -33,47 +33,41 @@ let
     multer = require('multer-md5'),
     formidable = require('formidable'),
 
-    // Config parser
-    { parse, configTools } = require("./addons/akeno/parse-config")
-;
-
-process.on('uncaughtException', (err) => {
-    // Why does this even happen in the first place, do people just not know how to use "throw new Error()"? Why crash everything?
-	console.debug("blah blah blah, it's probably fine, just some poorly written module can't throw a proper error instead of crashing the whole thread.\nThe error was: ", err);
-});
-
-let isDev = fs.existsSync("/www/__dev__");
-
-
-let
-    // Main configuration
-    port = 7007,
-    doHost = !isDev,
-    doBuild = true,
-
-    // Host configuration
-    HostSocketID = 'eg_persistentHost',
-    HostSocket,
-    HostConnected = false,
-    HostQueue,
-    HostReplyListeners = [],
-    HostReplies = {},
-
-    // Misc
-    initialized = false,
     lsdb = require("./addons/lsdb_mysql.js"),
-    db,
 
-    PATH = "/www/content/akeno/" // Sadly, Node seems to always work with the wrong relative path instead of the one the file is actually in. May be fixed later but please use this now.
+    // Config parser
+    { parse, configTools } = require("./addons/akeno/parse-config.js")
 ;
 
 let
-    // Misc options
-    total_hits = fs.existsSync(PATH + "/etc/hits") ? fs.readFileSync(PATH + "./etc/hits").readUInt32LE(0) : 0,
-    saved_hits = total_hits
+    // Globals
+    isDev = fs.existsSync("/www/__dev__"),
+    initialized = false,
+    db,
+    AddonCache = {},
+    Backend,
+    config,
+    configRaw,
+
+    API,
+    apiVersions,
+
+    doHost,
+    doBuild,
+
+    host,
+
+    port,
+    PATH = __dirname + "/",
+
+    total_hits,
+    saved_hits,
+    since_startup = Date.now()
 ;
 
-function save_hits(){
+
+    
+async function save_hits(){
     const buffer = Buffer.alloc(4);
 
     buffer.writeUInt32LE(total_hits, 0);
@@ -81,305 +75,414 @@ function save_hits(){
     saved_hits = total_hits
 }
 
-process.on('exit', () => {
-    save_hits()
-    console.log(`[system] API is stopping.`);
-})
-
-if(doHost){
-    ipc = require('@node-ipc/node-ipc').default;
-
-    ipc.config.id = 'eg_API';
-    ipc.config.retry = 1000;
-    ipc.config.logLevel = 'WARN';
-
-    let prefix = "[akeno] [persistentHost]";
+// Initialize is the first thing that runs after the config is loaded and basics (like the backend object) initialized.
+function initialize(){
+    saved_hits = total_hits = fs.existsSync(PATH + "/etc/hits") ? fs.readFileSync(PATH + "./etc/hits").readUInt32LE(0) : 0;
     
-    console.log(prefix + ' CONNECTING TO HOST...');
+    // Hit counter
+    
+    process.on('uncaughtException', (err) => {
+        // Why does this even happen in the first place
+        console.debug("[system] [ERROR] It's probably fine, just some poorly written module can't throw a proper error instead of crashing the whole thread.\nThe error: ", err);
+    });
+    
+    process.on('exit', () => {
+        save_hits()
+        console.log(`[system] API is stopping.`);
+    })
 
-    ipc.connectTo(
-        HostSocketID,
-        function(){
-            HostSocket = ipc.of[HostSocketID];
+    // Initialize the host communication module (optional)
+    if(doHost){
+        let
+            HostSocketID = 'eg_persistentHost',
+            HostSocket,
+            HostConnected = false,
+            HostQueue,
+            HostReplyListeners = [],
+            HostReplies = {}
+        ;
 
-            HostSocket.handle = function(evt, fn){
-                HostSocket.on(evt, async(data, _socket) => {
-                    if(!data.id){
-                        return fn(data.data, _socket)
+        host = {
+            dispatch(evt, data, force, prefix = 'app.'){
+                if(force || (HostConnected && HostSocket)){
+                    return HostSocket.emit(prefix + evt, data)
+                }
+                if(HostQueue){
+                    HostQueue.push(evt, ...data)
+                }
+            },
+            
+            handleListener(evt){
+                if(HostReplyListeners.includes(evt))return;
+                HostReplyListeners.push(evt)
+                HostSocket.on("app." + evt + ".reply",
+                    function(data){
+                        HostReplies[data.id] = data.reply;
                     }
-                    dispatch(evt + ".reply", {id: data.id, reply: await fn(data.data, _socket)}, false, "")
-                });
-            }
+                )
+            },
 
-            HostSocket.on(
-                'connect',
-                function(){
-                    console.log(prefix + ' INFORMING HOST OF OUR EXISTENCE...');
-                    dispatch("hi", "hello", true)
-                }
-            );
-
-            HostSocket.on(
-                'disconnect',
-                function(){
-                    HostConnected = false
-                    console.log(prefix + ' DISCONNECTED FROM HOST');
-                }
-            );
-
-            HostSocket.on(
-                'app.hi',
-                function(){
-                    HostConnected = true
-                    console.log(prefix + ' CONNECTED TO HOST');
-                    if(doBuild) build()
-                }
-            );
-        }
-    );
-}
-
-
-function dispatch(evt, data, force, prefix = 'app.'){
-    if(force || (HostConnected && HostSocket)){
-        return HostSocket.emit(prefix + evt, data)
-    }
-    if(HostQueue){
-        HostQueue.push(evt, ...data)
-    }
-}
-
-function handleListener(evt){
-    if(HostReplyListeners.includes(evt))return;
-    HostReplyListeners.push(evt)
-    HostSocket.on("app." + evt + ".reply",
-        function(data){
-            HostReplies[data.id] = data.reply;
-        }
-    )
-}
-
-async function ask(evt, data){
-    handleListener(evt)
-    if(HostConnected && HostSocket){
-        let ID = uuid();
-        HostSocket.emit('app.' + evt, {id :ID, data: data})
-        return new Promise(resolve => {
-            let i, interval = setInterval(()=>{
-                if(HostReplies[ID]){
-                    resolve(HostReplies[ID])
-                }
-
-                i++
-
-                if(i > 300){
-                    clearInterval(interval)
-                    resolve(null)
-                }
-            }, 10)
-        })
-    }
-    return null
-}
-
-async function build(){
-    if(initialized) return;
-
-    Backend.log("Initializing the API...")
-
-    initialized = true;
-
-    db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', 'xsD6SicFy2MMc.-')
-
-    // await fastify.register(require('@fastify/express'));
-    app = express();
-
-    app.set('trust proxy', true)
-    // app = fastify;
-
-    // Set up multer for file uploads
-    const storage = multer.diskStorage({
-        destination: '/www/ram/',
-        filename: (req, file, callback) => {
-            callback(null, Backend.uuid());
-        }
-    });
-
-    const upload = multer({ storage });
-
-    // POST need to be first since multer will break if any middleware is in front of it....
-    app.use((req, res, next)=>{
-        res.header("Access-Control-Allow-Origin", "*");
-        res.header("Access-Control-Allow-Credentials", "true");
-        res.header("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS,POST,PUT");
-        res.header("Access-Control-Allow-Headers", "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization");
-
-        if(req.method === "POST") req.parseBody = function(callback){
-            return {
-                get type(){
-                    return req.headers["content-type"]
-                },
-
-                get length(){
-                    return req.headers["content-length"]
-                },
-
-                upload(key = "file"){
-                    return (upload.array(key)) (req, res, ()=>{
-                        req.body = {
-                            type: "multipart",
-                            fields: req.body,
-                            files: req.files
-                        }
-                        return callback(req.body)
-                    })
-                },
-
-                data(){
-                    // On regular post data
-                    let chunks = [], length = 0, data;
-            
-                    req.on('data', (chunk) => {
-                        chunks.push(chunk)
-                        length += chunk.length
-                    })
-            
-                    req.on('end', () => {
-            
-                        data = new Uint8Array(length);
-            
-                        let offset = 0
-                        for(let chunk of chunks){
-                            data.set(chunk, offset)
-                            offset += chunk.length
-                        }
-
-                        req.body = {
-                            type: "data",
-                            data,
-                            get string(){
-                                return Buffer.from(data).toString('utf8');
-                            },
-                            get json(){
-                                try{
-                                    let temporary = JSON.parse(Buffer.from(data).toString('utf8'));
-                                    if(temporary) data = temporary
-                                }catch{
-                                    return null
-                                }
-                                
-                                return data
+            ask(evt, data){
+                handleListener(evt)
+                if(HostConnected && HostSocket){
+                    let ID = uuid();
+                    HostSocket.emit('app.' + evt, {id :ID, data: data})
+                    return new Promise(resolve => {
+                        let i, interval = setInterval(()=>{
+                            if(HostReplies[ID]){
+                                resolve(HostReplies[ID])
                             }
-                        }
-    
-                        callback(req.body)
-                    })
-                },
-
-                json(){
-                    (express.json())(req, res, ()=>{
-                        callback(req.body)
-                    })
-                },
-
-                form(){
-                    const form = formidable.formidable({});
-                    form.parse(req, (err, fields, files) => {
-                        if (err) {
-                            callback(null, err);
-                            return;
-                        }
-
-                        req.body = {
-                            type: "multipart",
-                            fields,
-                            files
-                        }
-
-                        callback(req.body);
+            
+                            i++
+            
+                            if(i > 300){
+                                clearInterval(interval)
+                                resolve(null)
+                            }
+                        }, 10)
                     })
                 }
+                return null
             }
-            // if(req.method !== "POST" || req.body) return callback();
-    
-            // // On Multipart (file upload) data
-            // if(req.headers["content-type"] && req.headers["content-type"].startsWith("multipart/form-data")){
-            // }
         }
-        next()
-    })
 
-    // app.post("*", , (r,q) => resolve("POST", r, q))
-
-
-    for(let v of apiVersions){
-        v = API[v]
-        if(v.Initialize) v.Initialize(Backend)
+        ipc = require('@node-ipc/node-ipc').default;
+    
+        ipc.config.id = 'eg_API';
+        ipc.config.retry = 1000;
+        ipc.config.logLevel = 'WARN';
+    
+        let prefix = "[akeno] [persistentHost]";
+        
+        console.log(prefix + ' CONNECTING TO HOST...');
+    
+        ipc.connectTo(
+            HostSocketID,
+            function(){
+                HostSocket = ipc.of[HostSocketID];
+    
+                HostSocket.handle = function(evt, fn){
+                    HostSocket.on(evt, async(data, _socket) => {
+                        if(!data.id){
+                            return fn(data.data, _socket)
+                        }
+                        dispatch(evt + ".reply", {id: data.id, reply: await fn(data.data, _socket)}, false, "")
+                    });
+                }
+    
+                HostSocket.on(
+                    'connect',
+                    function(){
+                        console.log(prefix + ' INFORMING HOST OF OUR EXISTENCE...');
+                        dispatch("hi", "hello", true)
+                    }
+                );
+    
+                HostSocket.on(
+                    'disconnect',
+                    function(){
+                        HostConnected = false
+                        console.log(prefix + ' DISCONNECTED FROM HOST');
+                    }
+                );
+    
+                HostSocket.on(
+                    'app.hi',
+                    function(){
+                        HostConnected = true
+                        console.log(prefix + ' CONNECTED TO HOST');
+                        if(doBuild) build()
+                    }
+                );
+            }
+        );
     }
 
-    // app.use(cors())
-    app.use(wscp)
-    // app.use(compression())
-
-    app.get("*", (r,q) => resolve("GET", r, q))
-    app.delete("*", (r,q) => resolve("DELETE", r, q))
-    app.patch("*", (r,q) => resolve("PATCH", r, q))
-    app.post("*", (r,q) => resolve("POST", r, q))
-    // app.options("*", (r,q) => resolve("OPTIONS", r, q))
-
-    server = http.createServer(app);
-
-    server.on('upgrade', (req, socket, head) => {
-        let _ = req.url.replace(/unsecure\/|secure\//, "")
-
-        wss.handleUpgrade(req, socket, head, (ws) => {
-            wscp(req, {}, ()=>{
-                /*
-                    0 = Connect
-                    1 = Message
-                    2 = Disconnect
-                    3 = Error
-                */
-
-                req.method = "WEBSOCKET";
-                req.event = 0;
-                ws.uuid = uuid();
-
-                resolve("WEBSOCKET", req, ws)
-
-                ws.on('message', (message) => {
-                    req.event = 1;
-                    resolve("WEBSOCKET", req, ws, message)
-                })
-
-                ws.on('close',()=>{
-                    req.event = 2;
-                    resolve("WEBSOCKET", req, ws)
-                })
-            });
-        })
-    })
-
-    server.listen({port}, ()=>{
-        console.log(`[system] [ ${Date.now()} ] > Akeno Webserver has started and is listening on port ${port}! Total hits so far: ${total_hits}`)
-    });
+    if(!doHost && doBuild) build()
 }
 
 //Add API handlers or addons here.
-var API = {
+
+API = {
     _default: 2,
 
     //Add or remove API versions here.
-    1: require("./version/v1"),
-    2: require("./version/v2")
+    1: require("./version/v1.js"),
+    2: require("./version/v2.js")
 }
 
-let apiVersions = Object.keys(API).filter(e=>!isNaN(+e));
+apiVersions = Object.keys(API).filter(version => !isNaN(+version));
 
-API._latest = Math.max(...apiVersions.map(e=>+e));
+API._latest = Math.max(...apiVersions.map(number => +number));
 
-var AddonCache = {}, Backend, config;
+// The init fucntion that initializes and starts the server.
+function build(){
+    if(initialized) return;
+    initialized = true;
 
+    Backend.log("Initializing the API...")
+
+    // Initialize API
+    for(let version of apiVersions){
+        version = API[version]
+        if(version.Initialize) version.Initialize(Backend)
+    }
+
+    db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', 'xsD6SicFy2MMc.-')
+
+    // Set up multer for file uploads
+    // const storage = multer.diskStorage({
+    //     destination: '/www/ram/',
+    //     filename: (req, file, callback) => {
+    //         callback(null, Backend.uuid());
+    //     }
+    // });
+
+    // const upload = multer({ storage })
+    
+    let wss = {
+
+        /* There are many common helper features */
+        idleTimeout: 32,
+        maxBackpressure: 1024,
+        maxPayloadLength: 512,
+        compression: uws.DEDICATED_COMPRESSOR_32KB,
+
+        sendPingsAutomatically: true,
+
+        upgrade(res, req, context) {
+
+            // Upgrading a HTTP connection to a WebSocket
+
+            res.upgrade({
+                uuid: uuid(),
+                url: req.getUrl(),
+                host: req.getHeader("host"),
+            }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
+        },
+
+        open(ws) {
+
+        },
+        
+        message(ws, message, isBinary) {
+
+        },
+        
+        
+        close(ws, code, message) {
+
+        }
+    
+    };
+
+    let types = {
+        json: "application/json; charset=utf-8",
+        js: "application/javascript; charset=utf-8",
+        css: "text/css; charset=utf-8",
+        html: "text/html; charset=utf-8",
+    }
+
+    let version = Backend.config.valueOf("version") || "unknown";
+
+    async function resolve(res, req, secured) {
+        total_hits++
+        if((total_hits - saved_hits) > 2) save_hits();
+
+        res.onData((chunk, isLast) => {
+            // console.log("data: ", chunk, isLast);
+        })
+
+        res.onAborted(() => {
+            abort = true;
+        })
+
+        // Helper variables
+        req.method = req.getMethod().toUpperCase(); // Lowercase would be pretty but harder to adapt
+        req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
+        // req.port = +req.getHeader("host").match(/:([0-9]+)/)[1];
+
+        req.path = req.getUrl();
+        req.secured = secured; // If the communication is done over HTTP or HTTPS
+
+        res.writeHeaders = (headers) => {
+            if(!headers) return;
+            
+            for(let header in headers){
+                res.writeHeader(header, headers[header])
+            }
+        }
+
+        res.send = (message, headers, status) => {
+            // OUTDATED!
+            // Should be avoided for performance reasons
+        
+            if(typeof message !== "string" || !message instanceof ArrayBuffer || !message instanceof Uint8Array || !message instanceof DataView) {
+                if(typeof message === "object") {
+                    res.type("json")
+                }
+
+                message = JSON.stringify(message);
+                Backend.log.verbose("Warning: You are not properly encoding your data before sending. The data were automatically stringified using JSON.stringify, but this has a bad impact on performance. If possible, either send a string, binary data or stringify using fast-json-stringify.")
+            }
+
+            res.cork(() => {
+                res.writeHeaders(headers)
+
+                if(status) res.writeStatus(status + "")
+
+                res.end(message)
+            });
+        }
+
+        res.stream = (stream) => {
+            stream.on('data', (chunk) => {
+                let buffer = Buffer.from(chunk), lastOffset = res.getWriteOffset();
+
+                // Try writing the chunk
+                const [ok, done] = res.tryEnd(buffer, buffer.length);
+
+                if (!done && !ok) {
+                    // Backpressure handling
+                    stream.pause();
+
+                    // Resume once the client is ready
+                    res.onWritable((offset) => {
+                        const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), buffer.length);
+                        if (done) {
+                            stream.close();
+                        } else if (ok) {
+                            stream.resume();
+                        }
+                        return ok;
+                    });
+                } else if (done) {
+                    // Stream is done, close it
+                    stream.close();
+                }
+            });
+
+            stream.on('end', () => {
+                // Ensure the response ends when the stream ends
+                if (res.getWriteOffset() === 0) {
+                    res.end();
+                }
+            });
+
+            stream.on('error', (err) => {
+                // Handle errors
+                console.error('Stream error:', err);
+                res.writeStatus('500 Internal Server Error').end('Internal Server Error');
+            });
+
+            // If the connection is closed by the client, stop reading the file
+            res.onAborted(() => {
+                stream.destroy();
+            });
+        }
+
+        res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
+        res.writeHeader("Access-Control-Allow-Origin", "*");
+        res.writeHeader("Access-Control-Allow-Credentials", "true");
+        res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS,POST,PUT");
+        res.writeHeader("Access-Control-Allow-Headers", "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization");
+
+        res.type = (type) => {
+            res.writeHeader("Content-Type", types[type] || type)
+        }
+
+        let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment)),
+            abort = false
+        ;
+
+
+        function error(error, code){
+            if(typeof error == "number" && Backend.Errors[error]){
+                let _code = code;
+                code = error;
+                error = (_code? code : "") + Backend.Errors[code]
+            }
+
+            res.cork(() => {
+                res.writeStatus('400').writeHeader("Content-Type", "application/json; charset=utf-8").end(`{"success":false,"code":${+code},"error":"${error.replaceAll('"', '\\"')}"}`);
+            })
+        }
+
+        function shift(){
+            index++
+            return segments[index] || "";
+        }
+
+        // Handle the builtin CDN
+        if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
+            Backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
+        }
+        
+        // Handle the builtin API
+        else if(req.domain.startsWith("api.")){
+            let ver = segments[0] ? +(segments[0].slice(1)) : 0;
+
+            if(ver && segments[0].toLowerCase().startsWith("v")){
+                segments.shift()
+            }
+    
+            ver = (ver? ver : API._default);
+    
+            if(API[ver]){
+                await API[ver]["HandleRequest"]({
+                    req,
+                    res,
+                    segments,
+                    shift,
+                    error
+                })
+            } else {
+                error(0)
+            }
+            return;
+        }
+
+
+        else {
+            // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
+            Backend.addon("akeno/web").HandleRequest({segments, req, res})
+        }
+    }
+
+    // Create server instances
+    app = uws.App()
+    if(Backend.config.block("server").properties.enableSSL) SSLApp = uws.SSLApp({})
+
+    // Initialize WebSockets
+    app.ws('/*', wss)
+    
+    // Initialize WebServer
+    app.any('/*', (res, req) => resolve(res, req, true))
+    
+    app.listen(port, (listenSocket) => {
+        if (listenSocket) {
+            console.log(`[system] [ time:${Date.now()} ] > The Akeno server has started and is listening on port ${port}! Total hits so far: ${total_hits}, startup took ${Date.now() - since_startup}ms`)
+
+            // Do the same for SSL
+            if(SSLApp) {
+                SSLApp.ws('/*', wss)
+
+                SSLApp.any('/*', (res, req) => resolve(res, req, true))
+
+                let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
+
+                SSLApp.listen(SSLPort, (listenSocket) => {
+                    if (listenSocket) {
+                        console.log(`[system] Listening with SSL on ${SSLPort}!`)
+                    } else Backend.log.error("[error] Could not start the SSL server! If you do not need SSL, you can ignore this, but it is recommended to remove it from the config. If you do need SSL, make sure nothing is taking the port you configured (" +SSLPort+ ")")
+                });
+            }
+        } else Backend.log.error("[error] Could not start the server!")
+    });
+}
+
+
+// First initialization, ints the backend object.
 (private => {
     let testKey = process.env.AKENO_KEY;
 
@@ -388,13 +491,14 @@ var AddonCache = {}, Backend, config;
         logLevel: isDev? 5 : 3,
 
         config,
+        configRaw,
 
-        configTools,
+        // configTools,
 
         refreshConfig(){
             Backend.log("Refreshing configuration")
-            config = Backend.config = parse(fs.readFileSync(PATH + "./config", "utf8"), true);
-            Backend.configTools = configTools(config)
+            configRaw = Backend.configRaw = parse(fs.readFileSync(PATH + "/config", "utf8"), true);
+            config = Backend.config = configTools(configRaw)
         },
 
         jwt: {
@@ -412,19 +516,17 @@ var AddonCache = {}, Backend, config;
 
         uuid,
         bcrypt,
-        wss,
+        fastJson,
         fs,
         exec,
         spawn,
-        dispatch,
-        ask,
-        HostSocket,
+        host,
         app,
+        SSLApp,
         API,
-        cookieParser,
         CreationCache: {},
 
-        resolve,
+        // resolve,
 
         user: {
             get(idList, callback, items = ["username", "displayname", "pfp", "email", "verified_email", "status", "id"]){
@@ -566,9 +668,8 @@ var AddonCache = {}, Backend, config;
 
             getAuth(req){
                 if(req.User) return req.User;
-                // let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MCwibmFtZSI6ImFkbWluIiwiYXBpIjpmYWxzZSwiaWF0IjoxNzA0MTQxOTcwLCJleHAiOjE3MDkzMjU5NzB9.HMtqSFq_RtoUmpYewOaMGBkkRCYW19X5kPjRvafIqfc";
-                // let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NDIsIm5hbWUiOiJ3ZXJiIiwiYXBpIjpmYWxzZSwiaWF0IjoxNzA0MTY5OTA1LCJleHAiOjE3MDkzNTM5MDV9.EaUIXTyY-I2w8QXIerXZVpqiqYsdjX_3XB7ud5XyETM";
-                let token = typeof req == "string"? req : decodeURIComponent(req.headers.authorization || req.cookies.token || "").replace('Bearer ','').replace('APIKey ','');
+                // TODO: || req.cookies.token - parse cookies
+                let token = typeof req == "string"? req : decodeURIComponent(req.getHeader("authorization") || "").replace('Bearer ','').replace('APIKey ','');
             
                 if(!token) return {error: 13};
             
@@ -838,169 +939,8 @@ if(isDev){
     Backend.log("NOTE: API is running in developmenmt mode.")
 }
 
-async function resolve(method, req, res, message, options = {}){
-    // This is the main request handling function.
-    // Nearly every request, including all websocket events, go through here.
+port = (+Backend.config.block("server").properties.port) || 7007;
+doHost = Backend.config.block("server").properties.enableHost == "prod"? !isDev: Backend.config.block("server").properties.enableHost;
+doBuild = Backend.config.block("server").properties.enableBuild;
 
-    total_hits++
-    if((total_hits - saved_hits) > 2) save_hits();
-
-    let domain = options.domain || (method == "WEBSOCKET" ? "" : req.get('Host') || req.get('host')).replace(/:.*/, ""),
-        segments = (options.path || req.path || req.url).split("/").filter(trash => trash),
-        reply = {},
-        sent,
-        type = "api"
-    ;
-
-    if(domain == "020070.xyz" || domain == "0.020070.xyz" || domain == "1.020070.xyz"){
-        res.redirect(301, `https://ssbrno-my.sharepoint.com/:w:/g/personal/lukas_zloch_gellnerka_cz/EV95SVM5OlREkLBXUTQN4MkBOO9cHnBfz7vKaSQ78wrbnQ?e=yX3KPn`);
-        return
-    }
-
-    if(options.path) req.path = options.path;
-
-    if(method == "WEBSOCKET"){
-        const obj = {};
-
-        for (const [key, value] of (new URLSearchParams(req.url.replace(/^.*\?/, ''))).entries()) {
-            obj[key] = value;
-        }
-
-        req.query = obj;
-    }
-
-    if(method !== "WEBSOCKET" && !options.virtual && segments.length < 1){
-        return res.json({
-            error: "The proxy didnt specify the trust scope along with this request.",
-            code: -1,
-            success: false
-        })
-    }
-
-    // Should be added by the proxy. Do not expect from when accessing the server directly.
-
-    let scope;
-    
-    if(!req.proxyScope){
-        if(options.virtual){
-            scope = "secure";
-        } else {
-            scope = segments.shift();
-        }
-    } else scope = req.proxyScope;
-
-    req.secured = scope == "secure";
-    req.proxyScope = scope;
-    req.url = req.path = ("/" + segments.join("/"));
-
-    /*
-        Good to note;
-        This server became a center hub for everyhing - web apps, cdn, and the API itself.
-        It handles requests for all of them.
-        CDN and API are handled in different way to the webserver, as shown below.
-    */
-
-    // Utils.
-
-    if(method !== "WEBSOCKET"){
-        res.header("Access-Control-Allow-Origin", "*")
-    }
-
-    function error(err, code){
-        if(typeof err == "number" && Backend.Errors[err]){
-            let _code = code;
-            code = err;
-            err = (_code?code:"") + Backend.Errors[code]
-        }
-
-        if(method == "WEBSOCKET"){ res.send("ERROR: " + err); return res.close() }
-
-        reply.success = false;
-
-        if(code || typeof code=="number") reply.code = code;
-
-        reply.error = err;
-
-        if(type !== "api") res.json(reply);
-    }
-    
-    function success(){
-        reply.success = true;
-    }
-
-    let index = -1;
-
-    function shift(){
-        index++
-        return segments[index] || "";
-    }
-
-    function send(message){
-        sent = true
-        if(method == "WEBSOCKET") return res.send(message);
-        res[typeof message=="string"? "send" : "json"](typeof message=="undefined"?reply:message)
-    }
-
-    if(method !== "WEBSOCKET" && domain && (domain.startsWith("cdn.") || domain.startsWith("cdn-origin.") || ["file", "ls", "flags"].includes(segments[0]))){
-
-        // The following is for handling CDN requests.
-
-        type = "cdn";
-
-        Backend.addon("cdn").HandleRequest({method, segments, shift, error, req, res})
-
-        return;
-    }
-
-    
-    if(method !== "WEBSOCKET" && domain && !domain.startsWith("api.")){
-        if(scope === "internal"){
-    
-            // The following is for handling internal queries
-    
-            type = "web";
-            Backend.addon("akeno/web").HandleInternal(segments, req, res)
-    
-            return;
-        }
-
-        // The following is for handling the webserver and its apps.
-
-        type = "web";
-        Backend.addon("akeno/web").HandleRequest({domain, segments, method, req, res})
-
-        return;
-    }
-
-    if(method === "WEBSOCKET" && (req.query && req.query["is-ls-proxy-pass"])){
-        if(!AddonCache["proxyd"]){
-            res.close()
-            return
-        }
-        Backend.addon("proxyd").HandleSocket({req, ws: res, message})
-        return
-    }
-
-    // The following is for handling API requests.
-
-    let ver = segments[0] ? +(segments[0].slice(1)) : 0;
-
-    if(ver && segments[0].toLowerCase().startsWith("v")){
-        segments.shift()
-    }
-
-    if(!req.method) req.method = method;
-
-    ver = (ver? ver : API._default);
-
-    if(API[ver]){
-        await API[ver]["HandleRequest"]({Backend, req, res, segments, reply, error, shift, success, send, message})
-    } else {
-        error(0)
-    }
-
-    if(!sent && !res.wait && method !== "WEBSOCKET") res.json(reply)
-}
-
-
-if(!doHost && doBuild) build()
+initialize()
