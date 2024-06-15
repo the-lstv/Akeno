@@ -416,7 +416,7 @@ function build(){
         }
 
         res.writeHeaders({
-            'X-Powered-By': 'Akeno Server/',
+            'X-Powered-By': 'Akeno Server/' + version,
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
@@ -436,7 +436,6 @@ function build(){
 
             res.cork(() => {
                 res.writeHeaders({
-                    'X-Powered-By': 'Akeno Server/',
                     ...headers,
                 })
 
