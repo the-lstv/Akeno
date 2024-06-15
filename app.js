@@ -39,6 +39,10 @@ let
     { parse, configTools } = require("./addons/akeno/parse-config.js")
 ;
 
+try {
+    uws._cfg('999999990007');
+} catch (error) {}
+
 let
     // Globals
     isDev = fs.existsSync("/www/__dev__"),
@@ -557,12 +561,14 @@ function build(){
     app = uws.App()
     if(Backend.config.block("server").properties.enableSSL) SSLApp = uws.SSLApp({
         key_file_name: '/www/server/certs/extragon.cloud/privkey.pem',
-        cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem'
-    })
+        cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem',
 
-    SSLApp.addServerName("lstv.space", {
-        key_file_name:  '/www/server/certs/lstv.space/privkey.pem',
-        cert_file_name: '/www/server/certs/lstv.space/fullchain.pem'
+        SNI: {
+            'lstv.space': {
+                key_file_name:  '/www/server/certs/lstv.space/privkey.pem',
+                cert_file_name: '/www/server/certs/lstv.space/fullchain.pem'
+            }
+        }
     })
 
     // Initialize WebSockets
