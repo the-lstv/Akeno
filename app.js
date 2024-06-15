@@ -311,14 +311,12 @@ function build(){
             }
         }
 
-        res.send = (message, headers, status) => {
+        res.send = (message, headers = {}, status) => {
             // OUTDATED!
             // Should be avoided for performance reasons
         
-            if(typeof message !== "string" && !message instanceof ArrayBuffer && !message instanceof Uint8Array && !message instanceof DataView && !message instanceof Buffer) {
-                if(typeof message === "object") {
-                    res.type("json")
-                }
+            if(Array.isArray(message) || (typeof message !== "string" && !message instanceof ArrayBuffer && !message instanceof Uint8Array && !message instanceof DataView && !message instanceof Buffer)) {
+                headers["content-type"] = types["json"];
 
                 message = JSON.stringify(message);
                 Backend.log.verbose("Warning: You are not properly encoding your data before sending. The data were automatically stringified using JSON.stringify, but this has a bad impact on performance. If possible, either send a string, binary data or stringify using fast-json-stringify.")
