@@ -123,7 +123,7 @@ function initialize(){
             },
 
             ask(evt, data){
-                handleListener(evt)
+                host.handleListener(evt)
                 if(HostConnected && HostSocket){
                     let ID = uuid();
                     HostSocket.emit('app.' + evt, {id :ID, data: data})
@@ -166,7 +166,7 @@ function initialize(){
                         if(!data.id){
                             return fn(data.data, _socket)
                         }
-                        dispatch(evt + ".reply", {id: data.id, reply: await fn(data.data, _socket)}, false, "")
+                        host.dispatch(evt + ".reply", {id: data.id, reply: await fn(data.data, _socket)}, false, "")
                     });
                 }
     
@@ -174,7 +174,7 @@ function initialize(){
                     'connect',
                     function(){
                         console.log(prefix + ' INFORMING HOST OF OUR EXISTENCE...');
-                        dispatch("hi", "hello", true)
+                        host.dispatch("hi", "hello", true)
                     }
                 );
     
@@ -196,9 +196,7 @@ function initialize(){
                 );
             }
         );
-    }
-
-    if(!doHost && doBuild) build()
+    } else if (doBuild) build();
 }
 
 //Add API handlers or addons here.
