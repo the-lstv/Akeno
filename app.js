@@ -561,14 +561,13 @@ function build(){
     app = uws.App()
     if(Backend.config.block("server").properties.enableSSL) SSLApp = uws.SSLApp({
         key_file_name: '/www/server/certs/extragon.cloud/privkey.pem',
-        cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem',
+        cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem'
+    })
 
-        SNI: {
-            'lstv.space': {
-                key_file_name:  '/www/server/certs/lstv.space/privkey.pem',
-                cert_file_name: '/www/server/certs/lstv.space/fullchain.pem'
-            }
-        }
+    SSLApp.domain("lstv.space").get("/*", (res, req) => resolve(res, req, true))
+    SSLApp.addServerName("lstv.space", {
+        key_file_name:  '/www/server/certs/lstv.space/privkey.pem',
+        cert_file_name: '/www/server/certs/lstv.space/fullchain.pem'
     })
 
     // Initialize WebSockets
