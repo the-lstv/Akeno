@@ -317,7 +317,7 @@ function build(){
             // OUTDATED!
             // Should be avoided for performance reasons
         
-            if(typeof message !== "string" || !message instanceof ArrayBuffer || !message instanceof Uint8Array || !message instanceof DataView) {
+            if(typeof message !== "string" && !message instanceof ArrayBuffer && !message instanceof Uint8Array && !message instanceof DataView && !message instanceof Buffer) {
                 if(typeof message === "object") {
                     res.type("json")
                 }

@@ -314,8 +314,8 @@ server = {
                                 headers['cache-control'] = `public, max-age=${50000}`;
                                 
                                 res.writeHeaders(headers)
-                                res.stream(fs.createReadStream(file));
-                                // res.send(fs.readFileSync(file), headers)
+                                // res.stream(fs.createReadStream(file));
+                                res.send(fs.readFileSync(file), headers)
 
                             }
 
@@ -409,17 +409,17 @@ server = {
                 res.send(applicationCache)
             break
             case "resolve":
-                applications.find(app => app.path == req.query.app).serve({ domain: "internal", method: "GET", segments: req.query.path.replace(/\?.*$/, '').split("/").filter(g => g), req, res })
+                applications.find(app => app.path == req.getQuery("app")).serve({ domain: "internal", method: "GET", segments: req.getQuery("path").replace(/\?.*$/, '').split("/").filter(g => g), req, res })
             break
             case "domain":
                 for(asd in assignedDomains){
-                    if(assignedDomains[asd] == req.query.app) return res.send(asd);
+                    if(assignedDomains[asd] == req.getQuery("app")) return res.send(asd);
                 }
                 return res.send("");
             break
             case "temporaryDomain":
                 let random = Backend.uuid();
-                assignedDomains[random] = req.query.app;
+                assignedDomains[random] = req.getQuery("app");
                 return res.send(random);
             break
             case "reload":

@@ -223,8 +223,8 @@ api = {
                         }
 
                         if(fs.existsSync(filePath)){
-                            if(req.query.size && mimeType.startsWith("image")){
-                                let size = req.query.size.split(",");
+                            if(req.getQuery("size") && mimeType.startsWith("image")){
+                                let size = req.getQuery("size").split(",");
                     
                                 if(size.length < 2) size[1] = size[0];
                     
@@ -234,7 +234,7 @@ api = {
                                 if(isNaN(size[0])) size[0] = null;
                                 if(isNaN(size[1])) size[1] = null;
                     
-                                content = await sharp(filePath).resize(size[0] === 0 ? null : size[0], size[1] === 0 ? null : size[1], {fit: req.query.fit || "cover"}).toBuffer()
+                                content = await sharp(filePath).resize(size[0] === 0 ? null : size[0], size[1] === 0 ? null : size[1], {fit: req.getQuery("fit") || "cover"}).toBuffer()
                             }
 
                             send(content || filePath, 31536000, mimeType, content? false : true)
@@ -381,7 +381,7 @@ api = {
                                         hash: file.md5,
                                         originalName: file.originalname,
                                         url: "https://cdn.extragon.cloud/file/" + file.md5 + "." + ext,
-                                        ... typeof req.query.checkNSFW == "string" && ["png", "gif", "jpg", "jpeg", "webp", "webm", "mp4", "tiff", "bmp"].includes(ext.toLowerCase()) ? {
+                                        ... typeof req.getQuery("checkNSFW") == "string" && ["png", "gif", "jpg", "jpeg", "webp", "webm", "mp4", "tiff", "bmp"].includes(ext.toLowerCase()) ? {
                                             nsfw: await imageCheckNSFW(file.md5)
                                         } : {}
                                     }
