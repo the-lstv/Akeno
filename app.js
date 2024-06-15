@@ -560,6 +560,11 @@ function build(){
         cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem'
     })
 
+    SSLApp.addServerName("lstv.space", {
+        key_file_name:  '/www/server/certs/lstv.space/privkey.pem',
+        cert_file_name: '/www/server/certs/lstv.space/fullchain.pem'
+    })
+
     // Initialize WebSockets
     app.ws('/*', wss)
     
