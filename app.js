@@ -414,12 +414,14 @@ function build(){
                 res.writeHeader(header, headers[header])
             }
         }
+        
+        res.writeHeader('X-Powered-By', 'Akeno Server/' + version)
 
         res.send = (message, headers = {}, status) => {
             // OUTDATED!
             // Should be avoided for performance reasons
         
-            if(Array.isArray(message) || (typeof message !== "string" && !message instanceof ArrayBuffer && !message instanceof Uint8Array && !message instanceof DataView && !message instanceof Buffer)) {
+            if(Array.isArray(message) || (typeof message !== "string" && !(message instanceof ArrayBuffer) && !(message instanceof Uint8Array) && !(message instanceof DataView) && !(message instanceof Buffer))) {
                 headers["content-type"] = types["json"];
 
                 message = JSON.stringify(message);
@@ -427,7 +429,13 @@ function build(){
             }
 
             res.cork(() => {
-                res.writeHeaders(headers)
+                res.writeHeaders({
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
+                    "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization",
+                    ...headers,
+                })
 
                 if(status) res.writeStatus(status + "")
 
@@ -480,12 +488,6 @@ function build(){
                 stream.destroy();
             });
         }
-
-        res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
-        res.writeHeader("Access-Control-Allow-Origin", "*");
-        res.writeHeader("Access-Control-Allow-Credentials", "true");
-        res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS,POST,PUT");
-        res.writeHeader("Access-Control-Allow-Headers", "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization");
 
         res.type = (type) => {
             res.writeHeader("Content-Type", types[type] || type)
