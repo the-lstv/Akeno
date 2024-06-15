@@ -555,7 +555,10 @@ function build(){
 
     // Create server instances
     app = uws.App()
-    if(Backend.config.block("server").properties.enableSSL) SSLApp = uws.SSLApp({})
+    if(Backend.config.block("server").properties.enableSSL) SSLApp = uws.SSLApp({
+        key_file_name: '/www/server/certs/extragon.cloud/privkey.pem',
+        cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem'
+    })
 
     // Initialize WebSockets
     app.ws('/*', wss)
