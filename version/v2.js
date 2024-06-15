@@ -209,7 +209,7 @@ main = {
                         if(!req.secured) return error(35);
                         if(req.method != "POST") return error(30);
 
-                        res.writeHeader('Access-Control-Allow-Origin', req.get("Origin"));
+                        res.writeHeader('Access-Control-Allow-Origin', res.getHeader("Origin"));
 
                         req.parseBody((data, fail) => {
                             let type = shift();
@@ -391,7 +391,7 @@ main = {
                         if(!req.secured) return error(35);
                         if(req.method != "POST") return error(30);
 
-                        res.writeHeader('Access-Control-Allow-Origin', req.get("Origin"));
+                        res.writeHeader('Access-Control-Allow-Origin', res.getHeader("Origin"));
                         
                         
                         req.parseBody((data, fail) => {
