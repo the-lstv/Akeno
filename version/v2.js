@@ -209,8 +209,6 @@ main = {
                         if(!req.secured) return error(35);
                         if(req.method != "POST") return error(30);
 
-                        res.writeHeader('Access-Control-Allow-Origin', req.getHeader("Origin"));
-
                         req.parseBody((data, fail) => {
                             let type = shift();
 
@@ -390,9 +388,6 @@ main = {
                     case "create":
                         if(!req.secured) return error(35);
                         if(req.method != "POST") return error(30);
-
-                        res.writeHeader('Access-Control-Allow-Origin', req.getHeader("Origin"));
-                        
                         
                         req.parseBody((data, fail) => {
                             if(fail){
@@ -424,7 +419,9 @@ main = {
 
                                 token.success = true;
 
-                                res.send(token)
+                                res.send(token, {
+                                    'Access-Control-Allow-Origin': req.getHeader("origin")
+                                })
                             }, req.ip)
                         }).data()
                     break;

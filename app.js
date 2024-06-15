@@ -287,18 +287,122 @@ function build(){
         total_hits++
         if((total_hits - saved_hits) > 2) save_hits();
 
-        res.onData((chunk, isLast) => {
-            // console.log("data: ", chunk, isLast);
-        })
-
-        res.onAborted(() => {
-            abort = true;
-        })
-
         // Helper variables
         req.method = req.getMethod().toUpperCase(); // Lowercase would be pretty but harder to adapt
         req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
         // req.port = +req.getHeader("host").match(/:([0-9]+)/)[1];
+
+        req.bodyChunks = []
+
+        if(req.method === "POST"){
+            // To be honest; Body on GET requests SHOULD be allowed. There are many legitimate uses for it. But since current browser implementations usually block the body for GET requests, I am also skipping their body proccessing.
+
+            req.hasFullBody = false
+
+            res.onData((chunk, isLast) => {
+                req.bodyChunks.push(Buffer.from(chunk));
+                // console.log("data: ", chunk, isLast);
+    
+                if (isLast) {
+                    Object.defineProperties(req, {
+                        fullBody: {
+                            get(){
+                                if(req._fullBody) return req._fullBody;
+                                // req.bodyChunks = []
+                                return req._fullBody = Buffer.concat(req.bodyChunks)
+                            }
+                        }
+                    })
+
+                    req.hasFullBody = true;
+
+                    if(req.onFullData) req.onFullData();
+                }
+            })
+
+            // Helper function
+            req.parseBody = function bodyParser(callback){
+                return {
+                    get type(){
+                        return req.getHeader("content-type")
+                    },
+    
+                    get length(){
+                        return req.getHeader("content-length")
+                    },
+    
+                    upload(key = "file"){
+                        return (upload.array(key)) (req, res, ()=>{
+                            req.body = {
+                                type: "multipart",
+                                fields: req.body,
+                                files: req.files
+                            }
+                            return callback(req.body)
+                        })
+                    },
+    
+                    data(){
+                        function done(){
+                            req.body = {
+                                get data(){
+                                    return req.fullBody
+                                },
+
+                                get string(){
+                                    return req.fullBody.toString('utf8');
+                                },
+
+                                get json(){
+                                    let data;
+
+                                    try{
+                                        data = JSON.parse(req.fullBody.toString('utf8'));
+                                    } catch {
+                                        return null
+                                    }
+
+                                    return data
+                                }
+                            }
+        
+                            callback(req.body)
+                        }
+
+
+                        if(req.hasFullBody) done(); else req.onFullData = done;
+                    },
+    
+                    json(){
+                        // (express.json())(req, res, ()=>{
+                        //     callback(req.body)
+                        // })
+                    },
+    
+                    form(){
+                        // const form = formidable.formidable({});
+                        // form.parse(req, (err, fields, files) => {
+                        //     if (err) {
+                        //         callback(null, err);
+                        //         return;
+                        //     }
+    
+                        //     req.body = {
+                        //         type: "multipart",
+                        //         fields,
+                        //         files
+                        //     }
+    
+                        //     callback(req.body);
+                        // })
+                    }
+                }
+            }
+        }
+
+        res.onAborted(() => {
+            abort = true;
+        })
 
         req.path = req.getUrl();
         req.secured = secured; // If the communication is done over HTTP or HTTPS
