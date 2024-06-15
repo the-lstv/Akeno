@@ -414,8 +414,15 @@ function build(){
                 res.writeHeader(header, headers[header])
             }
         }
-        
-        res.writeHeader('X-Powered-By', 'Akeno Server/' + version)
+
+        res.writeHeaders({
+            'X-Powered-By': 'Akeno Server/',
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
+            "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization",
+            ...headers,
+        })
 
         res.send = (message, headers = {}, status) => {
             // OUTDATED!
@@ -430,10 +437,7 @@ function build(){
 
             res.cork(() => {
                 res.writeHeaders({
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Credentials": "true",
-                    "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
-                    "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization",
+                    'X-Powered-By': 'Akeno Server/',
                     ...headers,
                 })
 
