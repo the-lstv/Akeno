@@ -83,12 +83,6 @@ function files_try(...files){
 }
 
 // Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
-// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
-// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
-// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
-// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
-// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
-// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
 
 function cachedFile(file){
     file = nodePath.normalize(file);
@@ -123,6 +117,25 @@ function updateCache(file, content){
     if(!cache[file]) cachedFile(file);
 
     cache[file].content = content;
+}
+
+
+function checkSupportedBrowser(userAgent, minChrome, minFirefox) {
+    const ua = userAgent.toLowerCase();
+
+    if (ua.includes('chrome')) {
+        const match = ua.match(/chrome\/(\d+)/);
+
+        if (match && parseInt(match[1], 10) < minChrome) return false;
+
+    } else if (ua.includes('firefox')) {
+        const match = ua.match(/firefox\/(\d+)/);
+
+        if (match && parseInt(match[1], 10) < minFirefox) return false;
+
+    } else if (ua.includes('msie') || ua.includes('trident')) return false;
+
+    return true; // Allow by default if the browser could not be determined
 }
 
 // Section: API
@@ -441,7 +454,7 @@ server = {
             app = applications.find(app => app.path == appPath)
 
             if(app.manifest.server.properties.redirect_https && !Backend.isDev && !req.secured){
-                res.redirect(301, `https://${req.getHeader("host")}${req.url}`);
+                res.redirect(301, `https://${req.getHeader("host")}${req.path}`);
                 return
             }
 
@@ -451,7 +464,6 @@ server = {
             }
 
             if(app.manifest.server.properties.handle){
-
 
                 // Redirects the request to an API endpoint instead
                 // TODO: Extend this so that it is a standalone block that can specify which URLs get forwarded to which endpoint.
@@ -467,9 +479,20 @@ server = {
                 return
             }
 
+            if(app.manifest.browserSupport){
+                if(!checkSupportedBrowser(req.getHeader('user-agent'), +app.manifest.browserSupport.properties.chrome[0], +app.manifest.browserSupport.properties.firefox[0])){
+                    res.cork(() => {
+                        res.writeHeader('Content-Type', 'text/html').writeStatus('403 Forbidden').end(`<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${app.manifest.browserSupport.properties.chrome[0]} and up, Firefox ${app.manifest.browserSupport.properties.firefox[0]} and up.`)
+                    })
+                    return
+                }
+            }
+
             app.serve({ segments, req, res })
         } else {
-            res.send("404 - Website not found (it may not exist), and nothing to handle the missing page was found :P", null, 404)
+            res.cork(() => {
+                res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${version}`)
+            })
         }
     }
 }
@@ -568,16 +591,19 @@ function get_content(app, url, file){
                         switch (token.key) {
                             case "no-init":
                                 doNotInit = true;
-                            break;
+                            break
+
                             case "variables":
                                 for(const variable in token.properties){
                                     if(!token.properties.hasOwnProperty(variable)) continue;
                                     variables[variable] = token.properties[variable].join("")
                                 }
-                            break;
+                            break
+
                             case "print":
                                 content.push(stringVar(token.values.join(" ")))
-                            break;
+                            break
+
                             case "preload":
                                 for(let value of token.values){
                                     value = value.join("");
@@ -586,7 +612,8 @@ function get_content(app, url, file){
                                     content.push(`<script src="${file}"></script>`)
                                     waterfall.head += `<link rel=preload href="${file}" as=script>`
                                 }
-                            break;
+                            break
+
                             case "resources":
                                 for(const key in token.properties){
                                     if(!token.properties.hasOwnProperty(key)) continue;
@@ -604,7 +631,8 @@ function get_content(app, url, file){
 
                                     waterfall.resources[key] = properties
                                 }
-                            break;
+                            break
+
                             case "manifest": case "mainfest": // Youd be surprised how many times i made that typo
                                 if(token.properties.title){
                                     prevTitle = token.properties.title.map(item => item == "+"? prevTitle : item).join("");
@@ -642,10 +670,12 @@ function get_content(app, url, file){
                                     waterfall.bodyAttributes["ls"] = ""
                                 }
                             break
+
                             case "part":
                                 if(Array.isArray(token.values[0])) token.values[0] = token.values[0][0];
                                 parts[token.values[0]] = token.content
-                            break;
+                            break
+
                             case "get":
                                 for(let part of token.values){
                                     if(Array.isArray(part)) part = part[0];
@@ -884,7 +914,7 @@ function get_content(app, url, file){
 
     if(waterfall.deferResources.length > 0){
         // This is OBVIOUSLY not a great practice, especially given that we have an actual HTML parser. But it does currently work the best.
-        waterfall.head = waterfall.head.replace(`$_backend.get("resources")`, `["${waterfall.deferResources.join('","').replaceAll("\n", "")}"]`)
+        waterfall.head = waterfall.head.replace(`Akeno.get("resources")`, `["${waterfall.deferResources.join('","').replaceAll("\n", "")}"]`)
     }
 
     if(doNotInit){
