@@ -254,7 +254,7 @@ main = {
 
                             let permissions = decodePermissions(data.permissions || "");
 
-                            backend.db.database("extragon").query(`SELECT displayname, name, auth_uri, owner, icon, accent, banner, pocket_id FROM apps WHERE id = ?`,
+                            backend.db.database("extragon").query(`SELECT displayname, name, owner, icon, accent, banner, pocket_id FROM apps WHERE id = ?`,
                                 [data.app],
                                 function (err, result){
                                     if(err){
@@ -265,7 +265,7 @@ main = {
                                         return error("Application not found")
                                     }
 
-                                    delete result[0].auth_uri;
+                                    // delete result[0].auth_uri;
 
                                     res.send({
                                         success: true,
