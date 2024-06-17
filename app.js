@@ -1,4 +1,6 @@
 let
+    version = "1.4.1",
+
     // Modules
     uws = require('uWebSockets.js'),
 
