@@ -4,12 +4,9 @@ let
 
     fastJson = require("fast-json-stringify"),
 
-    // Temporary
-    // http = require("http"),
-    // express = require("express"),
-    // bodyParser = require('body-parser'),
-    // compression = require("compression"),
-    // cors = require("cors"),
+    // Only used for proxy!
+    http = require("http"),
+
     cookieParser = require('cookie-parser'),
 
     fs = require("fs"),
@@ -296,7 +293,68 @@ function build(){
         req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
         // req.port = +req.getHeader("host").match(/:([0-9]+)/)[1];
 
+        let abort = false;
+
+        res.onAborted(() => {
+            abort = true;
+        })
+
+        req.path = req.getUrl();
+        req.secured = secured; // If the communication is done over HTTP or HTTPS
+
+
         req.bodyChunks = []
+
+        if(req.domain == "upedie.online"){
+            const options = {
+                hostname: "localhost",
+                port: 42069,
+                path: req.path,
+                method: req.method,
+                headers: {}
+            };
+
+            req.forEach((key, value) => {
+                options.headers[key] = value;
+            });
+          
+            const proxyReq = http.request(options, (proxyRes) => {
+                let chunks = []
+
+                proxyRes.on('data', (chunk) => {
+                    chunks.push(Buffer.from(chunk));
+                });
+                
+                proxyRes.on('end', () => {
+                    res.cork(() => {
+                        res.writeStatus(`${proxyRes.statusCode} ${proxyRes.statusMessage}`);
+                        proxyRes.headers.server = "Akeno Server Proxy/" + version;
+    
+                        for(let header in proxyRes.headers){
+                            if(header === "date" || header === "content-length") continue;
+        
+                            res.writeHeader(header, proxyRes.headers[header]);
+                        }
+
+                        res.end(Buffer.concat(chunks));
+                    })
+                });
+            });
+          
+            proxyReq.on('error', (e) => {
+                res.cork(() => {
+                    res.writeStatus('500 Internal Server Error').end(`Proxy error: ${e.message}\nPowered by Akeno/${version}`);
+                })
+            });
+          
+            res.onData((chunk, isLast) => {
+                // proxyReq.write(chunk);
+                if (isLast) {
+                    proxyReq.end();
+                }
+            });
+            return;
+        }
 
         if(req.method === "POST"){
             // To be honest; Body on GET requests SHOULD be allowed. There are many legitimate uses for it. But since current browser implementations usually block the body for GET requests, I am also skipping their body proccessing.
@@ -404,13 +462,6 @@ function build(){
             }
         }
 
-        res.onAborted(() => {
-            abort = true;
-        })
-
-        req.path = req.getUrl();
-        req.secured = secured; // If the communication is done over HTTP or HTTPS
-
         res.writeHeaders = (headers) => {
             if(!headers) return;
             
@@ -470,10 +521,7 @@ function build(){
                         }
                         return ok;
                     });
-                } else if (done) {
-                    // Stream is done, close it
-                    stream.close();
-                }
+                } else if (done) stream.close();
             });
 
             stream.on('end', () => {
@@ -499,9 +547,7 @@ function build(){
             res.writeHeader("Content-Type", types[type] || type)
         }
 
-        let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment)),
-            abort = false
-        ;
+        let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
 
 
         function error(error, code){
@@ -527,7 +573,7 @@ function build(){
         }
         
         // Handle the builtin API
-        else if(req.domain.startsWith("api.")){
+        else if(req.domain.startsWith("api.extragon")){
             let ver = segments[0] ? +(segments[0].slice(1)) : 0;
 
             if(ver && segments[0].toLowerCase().startsWith("v")){
@@ -559,16 +605,6 @@ function build(){
 
     // Create server instances
     app = uws.App()
-    if(Backend.config.block("server").properties.enableSSL) SSLApp = uws.SSLApp({
-        key_file_name: '/www/server/certs/extragon.cloud/privkey.pem',
-        cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem'
-    })
-
-    // SSLApp.domain("lstv.space")
-    // SSLApp.addServerName("lstv.space", {
-    //     key_file_name:  '/www/server/certs/lstv.space/privkey.pem',
-    //     cert_file_name: '/www/server/certs/lstv.space/fullchain.pem'
-    // }).get("/*", (res, req) => resolve(res, req, true))
 
     // Initialize WebSockets
     app.ws('/*', wss)
@@ -580,13 +616,59 @@ function build(){
         if (listenSocket) {
             console.log(`[system] [ time:${Date.now()} ] > The Akeno server has started and is listening on port ${port}! Total hits so far: ${total_hits}, startup took ${Date.now() - since_startup}ms`)
 
-            // Do the same for SSL
-            if(SSLApp) {
-                SSLApp.ws('/*', wss)
-
-                SSLApp.any('/*', (res, req) => resolve(res, req, true))
+            // Configure SSL
+            if(Backend.config.block("server").properties.enableSSL) {
+                SSLApp = uws.SSLApp();
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
+
+                SSLApp.ws('/*', wss)
+                SSLApp.any('/*', (res, req) => resolve(res, req, true))
+
+                // If sslRouter is defined
+                if(Backend.config.block("sslRouter")){
+                    let SNIDomains = Backend.config.block("sslRouter").properties.domains;
+    
+                    if(SNIDomains){
+
+
+                        // This entire proccess is a bit annoying and messy due to the weird API for SNI domains in uWebSockets.
+                        // If it will be necessary, a fork of uWS could be made to make the API cleaner, faster and more fitting to our use-case.
+
+                        if(!Backend.config.block("sslRouter").properties.certBase){
+                            return Backend.log.error("Could not start SSL server - you are missing certBase in your sslRouter block.")
+                        }
+                        if(!Backend.config.block("sslRouter").properties.certBase){
+                            return Backend.log.error("Could not start SSL server - you are missing keyBase in your sslRouter block.")
+                        }
+
+                        function addSNIRoute(domain) {
+                            SSLApp.addServerName(domain, {
+                                key_file_name:  Backend.config.block("sslRouter").properties.keyBase[0].replace("{domain}", domain.replace("*.", "")),
+                                cert_file_name: Backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", domain.replace("*.", ""))
+                            })
+    
+                            // For some reason we still have to include a separate router like so:
+                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, true))
+                            // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
+                        }
+
+                        for(let domain of SNIDomains) {
+                            addSNIRoute(domain)
+                            if(Backend.config.block("sslRouter").properties.subdomainWildcard){
+                                addSNIRoute("*." + domain)
+                            }
+                        }
+
+                        // if(Backend.config.block("sslRouter").properties.autoAddDomains){
+                        //     SSLApp.missingServerName((hostname) => {
+                        //         Backend.log.warn("You are missing a SSL server name <" + hostname + ">! Trying to use a certificate on the fly.");
+
+                        //         addSNIRoute(hostname)
+                        //     })
+                        // }
+                    }
+                }
 
                 SSLApp.listen(SSLPort, (listenSocket) => {
                     if (listenSocket) {

@@ -20,6 +20,19 @@ server {
     PATH: "/www/content/akeno/";
 }
 
+sslRouter {
+    # Currently the options for sslRouter are very limited and only suited for a thin range of configurations
+    # To allow multiple certificates, you add server names below.
+
+    certBase: "/www/server/certs/{domain}/fullchain.pem";
+    keyBase: "/www/server/certs/{domain}/privkey.pem";
+
+    domains: lstv.space, extragon.cloud, upedie.online;
+
+    autoAddDomains;
+    subdomainWildcard;
+}
+
 performance {
     # How many threads to spawn for multi-threading. Range between 1 to the amount of your CPU cores.
     threads: 2;
@@ -48,6 +61,7 @@ web {
         "/www/content/akeno/web/*",
         "/www/proj/glitter/demo/",
         "/www/content/shared/wss/web/*",
+        "/www/content/shared/wss/api/",
         "/www/proj/creator/*"
     ;
 }

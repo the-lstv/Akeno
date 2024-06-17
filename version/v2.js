@@ -175,6 +175,29 @@ main = {
                 res.send(`{"current":2,"default":${backend.API._default},"latest":${backend.API._latest}}`)
             break;
 
+            case "apps":
+                // User = backend.user.getAuth(req) // Used in case of private apps
+                
+                switch(shift()){
+                    case "list":
+                        let filter = shift();
+
+                        backend.db.database("extragon").query(`SELECT id, name, displayname, icon, banner, accent, description, owner, tags FROM \`lstv.apps\`${filter == "store"? " where show_in_store = true": filter == "home"? " where show_in_homepage": ""} LIMIT ? OFFSET ?`,
+                            [+req.getQuery("limit") || 500, +req.getQuery("offset") || 0],
+
+                            async function(err, results) {
+                                if(err) return error(24)
+
+                                // TODO: Use fast-json-stringify
+                                res.send(results)
+                            }
+                        )
+                    break;
+                    default:
+                        return error(2)
+                }
+            break;
+
             case "auth":
                 User = backend.user.getAuth(req)
 
