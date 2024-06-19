@@ -27,7 +27,11 @@ sslRouter {
     certBase: "/www/server/certs/{domain}/fullchain.pem";
     keyBase: "/www/server/certs/{domain}/privkey.pem";
 
-    domains: lstv.space, extragon.cloud, upedie.online;
+    domains:
+        lstv.space,
+        extragon.cloud,
+        upedie.online
+    ;
 
     autoAddDomains;
     subdomainWildcard;
