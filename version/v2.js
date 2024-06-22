@@ -94,6 +94,9 @@ main = {
                     "id": {
                         "type": "number"
                     },
+                    "type": {
+                        "type": "number"
+                    },
                     "name": {
                         "type": "string"
                     },
