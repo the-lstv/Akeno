@@ -309,19 +309,6 @@ function build(){
             }
         }
 
-        res.writeHeaders({
-            'X-Powered-By': 'Akeno Server/' + version,
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
-            "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
-        })
-
-        if(req.method == "OPTIONS"){
-            res.writeHeader("Access-Control-Max-Age", "345600").end()
-            return
-        }
-
         let abort = false;
 
         res.onAborted(() => {
@@ -383,6 +370,21 @@ function build(){
                 }
             });
             return;
+        }
+
+        res.writeHeaders({
+            'X-Powered-By': 'Akeno Server/' + version,
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
+            "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
+        })
+
+        // Handle preflights:
+        if(req.method == "OPTIONS"){
+            // Prevent preflights for 16 days
+            res.writeHeader("Access-Control-Max-Age", "1382400").end()
+            return
         }
 
         if(req.method === "POST"){
@@ -895,6 +897,17 @@ function build(){
                     return {error: 9}
                 }
             }
+        },
+
+        memoryCache: {},
+
+        setCache(req, data, expire = 300){
+            return (Backend.memoryCache[req.getHeader("host") + req.getUrl()] = {data, expire: Date.now() + (expire * 1000)}).data
+        },
+
+        getCache(req){
+            let id = req.getHeader("host") + req.getUrl(), cache = Backend.memoryCache[id];
+            return cache && cache.expire > Date.now()? cache.data: (delete Backend.memoryCache[id], false)
         },
 
         pockets: {

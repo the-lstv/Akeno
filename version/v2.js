@@ -171,6 +171,8 @@ main = {
                     case "list":
                         let filter = shift();
 
+                        return backend.getCache(req) ||
+
                         backend.db.database("extragon").query(`SELECT id, name, displayname, icon, banner, accent, description, owner, tags FROM \`lstv.apps\`${filter == "store"? " where show_in_store = true": filter == "home"? " where show_in_homepage": ""} LIMIT ? OFFSET ?`,
                             [+req.getQuery("limit") || 500, +req.getQuery("offset") || 0],
 
@@ -178,7 +180,7 @@ main = {
                                 if(err) return error(24)
 
                                 // TODO: Use fast-json-stringify
-                                res.send(results)
+                                res.send(backend.setCache(req, results, 300000), {"Access-Control-Max-Age": "300000"})
                             }
                         )
                     break;
