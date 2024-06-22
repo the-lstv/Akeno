@@ -383,7 +383,7 @@ function build(){
         // Handle preflights:
         if(req.method == "OPTIONS"){
             // Prevent preflights for 16 days
-            res.writeHeader("Access-Control-Max-Age", "1382400").end()
+            res.writeHeader("Cache-Control", "public, max-age=1382400").end()
             return
         }
 
@@ -509,7 +509,7 @@ function build(){
             }
 
             if(res.setCache){
-                headers["Access-Control-Max-Age"] = res.setCache;
+                headers["Cache-Control"] = "public, max-age=" + res.setCache;
             }
 
             res.cork(() => {
