@@ -84,7 +84,7 @@ main = {
         backend = _backend
 
 
-        main.stringifyApps = backend.fastJson({
+        main.schema.apps = backend.fastJson({
             "$schema": "http://json-schema.org/draft-07/schema#",
             "title": "Generated schema for Root",
             "type": "array",
@@ -225,8 +225,7 @@ main = {
                             async function(err, results) {
                                 if(err) return error(24)
 
-                                // TODO: Use fast-json-stringify
-                                res.send(main.stringifyApps(results), {"Access-Control-Max-Age": "300000"})
+                                res.type("json").cache("300000").send(main.schema.apps(results))
                             }
                         )
                     break;
@@ -550,7 +549,9 @@ main = {
                 }
                 api.HandleRequest({backend, req, res, segments, error, shift})
         }
-    }
+    },
+
+    schema: {}
 }
 
 module.exports = main;

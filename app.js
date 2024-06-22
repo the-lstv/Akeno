@@ -504,6 +504,14 @@ function build(){
                 Backend.log.verbose("Warning: You are not properly encoding your data before sending. The data were automatically stringified using JSON.stringify, but this has a bad impact on performance. If possible, either send a string, binary data or stringify using fast-json-stringify.")
             }
 
+            if(res.setType){
+                headers["content-type"] = res.setType;
+            }
+
+            if(res.setCache){
+                headers["Access-Control-Max-Age"] = res.setCache;
+            }
+
             res.cork(() => {
                 res.writeHeaders({
                     ...headers,
@@ -559,7 +567,13 @@ function build(){
         }
 
         res.type = (type) => {
-            res.writeHeader("Content-Type", types[type] || type)
+            res.setType = types[type] || type
+            return res
+        }
+
+        res.cache = (duration) => {
+            res.setCache = duration
+            return res
         }
 
         let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
