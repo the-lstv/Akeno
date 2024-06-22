@@ -166,12 +166,12 @@ main = {
 
             case "apps":
                 // User = backend.user.getAuth(req) // Used in case of private apps
-                
+
                 switch(shift()){
                     case "list":
                         let filter = shift();
 
-                        return backend.getCache(req) ||
+                        if(backend.getCache(req)) return res.send(backend.getCache(req), {"Access-Control-Max-Age": "300000"});
 
                         backend.db.database("extragon").query(`SELECT id, name, displayname, icon, banner, accent, description, owner, tags FROM \`lstv.apps\`${filter == "store"? " where show_in_store = true": filter == "home"? " where show_in_homepage": ""} LIMIT ? OFFSET ?`,
                             [+req.getQuery("limit") || 500, +req.getQuery("offset") || 0],
