@@ -1,6 +1,6 @@
 /*
 
-    ExtraGon API default endpoints V2
+    ExtraGon API default endpoints and router (v2)
 
 */
 
@@ -19,28 +19,17 @@ function setAuthCookie(req, res, token, expiresIn){
 
 let permissions = {
     // Please keep the numbers - they are IDs and should not change.
-    'pockets.list'
-        :1,
-    'pockets.transaction'
-        :2,
-    'info.email.read'
-        :3,
-    'info.email.change'
-        :4,
-    'info.username.read'
-        :5,
-    'info.username.change'
-        :6,
-    'info.phone.read'
-        :7,
-    'info.phone.change'
-        :8,
-    'info.ip.read'
-        :9,
-    'info.ip'
-        :10,
-    'info.password.change'
-        :11,
+    'pockets.list' :1,
+    'pockets.transaction' :2,
+    'info.email.read' :3,
+    'info.email.change' :4,
+    'info.username.read' :5,
+    'info.username.change' :6,
+    'info.phone.read' :7,
+    'info.phone.change' :8,
+    'info.ip.read' :9,
+    'info.ip' :10,
+    'info.password.change' :11,
     'info.password.validate' :12,
     'pockets.read' :14,
     'cloud.services.list' :15,

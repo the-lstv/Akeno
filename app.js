@@ -88,6 +88,8 @@ function initialize(){
         // Why does this even happen in the first place
         console.debug("[system] [ERROR] It's probably fine, just some poorly written module can't throw a proper error instead of crashing the whole thread.\nThe error: ", err);
     });
+
+    process.on('uncaughtException', (err) => {});
     
     process.on('exit', () => {
         save_hits()
@@ -255,6 +257,8 @@ function build(){
 
             // Upgrading a HTTP connection to a WebSocket
 
+
+
             res.upgrade({
                 uuid: uuid(),
                 url: req.getUrl(),
@@ -263,15 +267,17 @@ function build(){
         },
 
         open(ws) {
-
+            console.log(ws);
         },
         
         message(ws, message, isBinary) {
-
+            console.log(message);
+            
         },
         
         
         close(ws, code, message) {
+            console.log(code);
 
         }
     
@@ -294,6 +300,27 @@ function build(){
         req.method = req.getMethod().toUpperCase(); // Lowercase would be pretty but harder to adapt
         req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
         // req.port = +req.getHeader("host").match(/:([0-9]+)/)[1];
+
+        res.writeHeaders = (headers) => {
+            if(!headers) return;
+            
+            for(let header in headers){
+                res.writeHeader(header, headers[header])
+            }
+        }
+
+        res.writeHeaders({
+            'X-Powered-By': 'Akeno Server/' + version,
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
+            "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
+        })
+
+        if(req.method == "OPTIONS"){
+            res.writeHeader("Access-Control-Max-Age", "345600").end()
+            return
+        }
 
         let abort = false;
 
@@ -464,22 +491,6 @@ function build(){
             }
         }
 
-        res.writeHeaders = (headers) => {
-            if(!headers) return;
-            
-            for(let header in headers){
-                res.writeHeader(header, headers[header])
-            }
-        }
-
-        res.writeHeaders({
-            'X-Powered-By': 'Akeno Server/' + version,
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
-            "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization",
-        })
-
         res.send = (message, headers = {}, status) => {
             // OUTDATED!
             // Should be avoided for performance reasons
@@ -603,6 +614,10 @@ function build(){
             // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
             Backend.addon("akeno/web").HandleRequest({segments, req, res})
         }
+    }
+
+    function getSocketRoute(){
+        // todo
     }
 
     // Create server instances
