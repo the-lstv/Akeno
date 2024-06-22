@@ -178,7 +178,7 @@ main = {
                                 if(err) return error(24)
 
                                 // TODO: Use fast-json-stringify
-                                res.send(results, {"Access-Control-Max-Age": "300000"})
+                                res.send(main.stringifyApps(results), {"Access-Control-Max-Age": "300000"})
                             }
                         )
                     break;
@@ -502,7 +502,62 @@ main = {
                 }
                 api.HandleRequest({backend, req, res, segments, error, shift})
         }
-    }
+    },
+
+
+
+
+
+
+
+
+    // Schemas
+    stringifyApps: backend.fastJson({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Generated schema for Root",
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "displayname": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "banner": {
+                    "type": ["string", "null"]
+                },
+                "accent": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "owner": {
+                    "type": "number"
+                },
+                "tags": {
+                    "type": ["string", "null"]
+                }
+            },
+            "required": [
+                "id",
+                "name",
+                "displayname",
+                "icon",
+                "description",
+                "owner",
+                "accent"
+            ]
+        }
+    })
 }
 
 module.exports = main;
