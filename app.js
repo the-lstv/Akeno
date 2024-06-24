@@ -450,15 +450,15 @@ function build(){
             }
         }
 
-        let end_response = res.end;
+        // let end_response = res.end;
 
-        res.end = body => {
-            if(req.abort || res.sent) return;
-            res.sent = true
-            clearTimeout(res.timeout)
+        // res.end = body => {
+        //     if(req.abort || res.sent) return;
+        //     res.sent = true
+        //     clearTimeout(res.timeout)
 
-            end_response(body)
-        }
+        //     end_response(body)
+        // }
 
         res.send = (message, headers = {}, status) => {
             if(req.abort) return;
