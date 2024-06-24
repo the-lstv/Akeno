@@ -480,6 +480,7 @@ function build(){
         }
 
         res.stream = (stream, totalSize) => {
+            console.log(totalSize);
             stream.on('data', (chunk) => {
                 let buffer = Buffer.from(chunk), lastOffset = res.getWriteOffset();
 
