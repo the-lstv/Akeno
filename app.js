@@ -331,6 +331,8 @@ function build(){
             return proxyReq(req, res, {port: 42069})
         }
 
+        if(req.domain == "127.0.0.1") return res.end("pong");
+
         res.writeHeaders({
             'X-Powered-By': 'Akeno Server/' + version,
             "Access-Control-Allow-Origin": "*",
