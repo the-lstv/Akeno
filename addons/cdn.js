@@ -151,7 +151,7 @@ api = {
                         'Content-Length': chunkSize
                     });
 
-                    res.stream(file);
+                    res.stream(file, chunkSize);
                 } else {
                     res.stream(fs.createReadStream(data), fs.statSync(data).size);
                     // fs.createReadStream(data).pipe(res);
