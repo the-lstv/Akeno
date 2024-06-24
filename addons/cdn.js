@@ -153,7 +153,7 @@ api = {
 
                     res.stream(file);
                 } else {
-                    res.stream(fs.createReadStream(data));
+                    res.stream(fs.createReadStream(data), fs.statSync(data).size);
                     // fs.createReadStream(data).pipe(res);
                 }
                 return

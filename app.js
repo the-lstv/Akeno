@@ -479,12 +479,12 @@ function build(){
             });
         }
 
-        res.stream = (stream) => {
+        res.stream = (stream, totalSize) => {
             stream.on('data', (chunk) => {
                 let buffer = Buffer.from(chunk), lastOffset = res.getWriteOffset();
 
                 // Try writing the chunk
-                const [ok, done] = res.tryEnd(buffer, buffer.length);
+                const [ok, done] = res.tryEnd(buffer, totalSize);
 
                 if (!done && !ok) {
                     // Backpressure handling
@@ -492,12 +492,14 @@ function build(){
 
                     // Resume once the client is ready
                     res.onWritable((offset) => {
-                        const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), buffer.length);
+                        const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
+
                         if (done) {
                             stream.close();
                         } else if (ok) {
                             stream.resume();
                         }
+
                         return ok;
                     });
                 } else if (done) stream.close();
@@ -515,7 +517,6 @@ function build(){
                 res.writeStatus('500 Internal Server Error').end();
             });
 
-            // If the connection is closed by the client, stop reading the file
             res.onAborted(() => {
                 stream.destroy();
             });
