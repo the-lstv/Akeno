@@ -507,20 +507,13 @@ function build(){
                 } else if (done) stream.close();
             });
 
-            stream.on('close', () => {
-                console.log("Stream CLOSED and ENDED asd ");
-                res.end();
-                stream.destroy();
-                res.end();
-                stream.destroy();
-                res.end();
-                stream.destroy();
-                res.end();
-                stream.destroy();
-                // Ensure the response ends when the stream ends
-                // if (res.getWriteOffset() === 0) {
-                // }
-            });
+            // stream.on('close', () => {
+            //     console.log("Stream CLOSED and ENDED asd ");
+            //     res.end();
+            //     // Ensure the response ends when the stream ends
+            //     // if (res.getWriteOffset() === 0) {
+            //     // }
+            // });
 
             stream.on('error', (err) => {
                 res.writeStatus('500 Internal Server Error').end();
