@@ -139,7 +139,7 @@ api = {
                     const fileSize = fs.statSync(data).size;
                     const parts = range.replace(/bytes=/, '').split('-');
                     const start = parseInt(parts[0], 10);
-                    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+                    const end = parts[1] ? parseInt(parts[1], 10) : Math.min(8000, fileSize - 1);
 
                     const chunkSize = end - start + 1;
                     const file = fs.createReadStream(data, { start, end });
