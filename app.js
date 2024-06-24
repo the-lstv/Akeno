@@ -310,6 +310,7 @@ function build(){
 
             res.cork(() => {
                 for(let header in headers){
+                    if(!headers[header]) return;
                     res.writeHeader(header, headers[header])
                 }
             });
