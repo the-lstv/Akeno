@@ -21,7 +21,7 @@ let
 ;
 
 let openai = new OpenAI({
-    apiKey: process.env.OPENAI_KEY,
+    apiKey: process.env.OPENAI_API_KEY,
 });
 
 let tokenizer = require("gpt-tokenizer")
