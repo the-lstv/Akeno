@@ -139,7 +139,7 @@ api = {
                     const fileSize = fs.statSync(data).size;
                     const parts = range.replace(/bytes=/, '').split('-');
                     const start = parseInt(parts[0], 10);
-                    const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 16000, fileSize - 1);
+                    const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 4000000, fileSize - 1);
 
                     const chunkSize = end - start + 1;
                     const file = fs.createReadStream(data, { start, end });
@@ -147,8 +147,7 @@ api = {
                     res.writeStatus('206');
                     res.writeHeaders({
                         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                        'Accept-Ranges': 'bytes',
-                        'Content-Length': String(chunkSize)
+                        'Accept-Ranges': 'bytes'
                     });
 
                     res.stream(file, chunkSize);
