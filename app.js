@@ -316,11 +316,9 @@ function build(){
             });
         }
 
-        let abort = false;
-
         res.onAborted(() => {
             clearTimeout(res.timeout)
-            abort = true;
+            req.abort = true;
         })
 
         req.path = req.getUrl();
@@ -334,7 +332,7 @@ function build(){
 
         if(req.domain == "127.0.0.1") return res.end("pong");
 
-        res.prepareHeaders = () => {
+        res.corsHeaders = () => {
             res.writeHeaders({
                 'X-Powered-By': 'Akeno Server/' + version,
                 "Access-Control-Allow-Origin": "*",
@@ -348,7 +346,7 @@ function build(){
         // Handle preflights:
         if(req.method == "OPTIONS"){
             // Prevent preflights for 16 days
-            res.prepareHeaders().writeHeader("Cache-Control", "public, max-age=1382400").end()
+            res.corsHeaders().writeHeader("Cache-Control", "public, max-age=1382400").end()
             return
         }
 
@@ -452,8 +450,18 @@ function build(){
             }
         }
 
+        let end_response = res.end;
+
+        res.end = body => {
+            if(req.abort || res.sent) return;
+            res.sent = true
+            clearTimeout(res.timeout)
+
+            end_response(body)
+        }
+
         res.send = (message, headers = {}, status) => {
-            if(abort) return;
+            if(req.abort) return;
             // OUTDATED!
             // Should be avoided for performance reasons
         
@@ -473,15 +481,7 @@ function build(){
             }
 
             res.cork(() => {
-                if(status) res.writeStatus(status + "")
-
-                res.prepareHeaders().writeHeaders({
-                    ...headers,
-                })
-
-                res.sent = true;
-                clearTimeout(res.timeout)
-                res.end(message)
+                res.writeStatus(status? status + "": "200 OK").corsHeaders().writeHeaders(headers).end(message)
             });
         }
 
@@ -541,7 +541,7 @@ function build(){
         let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
 
         function error(error, code){
-            if(abort) return;
+            if(req.abort) return;
             if(typeof error == "number" && Backend.Errors[error]){
                 let _code = code;
                 code = error;

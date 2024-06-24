@@ -129,8 +129,10 @@ api = {
         function send(data = {}, cache = false, type = null, isFilePath){
             let mime = type || (typeof data == "object"? "application/json" : typeof data == "string" ? "text/plain" : "application/octet-stream");
 
-            res.writeHeader('cache-control', (cache === false? "no-cache" : (typeof cache == "number" ? `public, max-age=${cache}` : cache)) || "max-age=60")
-            res.writeHeader('content-type', `${mime}; charset=UTF-8`);
+            let headers = {
+                'cache-control': (cache === false? "no-cache" : (typeof cache == "number" ? `public, max-age=${cache}` : cache)) || "max-age=60",
+                'content-type': `${mime}; charset=UTF-8`
+            }
 
             if(isFilePath){
                 const range = req.getHeader("range");
@@ -148,21 +150,22 @@ api = {
                     const chunkSize = end - start + 1;
                     const file = fs.createReadStream(data, { start, end });
 
-                    res.writeStatus('206').prepareHeaders().writeHeaders({
+                    res.writeStatus('206').corsHeaders().writeHeaders({
+                        ...headers,
                         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
                         'Accept-Ranges': 'bytes'
                     });
 
                     res.stream(file, chunkSize);
                 } else {
-                    res.stream(fs.createReadStream(data), fs.statSync(data).size - 1);
+                    res.writeHeaders(headers).stream(fs.createReadStream(data), fs.statSync(data).size - 1);
                     // fs.createReadStream(data).pipe(res);
                 }
                 return
             }
 
             // res[(!type && (Array.isArray(data) || (typeof data == "object" && Object.prototype.toString.call(data) === '[object Object]'))? "json" : "send")](data);
-            res.send(data);
+            res.send(data, headers);
         }
 
         let file;
