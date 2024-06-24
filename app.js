@@ -333,13 +333,13 @@ function build(){
 
         if(req.domain == "127.0.0.1") return res.end("pong");
 
-        res.writeHeaders({
-            'X-Powered-By': 'Akeno Server/' + version,
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
-        })
+        // res.writeHeaders({
+        //     'X-Powered-By': 'Akeno Server/' + version,
+        //     "Access-Control-Allow-Origin": "*",
+        //     "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
+        //     "Access-Control-Allow-Credentials": "true",
+        //     "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
+        // })
 
         // Handle preflights:
         if(req.method == "OPTIONS"){
@@ -497,7 +497,6 @@ function build(){
                         const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
 
                         if (done) {
-                            console.log("Stream DONE");
                             stream.close();
                         } else if (ok) {
                             stream.resume();
@@ -509,7 +508,7 @@ function build(){
             });
 
             stream.on('close', () => {
-                console.log("Stream CLOSED and ENDED");
+                console.log("Stream CLOSED and ENDED asd ");
                 res.end();
                 // Ensure the response ends when the stream ends
                 // if (res.getWriteOffset() === 0) {
@@ -517,7 +516,6 @@ function build(){
             });
 
             stream.on('error', (err) => {
-                console.error('Stream error:', err);
                 res.writeStatus('500 Internal Server Error').end();
             });
 
