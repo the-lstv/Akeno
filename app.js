@@ -497,6 +497,7 @@ function build(){
                         const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
 
                         if (done) {
+                            console.log("Stream DONE");
                             stream.close();
                         } else if (ok) {
                             stream.resume();
@@ -508,7 +509,7 @@ function build(){
             });
 
             stream.on('close', () => {
-                console.log("Stream CLOSED");
+                console.log("Stream CLOSED and ENDED");
                 res.end();
                 // Ensure the response ends when the stream ends
                 // if (res.getWriteOffset() === 0) {
