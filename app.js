@@ -480,7 +480,6 @@ function build(){
         }
 
         res.stream = (stream, totalSize) => {
-            res.cork(() => {
             stream.on('data', (chunk) => {
                 let buffer = Buffer.from(chunk), lastOffset = res.getWriteOffset();
 
@@ -506,12 +505,12 @@ function build(){
                 } else if (done) stream.close();
             });
 
-            // stream.on('end', () => {
-            //     // Ensure the response ends when the stream ends
-            //     if (res.getWriteOffset() === 0) {
-            //         res.end();
-            //     }
-            // });
+            stream.on('close', () => {
+                // Ensure the response ends when the stream ends
+                if (res.getWriteOffset() === 0) {
+                    res.end();
+                }
+            });
 
             stream.on('error', (err) => {
                 console.error('Stream error:', err);
@@ -520,7 +519,6 @@ function build(){
 
             res.onAborted(() => {
                 stream.destroy();
-            });
             });
         }
 
