@@ -590,7 +590,7 @@ function build(){
             try {
                 if(res && !res.sent && !res.wait) res.tryEnd();
             } catch {}
-        }, 1000)
+        }, 50000)
     }
 
     function proxyReq(req, res, options){
