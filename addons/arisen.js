@@ -20,9 +20,9 @@ let
     { NlpManager } = require('node-nlp')
 ;
 
-let openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+// let openai = new OpenAI({
+//     apiKey: process.env.OPENAI_API_KEY,
+// });
 
 let tokenizer = require("gpt-tokenizer")
 
