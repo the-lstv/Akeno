@@ -483,7 +483,7 @@ function build(){
 
         res.stream = (stream, totalSize) => {
             stream.on('data', (chunk) => {
-                let buffer = Buffer.from(chunk), lastOffset = res.getWriteOffset();
+                let buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength), lastOffset = res.getWriteOffset();
 
                 // Try writing the chunk
                 const [ok, done] = res.tryEnd(buffer, totalSize);
@@ -509,6 +509,12 @@ function build(){
 
             stream.on('close', () => {
                 console.log("Stream CLOSED and ENDED asd ");
+                res.end();
+                stream.destroy();
+                res.end();
+                stream.destroy();
+                res.end();
+                stream.destroy();
                 res.end();
                 stream.destroy();
                 // Ensure the response ends when the stream ends
