@@ -148,7 +148,7 @@ api = {
                     res.writeHeaders({
                         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
                         'Accept-Ranges': 'bytes',
-                        'Content-Length': chunkSize
+                        'Content-Length': String(chunkSize)
                     });
 
                     res.stream(file, chunkSize);
