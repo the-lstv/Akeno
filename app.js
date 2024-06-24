@@ -509,10 +509,10 @@ function build(){
 
             stream.on('close', () => {
                 console.log("Stream CLOSED");
+                res.end();
                 // Ensure the response ends when the stream ends
-                if (res.getWriteOffset() === 0) {
-                    res.end();
-                }
+                // if (res.getWriteOffset() === 0) {
+                // }
             });
 
             stream.on('error', (err) => {
