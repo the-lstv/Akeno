@@ -306,7 +306,7 @@ function build(){
         // req.port = +req.getHeader("host").match(/:([0-9]+)/)[1];
 
         res.writeHeaders = (headers) => {
-            if(!headers) return;
+            if(!headers) return res;
 
             res.cork(() => {
                 for(let header in headers){
@@ -314,6 +314,8 @@ function build(){
                     res.writeHeader(header, headers[header])
                 }
             });
+
+            return res
         }
 
         res.onAborted(() => {
