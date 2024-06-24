@@ -135,35 +135,62 @@ main = {
         })
     },
 
+    GetHandler(part){
+        switch(part){
+            case"pixel":
+                return backend.addon("pixel")
+
+            case"arisen":
+                return backend.addon("arisen")
+
+            case"net":
+                return backend.addon("net")
+
+            case"iproxy":
+                return backend.addon("iproxy")
+
+            case"currency":
+                return backend.addon("currency")
+
+            case"remote":
+                return backend.addon("remoteSync")
+
+            case"currency":
+                return backend.addon("currency")
+
+            case"remote":
+                return backend.addon("remoteSync")
+
+            case"localcommands":
+                return backend.addon("localCommands")
+
+            case"mazec":
+                return backend.addon("mazec")
+
+            default:
+                let api = backend.apiExtensions[part];
+                if(!api) return 1;
+
+                if(typeof api == "string"){
+                    // The API addon has not been loaded yet - lets do it now;
+                    backend.apiExtensions[part] = api = backend.addon(part, api)
+
+                    if(!api){
+                        return 1
+                    }
+                }
+                return api
+        }
+    },
+
     async HandleRequest({req, res, segments, error, shift}){
 
-        let User;
+        let User, part = shift();
 
-        // if(req.method == "WEBSOCKET"){
-        //     switch(shift()){
-        //         case"arisen":
-        //             backend.addon("arisen").HandleSocket({backend, User, req, ws: res, send, message, shift})
-        //         break;
-
-        //         case"pixel":
-        //             backend.addon("pixel").HandleSocket({backend, User, req, ws: res, send, message, shift})
-        //         break;
-
-        //         case"console":
-        //             backend.addon("console").HandleSocket({User, req, ws: res, send, message, shift})
-        //         break;
-
-        //         case"mazec":
-        //             backend.addon("mazec").HandleSocket({getAuth: backend.user.getAuth, req, ws: res, send, message, shift})
-        //         break;
-        //     }
-        //     return;
-        // }
-
-        switch(shift()){
+        switch(part){
 
             case "ping":
-                res.send("pong");
+                res.end("pong");
             break;
 
             case "test":
@@ -422,30 +449,30 @@ main = {
                         // )
                     break;
 
-                    case "benchmark":
-                        function generateJWT() {
-                            const payload = {
-                                something: Math.random(),
-                                thing: "ABCDEFG",
-                                asd: false
-                            }
-                            return backend.jwt.sign(payload, {});
-                        }
+                    // case "benchmark":
+                    //     function generateJWT() {
+                    //         const payload = {
+                    //             something: Math.random(),
+                    //             thing: "ABCDEFG",
+                    //             asd: false
+                    //         }
+                    //         return backend.jwt.sign(payload, {});
+                    //     }
                         
-                        // Measure the time taken to generate 1000 JWT tokens
-                        const startTime = performance.now();
+                    //     // Measure the time taken to generate 1000 JWT tokens
+                    //     const startTime = performance.now();
 
-                        const numTokens = 3000;
-                        for (let i = 0; i < numTokens; i++) {
-                            console.log(generateJWT());
-                        }
-                        const endTime = performance.now();
+                    //     const numTokens = 3000;
+                    //     for (let i = 0; i < numTokens; i++) {
+                    //         console.log(generateJWT());
+                    //     }
+                    //     const endTime = performance.now();
                         
-                        // Calculate the elapsed time
-                        const elapsedTime = endTime - startTime;
+                    //     // Calculate the elapsed time
+                    //     const elapsedTime = endTime - startTime;
                         
-                        res.send(`Time taken to generate ${numTokens} JWT tokens: ${elapsedTime} milliseconds`);
-                    break;
+                    //     res.send(`Time taken to generate ${numTokens} JWT tokens: ${elapsedTime} milliseconds`);
+                    // break;
 
                     case "create":
                         if(!req.secured) return error(35);
@@ -492,65 +519,15 @@ main = {
                         error(1)
                 }
             break;
-
-            case"api_errors":
-                res.send({data: backend.Errors})
-            break;
-
-            case"pixel":
-                backend.addon("pixel").HandleRequest({backend, req, res, segments, error, shift})
-            break;
-
-            case"arisen":
-                backend.addon("arisen").HandleRequest({backend, req, res, segments, error, shift})
-            break;
-
-            case"net":
-                backend.addon("net").HandleRequest({backend, req, res, segments, error, shift})
-            break;
-
-            case"iproxy":
-                backend.addon("iproxy").HandleRequest({backend, req, res, segments, error, shift})
-            break;
-
-            case"currency":
-                backend.addon("currency").HandleRequest({backend, req, res, segments, error, shift})
-            break;
-
-            case"remote":
-                backend.addon("remoteSync").HandleRequest({backend, req, res, segments, error, shift})
-            break;
-
-            case"currency":
-                backend.addon("currency").HandleRequest({backend, req, res, segments, error, shift})
-            break;
-
-            case"remote":
-                backend.addon("remoteSync").HandleRequest({backend, req, res, segments, error, shift})
-            break;
-
-            case"localcommands":
-                backend.addon("localCommands").HandleRequest({backend, req, res, segments, error, shift})
-            break;
-
-            case"mazec":
-                User = backend.user.getAuth(req)
-                await backend.addon("mazec").HandleRequest({User, backend, req, res, segments, error, shift})
-            break;
+            
+            // case"api_errors":
+            //     res.send({data: backend.Errors})
+            // break;
 
             default:
-                let api = backend.apiExtensions[segments[0]];
-                if(!api) return error(1);
-
-                if(typeof api == "string"){
-                    // The API addon has not been loaded yet - lets do it now;
-                    backend.apiExtensions[segments[0]] = api = backend.addon(segments[0], api)
-
-                    if(!api){
-                        return error(1)
-                    }
-                }
-                api.HandleRequest({backend, req, res, segments, error, shift})
+                // Custom router handles!
+                let handler = main.GetHandler(part);
+                if(handler.HandleRequest) handler.HandleRequest({backend, req, res, segments, error, shift}); else res.cork(() => { res.writeStatus("404").end() });
         }
     },
 

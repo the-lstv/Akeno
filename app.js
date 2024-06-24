@@ -245,7 +245,6 @@ function build(){
     
     let wss = {
 
-        /* There are many common helper features */
         idleTimeout: 32,
         maxBackpressure: 1024,
         maxPayloadLength: 512,
@@ -257,30 +256,35 @@ function build(){
 
             // Upgrading a HTTP connection to a WebSocket
 
+            let segments = req.getUrl().split("/").filter(garbage => garbage);
+            
+            if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments.replace("v", ""))) segments.shift();
 
+            let handler = API[API._latest].GetHandler(segments[0]);
+
+            if(!handler || !handler.HandleSocket) return res.end();
 
             res.upgrade({
                 uuid: uuid(),
                 url: req.getUrl(),
                 host: req.getHeader("host"),
+                handler: handler.HandleSocket,
+                segments
             }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
         },
 
         open(ws) {
-            console.log(ws);
+            if(ws.handler.open) ws.handler.open(ws);
         },
         
         message(ws, message, isBinary) {
-            console.log(message);
-            
+            if(ws.handler.message) ws.handler.message(ws, message, isBinary);
         },
         
         
         close(ws, code, message) {
-            console.log(code);
-
+            if(ws.handler.close) ws.handler.close(ws, code, message);
         }
-    
     };
 
     let types = {
@@ -292,9 +296,9 @@ function build(){
 
     let version = Backend.config.valueOf("version") || "unknown";
 
-    async function resolve(res, req, secured) {
+    function resolve(res, req, secured) {
         total_hits++
-        if((total_hits - saved_hits) > 2) save_hits();
+        // if((total_hits - saved_hits) > 500) save_hits();
 
         // Helper variables
         req.method = req.getMethod().toUpperCase(); // Lowercase would be pretty but harder to adapt
@@ -303,81 +307,36 @@ function build(){
 
         res.writeHeaders = (headers) => {
             if(!headers) return;
-            
-            for(let header in headers){
-                res.writeHeader(header, headers[header])
-            }
+
+            res.cork(() => {
+                for(let header in headers){
+                    res.writeHeader(header, headers[header])
+                }
+            });
         }
 
         let abort = false;
 
         res.onAborted(() => {
+            clearTimeout(res.timeout)
             abort = true;
         })
 
         req.path = req.getUrl();
         req.secured = secured; // If the communication is done over HTTP or HTTPS
 
-
         req.bodyChunks = []
 
         if(req.domain == "upedie.online"){
-            const options = {
-                hostname: "localhost",
-                port: 42069,
-                path: req.path,
-                method: req.method,
-                headers: {}
-            };
-
-            req.forEach((key, value) => {
-                options.headers[key] = value;
-            });
-          
-            const proxyReq = http.request(options, (proxyRes) => {
-                let chunks = []
-
-                proxyRes.on('data', (chunk) => {
-                    chunks.push(Buffer.from(chunk));
-                });
-                
-                proxyRes.on('end', () => {
-                    res.cork(() => {
-                        res.writeStatus(`${proxyRes.statusCode} ${proxyRes.statusMessage}`);
-                        proxyRes.headers.server = "Akeno Server Proxy/" + version;
-    
-                        for(let header in proxyRes.headers){
-                            if(header === "date" || header === "content-length") continue;
-        
-                            res.writeHeader(header, proxyRes.headers[header]);
-                        }
-
-                        res.end(Buffer.concat(chunks));
-                    })
-                });
-            });
-          
-            proxyReq.on('error', (e) => {
-                res.cork(() => {
-                    res.writeStatus('500 Internal Server Error').end(`Proxy error: ${e.message}\nPowered by Akeno/${version}`);
-                })
-            });
-          
-            res.onData((chunk, isLast) => {
-                // proxyReq.write(chunk);
-                if (isLast) {
-                    proxyReq.end();
-                }
-            });
-            return;
+            return proxyReq(req, res, {port: 42069})
         }
 
         res.writeHeaders({
             'X-Powered-By': 'Akeno Server/' + version,
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
-            "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
+            // "Access-Control-Allow-Credentials": "true",
+            // "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
         })
 
         // Handle preflights:
@@ -466,12 +425,6 @@ function build(){
                         if(req.hasFullBody) done(); else req.onFullData = done;
                     },
     
-                    json(){
-                        // (express.json())(req, res, ()=>{
-                        //     callback(req.body)
-                        // })
-                    },
-    
                     form(){
                         // const form = formidable.formidable({});
                         // form.parse(req, (err, fields, files) => {
@@ -494,6 +447,7 @@ function build(){
         }
 
         res.send = (message, headers = {}, status) => {
+            if(abort) return;
             // OUTDATED!
             // Should be avoided for performance reasons
         
@@ -501,7 +455,7 @@ function build(){
                 headers["content-type"] = types["json"];
 
                 message = JSON.stringify(message);
-                Backend.log.verbose("Warning: You are not properly encoding your data before sending. The data were automatically stringified using JSON.stringify, but this has a bad impact on performance. If possible, either send a string, binary data or stringify using fast-json-stringify.")
+                Backend.log.warn("[performance] Warning: You are not properly encoding your data before sending. The data were automatically stringified using JSON.stringify, but this has a bad impact on performance. If possible, either send a string, binary data or stringify using fast-json-stringify.")
             }
 
             if(res.setType){
@@ -519,6 +473,8 @@ function build(){
 
                 if(status) res.writeStatus(status + "")
 
+                res.sent = true;
+                clearTimeout(res.timeout)
                 res.end(message)
             });
         }
@@ -555,9 +511,8 @@ function build(){
             });
 
             stream.on('error', (err) => {
-                // Handle errors
                 console.error('Stream error:', err);
-                res.writeStatus('500 Internal Server Error').end('Internal Server Error');
+                res.writeStatus('500 Internal Server Error').end();
             });
 
             // If the connection is closed by the client, stop reading the file
@@ -578,8 +533,8 @@ function build(){
 
         let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
 
-
         function error(error, code){
+            if(abort) return;
             if(typeof error == "number" && Backend.Errors[error]){
                 let _code = code;
                 code = error;
@@ -612,7 +567,7 @@ function build(){
             ver = (ver? ver : API._default);
     
             if(API[ver]){
-                await API[ver]["HandleRequest"]({
+                API[ver].HandleRequest({
                     req,
                     res,
                     segments,
@@ -622,7 +577,7 @@ function build(){
             } else {
                 error(0)
             }
-            return;
+            // return;
         }
 
 
@@ -630,10 +585,62 @@ function build(){
             // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
             Backend.addon("akeno/web").HandleRequest({segments, req, res})
         }
+
+        res.timeout = setTimeout(() => {
+            try {
+                if(res && !res.sent && !res.wait) res.tryEnd();
+            } catch {}
+        }, 1000)
     }
 
-    function getSocketRoute(){
-        // todo
+    function proxyReq(req, res, options){
+        options = {
+            path: req.path,
+            method: req.method,
+            hostname: "localhost",
+            headers: {},
+            ...options
+        }
+
+        req.forEach((key, value) => {
+            options.headers[key] = value;
+        });
+      
+        const proxyReq = http.request(options, (proxyRes) => {
+            let chunks = []
+
+            proxyRes.on('data', (chunk) => {
+                chunks.push(Buffer.from(chunk));
+            });
+            
+            proxyRes.on('end', () => {
+                res.cork(() => {
+                    res.writeStatus(`${proxyRes.statusCode} ${proxyRes.statusMessage}`);
+                    proxyRes.headers.server = "Akeno Server Proxy/" + version;
+
+                    for(let header in proxyRes.headers){
+                        if(header === "date" || header === "content-length") continue;
+    
+                        res.writeHeader(header, proxyRes.headers[header]);
+                    }
+
+                    res.end(Buffer.concat(chunks));
+                })
+            });
+        });
+      
+        proxyReq.on('error', (e) => {
+            res.cork(() => {
+                res.writeStatus('500 Internal Server Error').end(`Proxy error: ${e.message}\nPowered by Akeno/${version}`);
+            })
+        });
+      
+        res.onData((chunk, isLast) => {
+            // proxyReq.write(chunk);
+            if (isLast) {
+                proxyReq.end();
+            }
+        });
     }
 
     // Create server instances
