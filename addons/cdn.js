@@ -137,22 +137,25 @@ api = {
 
                 if (range) {
                     const fileSize = fs.statSync(data).size;
-                    const parts = range.replace(/bytes=/, '').split('-');
-                    const start = parseInt(parts[0], 10);
-                    const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 128000000, fileSize - 1);
+
+                    // const parts = range.replace(/bytes=/, '').split('-');
+                    // const start = parseInt(parts[0], 10);
+                    // const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 1000000, fileSize - 1);
+
+                    const start = Number(range.replace(/\D/g, ""));
+                    const end = Math.min(start + 1000000, fileSize - 1);
 
                     const chunkSize = end - start + 1;
                     const file = fs.createReadStream(data, { start, end });
 
-                    res.writeStatus('206');
-                    res.writeHeaders({
+                    res.writeStatus('206').prepareHeaders().writeHeaders({
                         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
                         'Accept-Ranges': 'bytes'
                     });
 
-                    res.stream(file, chunkSize - 1);
+                    res.stream(file, chunkSize);
                 } else {
-                    res.stream(fs.createReadStream(data), fs.statSync(data).size);
+                    res.stream(fs.createReadStream(data), fs.statSync(data).size - 1);
                     // fs.createReadStream(data).pipe(res);
                 }
                 return

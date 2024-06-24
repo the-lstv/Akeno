@@ -334,18 +334,21 @@ function build(){
 
         if(req.domain == "127.0.0.1") return res.end("pong");
 
-        res.writeHeaders({
-            'X-Powered-By': 'Akeno Server/' + version,
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
-        })
+        res.prepareHeaders = () => {
+            res.writeHeaders({
+                'X-Powered-By': 'Akeno Server/' + version,
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
+            })
+            return res
+        }
 
         // Handle preflights:
         if(req.method == "OPTIONS"){
             // Prevent preflights for 16 days
-            res.writeHeader("Cache-Control", "public, max-age=1382400").end()
+            res.prepareHeaders().writeHeader("Cache-Control", "public, max-age=1382400").end()
             return
         }
 
@@ -470,11 +473,11 @@ function build(){
             }
 
             res.cork(() => {
-                res.writeHeaders({
+                if(status) res.writeStatus(status + "")
+
+                res.prepareHeaders().writeHeaders({
                     ...headers,
                 })
-
-                if(status) res.writeStatus(status + "")
 
                 res.sent = true;
                 clearTimeout(res.timeout)
