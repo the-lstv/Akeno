@@ -147,14 +147,16 @@ api = {
                     const start = Number(range.replace(/\D/g, ""));
                     const end = Math.min(start + 1000000, fileSize - 1);
 
-                    const chunkSize = end - start + 1;
+                    const chunkSize = end - start;
                     const file = fs.createReadStream(data, { start, end });
 
-                    res.writeStatus('206').corsHeaders().writeHeaders({
-                        ...headers,
-                        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                        'Accept-Ranges': 'bytes'
-                    });
+                    res.cork(() => {
+                        res.writeStatus('206').corsHeaders().writeHeaders({
+                            ...headers,
+                            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                            'Accept-Ranges': 'bytes'
+                        });
+                    })
 
                     res.stream(file, chunkSize);
                 } else {
