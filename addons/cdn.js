@@ -151,6 +151,7 @@ api = {
                     const file = fs.createReadStream(data, { start, end });
 
                     res.cork(() => {
+                        // Begin stream with the proper headers
                         res.writeStatus('206').corsHeaders().writeHeaders({
                             ...headers,
                             'Content-Range': `bytes ${start}-${end}/${fileSize}`,
@@ -160,7 +161,7 @@ api = {
 
                     res.stream(file, chunkSize);
                 } else {
-                    res.writeHeaders(headers).stream(fs.createReadStream(data), fs.statSync(data).size - 1);
+                    res.writeHeaders(headers).stream(fs.createReadStream(data), fs.statSync(data).size);
                     // fs.createReadStream(data).pipe(res);
                 }
                 return

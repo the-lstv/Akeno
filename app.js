@@ -599,7 +599,7 @@ function build(){
             try {
                 if(res && !res.sent && !res.wait) res.tryEnd();
             } catch {}
-        }, 50000)
+        }, res.timeout || 45000)
     }
 
     function proxyReq(req, res, options){
