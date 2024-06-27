@@ -4,14 +4,14 @@ module.exports = {
     Initialize(Backend_){
         Backend = Backend_;
     },
-    async HandleRequest({Backend, req, res, segments, reply, error, success, assign, shift, send, message}){
+    async HandleRequest({req, res, segments, error, shift}){
         switch(shift()){
             case "get":
-                send(flags)
+                res.send(flags)
                 flags = {wake: false, command_done: !!flags.command_done};
             break;
             case "flags":
-                send(flags)
+                res.send(flags)
             break;
             case "text":
                 if(req.method == "POST"){
@@ -25,7 +25,7 @@ module.exports = {
                     responseText = req.body
                 } else {
                     flags.command_done = false
-                    send(responseText)
+                    res.send(responseText)
                     responseText = ""
                 }
             break;
