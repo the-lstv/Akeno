@@ -525,6 +525,10 @@ function build(){
                 res.writeStatus('500 Internal Server Error').end();
             });
 
+            stream.on('end', () => {
+                res.end();
+            });
+
             res.onAborted(() => {
                 stream.destroy();
             });
