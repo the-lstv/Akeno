@@ -548,6 +548,7 @@ function build(){
 
         function error(error, code){
             if(req.abort) return;
+
             if(typeof error == "number" && Backend.Errors[error]){
                 let _code = code;
                 code = error;
@@ -555,7 +556,7 @@ function build(){
             }
 
             res.cork(() => {
-                res.writeStatus('400').writeHeader("Content-Type", "application/json; charset=utf-8").end(`{"success":false,"code":${+code},"error":"${error.replaceAll('"', '\\"')}"}`);
+                res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code},"error":"${error.replaceAll('"', '\\"')}"}`);
             })
         }
 
@@ -603,7 +604,7 @@ function build(){
             try {
                 if(res && !res.sent && !res.wait) res.tryEnd();
             } catch {}
-        }, res.timeout || 45000)
+        }, res.timeout || 15000)
     }
 
     function proxyReq(req, res, options){

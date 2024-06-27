@@ -43,7 +43,7 @@ module.exports = {
                 let flag = shift(), value = shift();
                 console.log(flag, value);
                 flags[flag] = value == "true"? true : value == "false"? false : false;
-                res.end()
+                res.corsHeaders().end()
             break;
             default:
                 error(1)
