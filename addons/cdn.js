@@ -120,6 +120,10 @@ function saveMetadata(){
 
 // CDN API:
 
+
+var STREAM_CHUNK_SIZE = 2_500000; // When streaming videos, how many bytes should a chunk have
+
+
 api = {
     Initialize(Backend_){
         Backend = Backend_;
@@ -145,7 +149,7 @@ api = {
                     // const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 1000000, fileSize - 1);
 
                     const start = Number(range.replace(/\D/g, ""));
-                    const end = Math.min(start + 1000000, fileSize - 1);
+                    const end = Math.min(start + STREAM_CHUNK_SIZE, fileSize - 1);
 
                     const chunkSize = end - start;
                     const file = fs.createReadStream(data, { start, end });
