@@ -20,6 +20,7 @@ module.exports = {
 
                         text = data.data
                     }).data()
+                    res.corsHeaders().end()
                 } else {
                     res.send(text)
                 }
