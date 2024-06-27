@@ -1,28 +1,38 @@
-let Backend, flags = {wake: false}, text = "", responseText = "";
+let flags = {wake: false}, text = "", responseText = "";
 
 module.exports = {
-    Initialize(Backend_){
-        Backend = Backend_;
-    },
+
     async HandleRequest({req, res, segments, error, shift}){
         switch(shift()){
             case "get":
-                res.send(flags)
+                res.send(JSON.stringify(flags))
                 flags = {wake: false, command_done: !!flags.command_done};
             break;
             case "flags":
-                res.send(flags)
+                res.send(JSON.stringify(flags))
             break;
             case "text":
                 if(req.method == "POST"){
-                    text = req.body
+                    req.parseBody((data, fail) => {
+                        if(fail){
+                            return error(fail)
+                        }
+
+                        text = data.data
+                    }).data()
                 } else {
-                    send(text)
+                    res.send(text)
                 }
             break;
             case "response":
                 if(req.method == "POST"){
-                    responseText = req.body
+                    req.parseBody((data, fail) => {
+                        if(fail){
+                            return error(fail)
+                        }
+
+                        responseText = data.data
+                    }).data()
                 } else {
                     flags.command_done = false
                     res.send(responseText)
@@ -33,10 +43,12 @@ module.exports = {
                 let flag = shift(), value = shift();
                 console.log(flag, value);
                 flags[flag] = value == "true"? true : value == "false"? false : false;
+                res.end()
             break;
             default:
                 error(1)
             break;
         }
     }
+
 }
