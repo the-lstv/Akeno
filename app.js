@@ -6,19 +6,15 @@ let
 
     fastJson = require("fast-json-stringify"),
 
-    // Only used for proxy!
+    // Used for proxy
     http = require("http"),
 
-    cookieParser = require('cookie-parser'),
+    // cookieParser = require('cookie-parser'),
 
     fs = require("fs"),
-    url = require("url"),
 
     app,
     SSLApp,
-    server,
-
-    connections = {},
 
     bcrypt = require("bcrypt"),
     crypto = require('crypto'),
@@ -28,14 +24,14 @@ let
     ipc,
     { exec, spawn } = require('child_process'),
 
-    wscp = cookieParser(),
-    multer = require('multer-md5'),
-    formidable = require('formidable'),
+    // wscp = cookieParser(),
+    // multer = require('multer-md5'),
+    // formidable = require('formidable'),
 
     lsdb = require("./addons/lsdb_mysql.js"),
 
     // Config parser
-    { parse, configTools } = require("./addons/akeno/parse-config.js")
+    { parse, configTools } = require("./core/parser.js")
 ;
 
 try {
@@ -210,8 +206,8 @@ API = {
     _default: 2,
 
     //Add or remove API versions here.
-    1: require("./version/v1.js"),
-    2: require("./version/v2.js")
+    1: require("./api/v1.js"),
+    2: require("./api/v2.js")
 }
 
 apiVersions = Object.keys(API).filter(version => !isNaN(+version));
@@ -231,7 +227,7 @@ function build(){
         if(version.Initialize) version.Initialize(Backend)
     }
 
-    db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', 'xsD6SicFy2MMc.-')
+    db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', Backend.config.block("database").properties.password[0])
 
     // Set up multer for file uploads
     // const storage = multer.diskStorage({
@@ -556,7 +552,7 @@ function build(){
             }
 
             res.cork(() => {
-                res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code},"error":"${error.replaceAll('"', '\\"')}"}`);
+                res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code},"error":"${(error || "Unknown error").replaceAll('"', '\\"')}"}`);
             })
         }
 
@@ -581,27 +577,21 @@ function build(){
             ver = (ver? ver : API._default);
     
             if(API[ver]){
-                API[ver].HandleRequest({
-                    req,
-                    res,
-                    segments,
-                    shift,
-                    error
-                })
+                API[ver].HandleRequest({segments, shift, error, req, res})
             } else {
-                error(0)
+                return error(0)
             }
-            // return;
         }
-
 
         else {
             // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
-            Backend.addon("akeno/web").HandleRequest({segments, req, res})
+            Backend.addon("core/web").HandleRequest({segments, req, res})
         }
 
         res.timeout = setTimeout(() => {
             try {
+                if(req.abort) return;
+
                 if(res && !res.sent && !res.wait) res.tryEnd();
             } catch {}
         }, res.timeout || 15000)
@@ -1103,16 +1093,18 @@ function build(){
         },
 
         addon(name, path){
-            // if(!fs.existsSync("./addons/"+name+".js"))return false;
+            // if(!fs.existsSync("./addons/"+name+".js")) return false;
+
             if(!AddonCache[name]){
                 Backend.log("Loading addon; " + name);
 
-                AddonCache[name] = require(path || "./addons/" + name);
+                AddonCache[name] = require(path || `./${name.startsWith("core/") ? "" : "addons/"}${name}`);
 
                 AddonCache[name].log = Backend.logger(name)
 
                 if(AddonCache[name].Initialize) AddonCache[name].Initialize(Backend);
             }
+
             return AddonCache[name]
         },
 

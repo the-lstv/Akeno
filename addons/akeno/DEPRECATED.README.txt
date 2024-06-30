@@ -1,0 +1,12 @@
+The addons/akeno folder has been deprecated.
+
+Originally, this whole project was just an API for ExtraGon, which we later expanded with addons for more APIs, then later expanded with a webserver, and a CDN, and put lots of development to the server.
+
+Akeno was a new system to help keep all this together, but the server was still called "ExtraGon API".
+So we have decided to rebrand the API into "Akeno", and put ExtraGon as an addon.
+
+The addons/akeno folder served as a way to test and expand the functionality of the core parts for the new system, but is no longer needed, and just confusing.
+
+Now, we have decided to clean this up once for all, deprecating addons/akeno and moving its scripts into the actual server.
+
+This folder will persist with symlinks to some critical files that might still be refferenced to by other apps.

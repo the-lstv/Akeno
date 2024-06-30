@@ -46,7 +46,7 @@ let
     UglifyJS = require("uglify-js"),
 
     // Local libraries
-    { parse, configTools } = require("./parse-config"),
+    { parse, configTools } = require("./parser"),
 
     // Globals
     server,
@@ -71,8 +71,8 @@ let
 
 let version, locations;
 
-// Section: utils
 
+// Section: utils
 
 function files_try(...files){
     for(let file of files){
@@ -81,8 +81,6 @@ function files_try(...files){
         }
     }
 }
-
-// Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
 
 function cachedFile(file){
     file = nodePath.normalize(file);
@@ -142,7 +140,6 @@ function checkSupportedBrowser(userAgent, minChrome, minFirefox) {
 server = {
     Initialize(Backend_){
         Backend = Backend_;
-
         server.Reload(true)
     },
     
@@ -925,3 +922,6 @@ function get_content(app, url, file){
 }
 
 module.exports = server
+
+
+// Friendly reminder: Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R
