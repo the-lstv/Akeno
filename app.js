@@ -478,6 +478,8 @@ function build(){
                 headers["Cache-Control"] = "public, max-age=" + res.setCache;
             }
 
+            if(req.begin) headers["server-timing"] = `generation;dur=${(process.hrtime.bigint() - req.begin) / BigInt(1000000)}`;
+
             res.cork(() => {
                 res.writeStatus(status? status + "": "200 OK").corsHeaders().writeHeaders(headers).end(message)
             });

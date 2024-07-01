@@ -23,7 +23,7 @@ function parse(code, direct, sourcePath){
                     // 2 = element tag (attributes)
                     // 3 = ignoring (eg. comments)
                     // 4 = matching keyword 
-                    // 5 = matching keyword value 
+                    // 5 = matching keyword value
                     // 6 = inside a block
                     // 7 = ignoring, but writing (eg. script, style)
                     // 10 = string

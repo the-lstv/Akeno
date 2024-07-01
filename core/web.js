@@ -197,6 +197,8 @@ server = {
                 enabled: true,
 
                 serve({segments, req, res}){
+                    req.begin = process.hrtime.bigint();
+
                     try {
 
                         let url = ("/" + segments.join("/")), file;
@@ -299,17 +301,15 @@ server = {
                                             headers['content-type'] = `text/css; charset=UTF-8`;
 
                                             fc = fs.readFileSync(file, "utf8");
-                                            content = CleanCSS.minify(fc).styles || fc // Try to compres the file and fallback to the original content
+                                            content = Buffer.from(CleanCSS.minify(fc).styles || fc)
                                         break;
                                         case "js":
                                             headers['content-type'] = `application/javascript; charset=UTF-8`;
 
                                             fc = fs.readFileSync(file, "utf8");
+                                            fc = fc.replace(`Akeno.randomSet`, `["${Array.from({length: 4}, () => require('crypto').randomBytes(16).toString('base64').replaceAll("=", "")).join('","')}"]`)
 
-                                            
-                                            fc = fc.replace(`$_backend.randomSet`, `["${Array.from({length: 4}, () => require('crypto').randomBytes(16).toString('base64').replaceAll("=", "")).join('","')}"]`)
-
-                                            content = (UglifyJS.minify(fc).code || fc) // Try to compres the file and fallback to the original content
+                                            content = Buffer.from(UglifyJS.minify(fc).code || fc) // Try to compres the file and fallback to the original content
                                         break;
                                     }
 
@@ -320,13 +320,10 @@ server = {
                                 }
 
                             } else {
-
                                 headers['cache-control'] = `public, max-age=${50000}`;
                                 
-                                res.writeHeaders(headers)
                                 // res.stream(fs.createReadStream(file));
                                 res.send(fs.readFileSync(file), headers)
-
                             }
 
                         }
@@ -918,7 +915,7 @@ function get_content(app, url, file){
         return `${waterfall.body}`
     }
 
-    return `<!DOCTYPE html>\n<!-- WARNING:\n    This is automatically generated and compressed code. It may not represent the original source.\n-->\n<html lang=${waterfall.htmlLang}><head>${waterfall.head}</head><body${attributesString(waterfall.bodyAttributes)}>${waterfall.body}${waterfall.exposed.length > 0? `<script>let ${waterfall.exposed.map(element => element + "=" + ((hasLS && !waterfall.resources["defer-js"])? "O('#" : "document.querySelector('#") + element + "')").join(",")}</script>`: ""}</body></html>`
+    return Buffer.from(`<!DOCTYPE html>\n<!-- WARNING:\n    This is automatically generated and compressed code. It may not represent the original source.\n-->\n<html lang=${waterfall.htmlLang}><head>${waterfall.head}</head><body${attributesString(waterfall.bodyAttributes)}>${waterfall.body}${waterfall.exposed.length > 0? `<script>let ${waterfall.exposed.map(element => element + "=" + ((hasLS && !waterfall.resources["defer-js"])? "O('#" : "document.querySelector('#") + element + "')").join(",")}</script>`: ""}</body></html>`)
 }
 
 module.exports = server
