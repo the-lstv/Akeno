@@ -59,10 +59,15 @@ let
     assignedDomains = {},
     cache = {},
 
+    // Maximal cache size for binary files per-file.
+    // If a file is bigger than this, it is not saved and served from RAM.
+    max_cache_size = 367001600,
+
     cacheByFile = {
-        html: "max-age=5",
-        js: "max-age=604800",
-        css: "max-age=604800"
+        html: "15",
+        js: "604800",
+        css: "604800",
+        default: "50000"
     }
 ;
 
@@ -115,6 +120,7 @@ function updateCache(file, content){
     if(!cache[file]) cachedFile(file);
 
     cache[file].content = content;
+    // cache[file].headers = headers;
 }
 
 
@@ -203,7 +209,7 @@ server = {
 
                         for(const route of app.routes){
                             if(route.values.find(route => url.startsWith(route))){
-                                if(route.properties.files) {// && !.find(ext => file.endsWith(ext))){
+                                if(route.properties.files) {
                                     let fExt = nodePath.extname(url).replace(".", ""), match = false;
 
                                     if(fExt === "" && route.properties["notStrict"]){
@@ -243,7 +249,7 @@ server = {
                                 return res.send(url + " not found", null, 404);
                             }
                         }
-                        
+
                         let headers = {};
 
                         // TODO: Extend this functionality
@@ -266,64 +272,52 @@ server = {
                             let mimeType = mime.types[extension] || "text/plain";
 
                             headers['content-type'] = `${mimeType}; charset=UTF-8`;
+                            headers['cache-control'] = `public, max-age=${cacheByFile[extension] || cacheByFile.default}`;
+                            headers['x-content-type-options'] = "nosniff";
+                            
+                            if(cache instanceof Buffer) {
+                                // Great, content is cached and up to date, lets send the cache:
 
-                            if(["html", "js", "css"].includes(extension)){
-
-                                headers['cache-control'] = cacheByFile[extension];
-                                headers['x-content-type-options'] = "no-sniff";
-
-                                if(cache instanceof Buffer || typeof cache === "string" || cache instanceof Uint8Array) {
-                                    
-                                    // Great, content is cached and up to date, lets load the cache:
-
-                                    res.send(cache, headers)
-                                    return
-
-                                } else {
-                                    if(cache === 0) throw "Something isnt right lol";
-                                    if(cache !== 1) server.log.warn("Cached data were wrong or empty (serving \""+file+"\"), did you update them correctly? Note: forcing cache reload!");
-
-                                    // We need to refresh cache; aka generate the required content.
-
-                                    // FIXME: Temporary
-
-                                    let content, fc;
-
-                                    switch(extension){
-                                        case "html":
-                                            headers['content-type'] = `text/html; charset=UTF-8`;
-                                            // TODO: Allow the application to choose custom caching
-                                            content = get_content(app, url, file)
-                                        break;
-                                        case "css":
-                                            headers['content-type'] = `text/css; charset=UTF-8`;
-
-                                            fc = fs.readFileSync(file, "utf8");
-                                            content = Buffer.from(CleanCSS.minify(fc).styles || fc)
-                                        break;
-                                        case "js":
-                                            headers['content-type'] = `application/javascript; charset=UTF-8`;
-
-                                            fc = fs.readFileSync(file, "utf8");
-                                            fc = fc.replace(`Akeno.randomSet`, `["${Array.from({length: 4}, () => require('crypto').randomBytes(16).toString('base64').replaceAll("=", "")).join('","')}"]`)
-
-                                            content = Buffer.from(UglifyJS.minify(fc).code || fc) // Try to compres the file and fallback to the original content
-                                        break;
-                                    }
-
-                                    res.send(content, headers)
-                                    updateCache(file, content)
-
-                                    return
-                                }
-
-                            } else {
-                                headers['cache-control'] = `public, max-age=${50000}`;
-                                
-                                // res.stream(fs.createReadStream(file));
-                                res.send(fs.readFileSync(file), headers)
+                                res.send(cache, headers)
+                                return
                             }
 
+                            if(cache !== 1) server.log.warn("Cached data were wrong or empty (serving \""+file+"\"), did you update them correctly? Note: forcing cache reload!");
+                            
+                            let content;
+                            if(["html", "js", "css"].includes(extension)){
+
+                                // FIXME: Temporary
+
+                                switch(extension){
+                                    case "html":
+                                        content = get_content(app, url, file)
+                                    break;
+                                    case "css":
+                                        content = fs.readFileSync(file, "utf8");
+                                        content = Buffer.from(CleanCSS.minify(content).styles || content)
+                                    break;
+                                    case "js":
+                                        content = fs.readFileSync(file, "utf8");
+
+                                        // I dont know, should this be deprecated?
+                                        content = content.replace(`Akeno.randomSet`, `["${Array.from({length: 4}, () => require('crypto').randomBytes(16).toString('base64').replaceAll("=", "")).join('","')}"]`)
+
+                                        content = Buffer.from(UglifyJS.minify(content).code || content) // Try to compres the file and fallback to the original content
+                                    break;
+                                }
+
+                                res.send(content, headers)
+                                updateCache(file, content)
+                                return
+                            } else {
+                                // res.stream(fs.createReadStream(file));
+                                content = fs.readFileSync(file);
+
+                                res.send(content, headers)
+                                if(content.length < max_cache_size) updateCache(file, content)
+                                return
+                            }
                         }
 
                     } catch(error) {
