@@ -272,15 +272,15 @@ server = {
                                 headers['cache-control'] = cacheByFile[extension];
                                 headers['x-content-type-options'] = "no-sniff";
 
-                                if(typeof cache === "string") {
+                                if(cache instanceof Buffer || typeof cache === "string" || cache instanceof Uint8Array) {
                                     
                                     // Great, content is cached and up to date, lets load the cache:
 
                                     res.send(cache, headers)
                                     return
-                                    
+
                                 } else {
-                                    if(cache === 0) throw "Something isnt right lmao";
+                                    if(cache === 0) throw "Something isnt right lol";
                                     if(cache !== 1) server.log.warn("Cached data were wrong or empty (serving \""+file+"\"), did you update them correctly? Note: forcing cache reload!");
 
                                     // We need to refresh cache; aka generate the required content.
