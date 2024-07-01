@@ -197,8 +197,6 @@ server = {
                 enabled: true,
 
                 serve({segments, req, res}){
-                    req.begin = process.hrtime.bigint();
-
                     try {
 
                         let url = ("/" + segments.join("/")), file;

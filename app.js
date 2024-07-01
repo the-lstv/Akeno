@@ -478,7 +478,7 @@ function build(){
                 headers["Cache-Control"] = "public, max-age=" + res.setCache;
             }
 
-            if(req.begin) headers["server-timing"] = `generation;dur=${(process.hrtime.bigint() - req.begin) / BigInt(1000000)}`;
+            if(req.begin) headers["server-timing"] = `generation;dur=${Number((process.hrtime.bigint() - req.begin) / BigInt(1000000))}`;
 
             res.cork(() => {
                 res.writeStatus(status? status + "": "200 OK").corsHeaders().writeHeaders(headers).end(message)
@@ -511,14 +511,6 @@ function build(){
                 } else if (done) stream.close();
             });
 
-            // stream.on('close', () => {
-            //     console.log("Stream CLOSED and ENDED asd ");
-            //     res.end();
-            //     // Ensure the response ends when the stream ends
-            //     // if (res.getWriteOffset() === 0) {
-            //     // }
-            // });
-
             stream.on('error', (err) => {
                 res.writeStatus('500 Internal Server Error').end();
             });
@@ -543,6 +535,8 @@ function build(){
         }
 
         let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
+
+        req.begin = process.hrtime.bigint();
 
         function error(error, code){
             if(req.abort) return;
