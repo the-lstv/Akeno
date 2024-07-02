@@ -786,7 +786,7 @@ function build(){
                 items = items.map(item => item.replace(/[^a-zA-Z0-9_.\-]/g, '')).filter(nothing => nothing).join();
                 if(items.length < 1) return callback(2);
 
-                db.database("extragon").query(`SELECT ${items} FROM users WHERE id IN (${idList.join()}) LIMIT 80`,
+                db.database("extragon").query(`SELECT ${items} FROM users WHERE id IN (${idList.join()}) LIMIT 300`,
                     function(err, results){
                         if(err){
                             return callback(err)
@@ -941,7 +941,7 @@ function build(){
 
         pockets: {
             createWallet(pocket, holder, options, callback = (error, address) => {}){
-                let address = Backend.pockets.generateAddress();
+                let address = Backend.pockets.generateAddress(32);
 
                 db.database("extragon").table("pockets_wallets").insert({
                     comment: null,
@@ -963,6 +963,30 @@ function build(){
                 const buffer = crypto.randomBytes(Math.ceil(length * 3 / 4)); // 3/4 factor because base64 encoding
 
                 return buffer.toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, length);
+            },
+
+            listWallets(holder, options = {}, callback = (error, data) => {}){
+                db.database("extragon").query(
+                    'SELECT balance, comment, identifier, created, pocket FROM `pockets_wallets` WHERE holder = ?' + (options.pocket? " AND pocket = ?" : ""),
+                    [holder, options.pocket],
+
+                    function(err, result){
+                        if(err) return callback(err);
+                        callback(null, result)
+                    }
+                )
+            },
+
+            listTransactions(author, options = {}, callback = (error, data) => {}){
+                db.database("extragon").query(
+                    'SELECT * FROM `pockets_transactions` WHERE source = ?' + (options.target? " AND target = ?" : "") + " LIMIT ? OFFSET ?",
+                    [author, ...options.target? [options.target] : [], options.limit || 20, options.offset || 0],
+
+                    function(err, result){
+                        if(err) return callback(err);
+                        callback(null, result)
+                    }
+                )
             },
 
             transaction(pocket, source, target, value = 0, options = {}, callback = (error, data) => {}){

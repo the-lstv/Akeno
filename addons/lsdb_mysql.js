@@ -33,15 +33,14 @@
 let lsdb, mysql = require("mysql2");
 
 lsdb = {
-    Server(hostname, user, password, defaultDB){
+    Server(host, user, password, defaultDB){
         return new ((_this => class MySQLDatabaseServer {
             constructor () {
                 this.pool = mysql.createPool({
-                    host: hostname,
-                    user,
-                    password,
+                    host, user, password,
+
                     waitForConnections: true,
-                    connectionLimit: 10,
+                    connectionLimit: 15,
                     maxIdle: 10,
                     idleTimeout: 80000,
                     queueLimit: 0,
@@ -60,6 +59,7 @@ lsdb = {
                 let tools;
 
                 function use(callback){
+                    return // Temporary
                     // This is stupid.. And why I dont like MySQL
 
                     if(_this.using == dbName) return;
