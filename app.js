@@ -478,7 +478,10 @@ function build(){
                 headers["Cache-Control"] = "public, max-age=" + res.setCache;
             }
 
-            if(req.begin && headers) headers["server-timing"] = `generation;dur=${Number((process.hrtime.bigint() - req.begin) / BigInt(1000000))}`;
+            if(req.begin && headers) {
+                let hrTime = process.hrtime()
+                headers["server-timing"] = `generation;dur=${hrTime[0] * 1000 + hrTime[1] / 1000000 - req.begin}`
+            };
 
             res.cork(() => {
                 res.writeStatus(status? status + "": "200 OK").corsHeaders().writeHeaders(headers).end(message)
@@ -536,7 +539,8 @@ function build(){
 
         let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
 
-        req.begin = process.hrtime.bigint();
+        let hrTime = process.hrtime()
+        req.begin = hrTime[0] * 1000 + hrTime[1] / 1000000;
 
         function error(error, code){
             if(req.abort) return;
