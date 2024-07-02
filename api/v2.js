@@ -249,13 +249,25 @@ main = {
                     case "list":
                         let filter = shift();
 
+                        // DB results are cached for 10 seconds globally on the server (+ also on client)
+
+                        let globalCache = backend.getCache(req)
+
+                        if(globalCache.data) {
+                            return res.type("json").cache("10").send(globalCache.data)
+                        }
+
                         backend.db.database("extragon").query(`SELECT id, name, displayname, icon, banner, accent, description, owner, tags, type FROM \`lstv.apps\`${filter == "store"? " where show_in_store = true": filter == "home"? " where show_in_homepage": ""} LIMIT ? OFFSET ?`,
                             [+req.getQuery("limit") || 500, +req.getQuery("offset") || 0],
 
                             async function(err, results) {
                                 if(err) return error(24)
 
-                                res.type("json").cache("300000").send(main.schema.apps(results))
+                                let data = Buffer.from(main.schema.apps(results));
+
+                                backend.setCache(globalCache.id, data, 10)
+
+                                res.type("json").cache("15").send(data)
                             }
                         )
                     break;
@@ -273,12 +285,22 @@ main = {
                         let users = [...new Set(shift().split(",").map(thing => thing.replace(/[^0-9]/g, '')).filter(garbage => garbage))];
                         if(users.length < 1) return error(2);
 
+                        let globalCache = backend.getCache(req);
+
+                        if(globalCache.data){
+                            return res.type("json").cache("2").send(globalCache.data)
+                        }
+
                         backend.user.get(users, (err, users) => {
                             if(err){
                                 return error(err)
                             }
 
-                            res.send(users)
+                            let data = Buffer.from(JSON.stringify(users));
+
+                            backend.setCache(globalCache.id, data, 2)
+
+                            res.type("json").send(data)
                         })
                     break;
 

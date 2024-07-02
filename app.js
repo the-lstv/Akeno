@@ -588,7 +588,7 @@ function build(){
             try {
                 if(req.abort) return;
 
-                if(res && !res.sent && !res.wait) res.tryEnd();
+                if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
             } catch {}
         }, res.timeout || 15000)
     }
@@ -922,13 +922,17 @@ function build(){
 
         memoryCache: {},
 
-        setCache(req, data, expire = 300){
-            return (Backend.memoryCache[req.getHeader("host") + req.getUrl()] = {data, expire: Date.now() + (expire * 1000)}).data
+        getCachingID(req){
+            return req.getHeader("host") + req.getUrl() + req.getQuery()
+        },
+
+        setCache(id, data, expire = 5){
+            return (Backend.memoryCache[id] = {data, expire: Date.now() + (expire * 1000)}).data
         },
 
         getCache(req){
-            let id = req.getHeader("host") + req.getUrl(), cache = Backend.memoryCache[id];
-            return cache && cache.expire > Date.now()? cache.data: (delete Backend.memoryCache[id], false)
+            let id = req.getHeader("host") + req.getUrl() + req.getQuery(), cache = Backend.memoryCache[id];
+            return {data: cache && cache.expire > Date.now()? cache.data: (delete Backend.memoryCache[id], false), id}
         },
 
         pockets: {
