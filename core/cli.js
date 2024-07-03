@@ -1,6 +1,10 @@
 #! /bin/node
 
 
+
+// Warning: This code is currently in terrible quality...
+
+
 // Libraries
 let exec = require("child_process").execSync,
     execAsync = require("child_process").exec,
@@ -220,7 +224,7 @@ Some command examples:
 // });
 
 
-let values = process.argv.slice(2).filter(arg => !arg.startsWith("-")), api = "http://0.0.0.0:7007/internal";
+let values = process.argv.slice(2).filter(arg => !arg.startsWith("-")), api = "http://0.0.0.0/internal";
 
 async function resolve(command){
     let thing, domain, data; // Theese mean NOTHING for most commands, its there just for commands that define the same variable name as you cannot do that inside a switch.

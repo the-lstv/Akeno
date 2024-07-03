@@ -241,9 +241,9 @@ function build(){
     
     let wss = {
 
-        idleTimeout: 32,
-        maxBackpressure: 1024,
-        maxPayloadLength: 512,
+        // idleTimeout: 32,
+        // maxBackpressure: 1024,
+        // maxPayloadLength: 512,
         compression: uws.DEDICATED_COMPRESSOR_32KB,
 
         sendPingsAutomatically: true,

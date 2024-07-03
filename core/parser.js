@@ -1,5 +1,191 @@
 let fs = require("fs");
 
+
+
+// This file contains a collection of parsers made for Akeno.
+// That includes parsing configs, client code, and so on.
+
+
+function replaceObjects(code, dynamicObjects = {}, fill = false) {
+    /*
+    
+        This is a speical parser made for clientside JavaScript code, which allows the server to dynamically expose an object or multiple to the client.
+        (Or for any other use where you need to expose an object to a string of JS code).
+
+        If fill is set to false (most cases):
+            Returns the code spliced as an array of strings, with references to the functions to call.
+        
+            Warning: Static values will get added directly to the code as a string (potentially causing caching problems if the value changes.).
+            You must make the value a function in order to achieve a refresh each time.
+
+        If fill is set to true:
+            Returns the code as a string, now with replaced and filled references to the object, including function calls.
+
+        Note: This parser automatically removes all comments!
+        Warning: This parsed does NOT respect scopes (at this moment)! Be careful with the name of your objects - treat them as a global.
+        Warning: Syntax like object["key"] is NOT supported, because no actual code evaluation is performed. You are only allowed to write full object paths.
+        Warning: You cannot put variables into function calls. Only immediate values are supported (due to no-evaluation).
+
+    */
+    
+    let dynamicObjectKeys = Object.keys(dynamicObjects),
+        dynamicObjectFirstLetters = dynamicObjectKeys.map(key => key[0]),
+        dynamicObjectSecondLetters = dynamicObjectKeys.map(key => key[1])
+    ;
+
+    let state = 0, current = "", result = [], string, parsingString, browsing, keyword, arguments = [];
+
+    function push(){
+        if(current.length < 1) return;
+        result.push(current)
+        current = ""
+    }
+
+    let acceptableStartingRegex = /[\n\s;,(]/,
+        acceptableEndingRegex = /[\s\n.[;,)]/,
+        whitespaceRegex = /[\s\n]/
+    ;
+
+
+    for(let i = 0; i < code.length; i++){
+        let char = code[i];
+
+        switch(state){
+            case 0: // Normal
+                if(acceptableStartingRegex.test(code[i - 1] || " ") && dynamicObjectFirstLetters.includes(char) && dynamicObjectSecondLetters.includes(code[i + 1])) {
+                    let keyword = dynamicObjectKeys.find(key => code.substring(i, i + key.length) == key);
+
+                    if(keyword && acceptableEndingRegex.test(code[i + keyword.length] || " ")){
+
+                        let whiteSpace = false;
+                        i += keyword.length
+
+                        while(whitespaceRegex.test(code[i])){
+                            whiteSpace = true
+                            i++
+                        } // Ignore whitespace
+    
+                        if(code[i] !== ".") {current += "{}"; if(whiteSpace) current += "\n"; current += code[i] || ""; continue};
+
+
+                        while(whitespaceRegex.test(code[i + 1])) i++; // Ignore whitespace
+
+                        string = ""
+                        browsing = dynamicObjects[keyword]
+                        state = 2
+                        arguments = [];
+
+                        continue
+                    }
+                }
+
+                if(char == "'" || char == '"' || char == "`") {state = 1; current += char; string = char; continue}
+                if((char == "/" && (code[i + 1] == "/" || code[i + 1] == "*"))) {state = 3; string = code[i + 1]; continue}
+
+                current += char
+            break
+
+            case 1: // String
+                if(char == string) {state = 0}
+                current += char
+            break
+
+            case 2: // Keyword
+                if(!/^[a-zA-Z0-9$_]+$/.test(char)){
+                    while(whitespaceRegex.test(code[i])) i++; // Ignore whitespace
+
+                    keyword = string;
+
+                    if(code[i] === ".") {
+
+                        while(whitespaceRegex.test(code[i + 1])) i++; // Ignore whitespace
+
+                        if(!browsing[keyword]){
+                            throw `error: can't get ${keyword}`
+                        }
+
+                        browsing = browsing[keyword]
+                        string = ""
+                        keyword = ""
+                        continue
+                    }
+
+                    if(code[i] === "(") {
+
+                        while(whitespaceRegex.test(code[i])) i++; // Ignore whitespace
+                        state = 5
+
+                        continue
+                    }
+
+                    state = 4
+                    i -= 2
+                    continue
+                }
+
+                string += char
+            break
+
+            case 3: // Comment
+                if((string === "/" && char === "\n") || (string === "*" && char === "*" && code[i + 1] === "/")) {
+                    if(string === "/") current += char;
+                    if(string === "*") i++;
+
+                    state = 0;
+                    continue
+                }
+            break;
+
+            case 4: // End of keyword, do something with it:
+                state = 0
+                
+                if(typeof browsing[keyword] === "function"){
+                    if(fill){
+                        current += JSON.stringify(browsing[keyword](...arguments))
+                        continue
+                    }
+
+                    push()
+                    result.push({
+                        call: browsing[keyword],
+                        args: arguments
+                    })
+                    continue
+                }
+
+                current += JSON.stringify(browsing[keyword])
+            break;
+
+            case 5: // Arguments
+                while(whitespaceRegex.test(code[i])) i++; // Ignore whitespace
+
+                if(code[i] == "'" || code[i] == '"' || code[i] == "`") {state = 6; parsingString = ""; string = code[i]; continue}
+
+                if(code[i] == "," || code[i] == ")") arguments.push(parsingString);
+
+                if(code[i] == ")") {
+                    state = 4
+                    i--
+                    continue
+                }
+
+            break;
+
+            case 6: // Argument string
+
+                if(char == string) {state = 5; continue}
+
+                parsingString += char;
+
+            break;
+        }
+    }
+
+    push()
+
+    return result
+}
+
 function parse(code, direct, sourcePath){
     code = code.trim();
 
@@ -638,5 +824,5 @@ function configTools(parsed){
 }
 
 if(module) {
-    module.exports = {parse, configTools}
+    module.exports = {parse, configTools, replaceObjects}
 }
