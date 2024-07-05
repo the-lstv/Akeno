@@ -269,7 +269,7 @@ server = {
                                 extension = baseName.slice(lastIndex + 1);
                             }
 
-                            let mimeType = mime.types[extension] || "text/plain";
+                            let mimeType = mime.getType(extension) || "text/plain";
 
                             headers['content-type'] = `${mimeType}; charset=UTF-8`;
                             headers['cache-control'] = `public, max-age=${cacheByFile[extension] || cacheByFile.default}`;
@@ -632,7 +632,7 @@ function get_content(app, url, file){
                                         extension = baseName.slice(lastIndex + 1);
                                     }
         
-                                    let mimeType = mime.types[extension] || "image/x-icon";
+                                    let mimeType = mime.getType(extension) || "image/x-icon";
                                     waterfall.head += `<link rel="shortcut icon" href="${token.properties.favicon[0]}" type="${mimeType}">`
                                 }
 

@@ -193,7 +193,7 @@ api = {
                         file = [(fileName.split(".").slice(0,-1)[0]) || fileName, fileName.split(".").length > 1 ? fileName.split(".").slice(-1)[0].replace(/\?.*/, ""): ""]
 
                         let filePath = Path + "/file/" + file[0],
-                            mimeType = mime.types[file[1]] || "text/plain",
+                            mimeType = mime.getType(file[1]) || "text/plain",
                             exists = fs.existsSync(filePath),
                             content
                         ;
@@ -353,7 +353,7 @@ api = {
                                 file.path = "/www/ram/" + file.md5;
 
                                 let ext = (file.originalname.match(/\.[^.]+$/)?.[0] || "").replace(".", ""),
-                                    mimeType = mime.types[ext] || "text/plain",
+                                    mimeType = mime.getType(ext) || "text/plain",
                                     ignored = false
                                 ;
 

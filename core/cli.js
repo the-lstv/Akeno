@@ -16,8 +16,8 @@ let exec = require("child_process").execSync,
     { parse } = require("./parser"),
 
     path = require('path'),
-    axios = require('axios'),
-    cheerio = require('cheerio')
+    axios = require('axios')
+    // cheerio = require('cheerio')
 ;
 
 

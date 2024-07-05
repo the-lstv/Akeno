@@ -9,15 +9,56 @@ fi
 
 echo "Welcome to Akeno! The script will now install Akeno and setup your machine with the environment."
 echo "This is intended for fresh installations and is a complete install."
-echo "Do NOT procceed if you already have a different or conflicting environment."
+echo "This is intended primarily for Fedora/RHEL based systems. Compatibility with other distros is not guaranteed."
+echo "Required for installation: node, npm, git"
 
 
 if [ -d "/www" ]; then
+    echo "[QUESTION] You already have the /www directory on your system!"
+    echo "Are you absolutely sure that you want to continue? If the /www directory contains stuff that is not compatible with Akeno or something else is using it, please do not procceed."
+    echo "If it contains fragments compatible with Akeno, like existing user content, websites, configs, it should be safe."
     echo ""
-    read -p "You already have the /www directory on your system! Are you absolutely sure that you want to continue? If the /www directory contains stuff that is not compatible with Akeno or something else is using it, please do not procceed. If it contains fragments compatible with Akeno, like existing user content, websites, configs, it should be safe. (y/n): " choice
+    read -p "Continue? (y/n): " choice
     if [ "$choice" != "y" ]; then
-        echo "Exiting."
+        echo "Exiting (you already have a /www directory)."
         exit 0
+    fi
+fi
+
+# Check if node is installed
+if ! command -v node &> /dev/null; then
+    echo ""
+    echo "Node.js is not installed. Aborting."
+    echo "Please install Node.js using your package manager - for example, 'dnf install nodejs'"
+    exit 1
+fi
+
+# Check if npm is installed
+if ! command -v npm &> /dev/null; then
+    echo ""
+    echo "NPM is not installed. Aborting."
+    echo "Please install NPM using your package manager - for example, 'dnf install npm'"
+    exit 1
+fi
+
+# Check if npm is installed
+if ! command -v npm &> /dev/null; then
+    echo ""
+    echo "Git is not installed. Aborting."
+    echo "Please install git using your package manager - for example, 'dnf install git'"
+    exit 1
+fi
+
+# Check if pm2 is installed
+if ! command -v pm2 &> /dev/null; then
+    echo "pm2 is not installed. Installing pm2 globally..."
+    npm install -g pm2
+
+    if [ $? -eq 0 ]; then
+        echo "pm2 has been installed successfully."
+    else
+        echo "Failed to install pm2. Aborting."
+        exit 1
     fi
 fi
 
@@ -25,14 +66,26 @@ echo "Creating directories."
 
 mkdir -p /www/node/shared_modules/node_modules/
 mkdir -p /www/node/shell/
-mkdir -p /www/content/akeno/
 mkdir -p /www/content/web/
 mkdir -p /www/cmd/bin/
 
-touch /www/__prod__
+
+echo ""
+read -p "[QUESTION] Do you want your server to run in development or production mode? This affects caching, security, and anything that checks for development more. You can change this at any time by changing the environment type. (dev/prod, default is prod): " choice
+
+if [ "$choice" = "dev" ]; then
+    echo ""
+    echo "The server will be setup as a development server"
+    touch /www/__dev__
+else
+    echo ""
+    echo "The server will be setup as a production server"
+    touch /www/__prod__
+fi
+
 
 if [ ! -f "/www/global" ]; then
-    echo "Setting up global shell at /www/global - guardian is disabled by default."
+    echo "Setting up global shell script at /www/global - Akeno guardian is disabled by default."
 
     touch /etc/profile.d/akeno.environment_global.sh
     ln -s /etc/profile.d/akeno.environment_global.sh /www/global
@@ -50,23 +103,24 @@ fi
 
 if [ ! -d "/www/content/akeno" ]; then
     echo "Cloning the backend from GitHub into /www/content/akeno!"
+    mkdir -p /www/content/akeno/
 
     cd /www/content/akeno
-    git clone https://github.com/the-lstv/Akeno.git
+    git clone https://github.com/the-lstv/Akeno.git .
 else
-    if [ ! -d "/www/content/akeno/addons/" ]; then
+    if [ ! -d "/www/content/akeno/core/" ]; then
         echo "ERROR: /www/content/akeno already exists but does but appears to be broken. Cannot setup the CLI. Please verify the contents of /www/content/akeno and try again later."
         exit 1
     fi
 
-    echo "Cloning the backend from GitHub was SKIPPED as /www/content/akeno already exists. If this was not intended please do this later manually."
+    echo "Cloning the backend from GitHub was SKIPPED as /www/content/akeno already exists. If this was not intended please do this later manually (git clone https://github.com/the-lstv/Akeno.git /www/content/akeno)."
 fi
 
 
-ln -s /www/content/akeno/addons/akeno/cli.js /www/cmd/bin/akeno
+ln -s /www/content/akeno/core/cli.js /www/cmd/bin/akeno
 chmod +x /www/cmd/bin/akeno
 
-if [ ! -f "/www/global" ]; then
+if [ ! -f "/www/boot" ]; then
     echo "Setting up startup script service at /www/boot."
 
     touch /etc/systemd/system/akeno.bootScript.service
@@ -94,5 +148,11 @@ fi
 
 touch /www/content/akeno/etc/hits
 
-echo "Setup complete."
+echo "Installing node modules."
+
+cd /www/node/shared_modules/
+npm i uNetworking/uWebSockets.js#v20.44.0 uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js mime fs-extra formidable mysql2 axios sharp
+
+echo ""
+echo "[SETUP] Setup complete."
 echo "! PLEASE NOTE: Before you can use the CLI and the Akeno shell, please log out and back in or run \"bash /www/global\" in your bash. !"
