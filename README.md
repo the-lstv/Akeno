@@ -11,11 +11,11 @@ It has a performance-first webserver, with automated caching, code compression, 
 Quick installation (Fedora Linux Server Edition) <br>
 Required: `node`, `pm2` (npm i -g pm2), ``
 ```sh
-sudo curl run.lstv.space/install-akeno -s | bash
+curl run.lstv.space/install-akeno -s | sudo bash
 ```
 To run automatically on startup and enable `akeno -i`:
 ```sh
-sudo pm2 start /www/content/akeno/app.js --name egapi
+sudo pm2 start /www/content/akeno/app.js --name egapi # If your path differs from the default, replace it.
 ```
 
 ---
