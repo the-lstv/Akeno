@@ -7,7 +7,7 @@ if [ "$(id -u)" != "0" ]; then
     exit 1
 fi
 
-echo "\x1b[36m\x1b[1mWelcome to Akeno! The script will now install Akeno and setup your machine with the environment.\x1b[0m"
+echo -e "\x1b[36m\x1b[1mWelcome to Akeno! The script will now install Akeno and setup your machine with the environment.\x1b[0m"
 echo "This is intended for fresh installations and is a complete install."
 echo "This is intended primarily for Fedora/RHEL based systems. Compatibility with other distros is not guaranteed."
 echo "Required for installation: node, npm, git"
@@ -158,5 +158,5 @@ cd /www/node/shared_modules/
 npm i uNetworking/uWebSockets.js#v20.44.0 uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js mime fs-extra formidable mysql2 axios sharp
 
 echo ""
-echo "\x1b[32m[SETUP] Setup complete.\x1b[0m"
+echo -e "\x1b[32m[SETUP] Setup complete.\x1b[0m"
 echo "! PLEASE NOTE: Before you can use the CLI and the Akeno shell, please log out and back in or run \"bash /www/global\" in your bash. !"
