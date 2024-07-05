@@ -740,6 +740,12 @@ function build(){
 
         refreshConfig(){
             Backend.log("Refreshing configuration")
+
+            if(!fs.existsSync(PATH + "/config")){
+                Backend.log("No main config file found in /config, creating a default config file.")
+                fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
+            }
+
             configRaw = Backend.configRaw = parse(fs.readFileSync(PATH + "/config", "utf8"), true);
             config = Backend.config = configTools(configRaw)
         },

@@ -119,9 +119,10 @@ else
     echo "Cloning the backend from GitHub was SKIPPED as /www/content/akeno already exists. If this was not intended please do this later manually (git clone https://github.com/the-lstv/Akeno.git /www/content/akeno)."
 fi
 
-
-ln -s /www/content/akeno/core/cli.js /www/cmd/bin/akeno
-chmod +x /www/cmd/bin/akeno
+if [ ! -f "/www/cmd/bin/akeno" ]; then
+    ln -s /www/content/akeno/core/cli.js /www/cmd/bin/akeno
+    chmod +x /www/cmd/bin/akeno
+fi
 
 if [ ! -f "/www/boot" ]; then
     echo "Setting up startup script service at /www/boot."

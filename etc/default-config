@@ -15,17 +15,21 @@ server {
     # Enable server; Enable sub-host
     enableBuild;
 
-    hostSocketName: "eg_persistentHost";
+    # In case you are using persistent.js to manage persistent shared proccesses
+    # enableHost;
+    # hostSocketName: "eg_persistentHost";
 
     # Required. Path to where Akeno is located.
     PATH: "/www/content/akeno/";
 }
 
-# Route requests to API/webserver/CDN based on domain
-baseRouter {
-    web: "*";
-    api: "api.*";
-    cdn: "cdn.*", "cdn-origin.*";
+web {
+    locations:
+        # Website locations - /* will take all directories inside as individual locations.
+        # If the directory is not found, it is simply skipped along with a console warning.
+        "/www/content/web/*",
+        "/www/content/akeno/examples/hello-world-website"
+    ;
 }
 
 sslRouter {
@@ -45,14 +49,11 @@ sslRouter {
     subdomainWildcard;
 }
 
-web {
-    locations:
-        # Website locations - /* will take all directories inside as individual locations.
-        # If the directory is not found, it is simply skipped along with a console warning.
-        "/www/content/web/*",
-        "./web/*",
-        "./examples/hello-world-website"
-    ;
+# Route requests to API/webserver/CDN based on domain
+baseRouter {
+    web: "*";
+    api: "api.*";
+    cdn: "cdn.*", "cdn-origin.*";
 }
 
 # If you intend to use a SQL database
@@ -92,11 +93,6 @@ performance {
 #         captcha: auth.lstv.space;
 #     };
 
-#     http: {
-#         proxy: nginx;
-#         port: 7007;
-#     }
-
 #     web: {
 #         parser; # Parse special Akeno syntax
 #         code-compression; # Auto compress HTML, CSS, and JS
@@ -109,15 +105,6 @@ performance {
 #             }
 #         }
 #     };
-
-#     cdn: {
-#         files;
-#         ls;
-#     };
-
-#     api;
-#     cli;
-#     intersocket;
 # }
 
 # environment {

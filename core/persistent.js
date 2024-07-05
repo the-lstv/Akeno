@@ -1,10 +1,17 @@
 //libraries
 let
+
+    // TODO: (urgent) move to a different ipc library. node-ipc is malware.
     ipc = require('@node-ipc/node-ipc').default,
+
     { exec, spawn } = require('child_process'),
     uuid = (require("uuid")).v4,
     pidusage = require('pidusage')
 ;
+
+
+
+// WARNING: Outdated code.
 
 //globals
 let
