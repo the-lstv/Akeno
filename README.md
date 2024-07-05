@@ -11,7 +11,7 @@ It has a performance-first webserver, with automated caching, code compression, 
 Quick installation (Fedora Linux Server Edition) <br>
 Required: `node`, `pm2` (npm i -g pm2), ``
 ```sh
-curl run.lstv.space/install-akeno -s | sudo bash
+curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
 ```
 To run automatically on startup and enable `akeno -i`:
 ```sh
