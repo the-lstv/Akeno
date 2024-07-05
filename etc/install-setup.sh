@@ -7,13 +7,14 @@ if [ "$(id -u)" != "0" ]; then
     exit 1
 fi
 
-echo "Welcome to Akeno! The script will now install Akeno and setup your machine with the environment."
+echo "\x1b[36m\x1b[1mWelcome to Akeno! The script will now install Akeno and setup your machine with the environment.\x1b[0m"
 echo "This is intended for fresh installations and is a complete install."
 echo "This is intended primarily for Fedora/RHEL based systems. Compatibility with other distros is not guaranteed."
 echo "Required for installation: node, npm, git"
 
 
 if [ -d "/www" ]; then
+    echo ""
     echo "[QUESTION] You already have the /www directory on your system!"
     echo "Are you absolutely sure that you want to continue? If the /www directory contains stuff that is not compatible with Akeno or something else is using it, please do not procceed."
     echo "If it contains fragments compatible with Akeno, like existing user content, websites, configs, it should be safe."
@@ -71,7 +72,9 @@ mkdir -p /www/cmd/bin/
 
 
 echo ""
-read -p "[QUESTION] Do you want your server to run in development or production mode? This affects caching, security, and anything that checks for development more. You can change this at any time by changing the environment type. (dev/prod, default is prod): " choice
+echo "[QUESTION] Do you want your server to run in development or production mode? This affects caching, security, and anything that checks for development more. You can change this at any time by changing the environment type."
+echo ""
+read -p "(dev/prod, default is prod): " choice
 
 if [ "$choice" = "dev" ]; then
     echo ""
@@ -124,6 +127,7 @@ if [ ! -f "/www/boot" ]; then
     echo "Setting up startup script service at /www/boot."
 
     touch /etc/systemd/system/akeno.bootScript.service
+    touch /www/boot
 
     echo "[Unit]
 Description=Akeno Boot script
@@ -154,5 +158,5 @@ cd /www/node/shared_modules/
 npm i uNetworking/uWebSockets.js#v20.44.0 uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js mime fs-extra formidable mysql2 axios sharp
 
 echo ""
-echo "[SETUP] Setup complete."
+echo "\x1b[32m[SETUP] Setup complete.\x1b[0m"
 echo "! PLEASE NOTE: Before you can use the CLI and the Akeno shell, please log out and back in or run \"bash /www/global\" in your bash. !"
