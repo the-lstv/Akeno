@@ -156,7 +156,8 @@ touch /www/content/akeno/etc/hits
 echo "Installing node modules."
 
 cd /www/node/shared_modules/
-npm i uNetworking/uWebSockets.js#v20.44.0 uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js mime fs-extra formidable mysql2 axios sharp
+npm i uNetworking/uWebSockets.js#v20.44.0
+npm i uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js fs-extra formidable mysql2 axios sharp
 
 echo ""
 echo -e "\x1b[32m[SETUP] Setup complete.\x1b[0m"

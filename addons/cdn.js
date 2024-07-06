@@ -10,7 +10,7 @@ let isDev = false, // Do not change - its now inherited from Backend.isDev when 
 
     fs = require("fs"),
     // multer = require('multer-md5'),
-    mime = require('mime'),
+    mime,
     sharp = require('sharp'),
 
     CleanCSS = new (require('clean-css'))({
@@ -128,6 +128,8 @@ api = {
     Initialize(Backend_){
         Backend = Backend_;
         isDev = Backend.isDev;
+
+        mime = Backend.mime;
     },
     async HandleRequest({segments, shift, error, req, res}){
         function send(data = {}, cache = false, type = null, isFilePath){

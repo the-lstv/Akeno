@@ -1142,6 +1142,30 @@ function build(){
             return AddonCache[name]
         },
 
+        mime: {
+            // Had to make my own mimetype "library" since the current mimetype library for Node is total ass.
+
+            types: null,
+            extensions: null,
+
+            load(){
+                Backend.mime.types = JSON.parse(fs.readFileSync(PATH + "/etc/mimetypes.json", "utf8"))
+                Backend.mime.extensions = {}
+
+                for(let extension in Backend.mime.types){
+                    Backend.mime.extensions[Backend.mime.types[extension]] = extension
+                }
+            },
+
+            getType(extension){
+                return Backend.mime.types[extension] || null
+            },
+
+            getExtension(mimetype){
+                return Backend.mime.extensions[mimetype] || null
+            }
+        },
+
         async getDiscordUserInfo(accessToken) {
             try {
                 // Make a GET request to Discord API to fetch user information
@@ -1232,5 +1256,7 @@ if(isDev){
 port = (+Backend.config.block("server").properties.port) || 7007;
 doHost = Backend.config.block("server").properties.enableHost == "prod"? !isDev: Backend.config.block("server").properties.enableHost;
 doBuild = Backend.config.block("server").properties.enableBuild;
+
+Backend.mime.load()
 
 initialize()

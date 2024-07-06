@@ -41,7 +41,7 @@ let
     // Libraries
     fs = require("fs"),
     nodePath = require("path"),
-    mime = require('mime'),
+    mime,
     CleanCSS = new (require('clean-css')),
     UglifyJS = require("uglify-js"),
 
@@ -147,6 +147,8 @@ server = {
     Initialize(Backend_){
         Backend = Backend_;
         server.Reload(true)
+
+        mime = Backend.mime;
     },
     
     async Reload(firstTime){
@@ -269,7 +271,9 @@ server = {
                                 extension = baseName.slice(lastIndex + 1);
                             }
 
-                            let mimeType = mime.getType(extension) || "text/plain";
+                            // Why the extra mime checks? Because the libarary is total unpredictable crap that sometimes exists and sometimes doesnt. Why? No clue.
+                            // Yes, it could be that I am using an older version, but that is because the @4 and up switched to MJS, which I really do not understand the reason for, and thus I can not use it, since I refuse MJS.
+                            let mimeType = (mime && mime.getType && mime.getType(extension)) || "text/plain";
 
                             headers['content-type'] = `${mimeType}; charset=UTF-8`;
                             headers['cache-control'] = `public, max-age=${cacheByFile[extension] || cacheByFile.default}`;
@@ -632,7 +636,7 @@ function get_content(app, url, file){
                                         extension = baseName.slice(lastIndex + 1);
                                     }
         
-                                    let mimeType = mime.getType(extension) || "image/x-icon";
+                                    let mimeType = (mime && mime.getType && mime.getType(extension)) || "image/x-icon";
                                     waterfall.head += `<link rel="shortcut icon" href="${token.properties.favicon[0]}" type="${mimeType}">`
                                 }
 
