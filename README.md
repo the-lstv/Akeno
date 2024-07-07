@@ -5,11 +5,9 @@ It uses its universal config system to make it easy to manage large quantities o
 <br>
 It has a performance-first webserver, with automated caching, code compression, and a custom HTML parser which allows you to write clean and easier-to-read code, with less maintenance needed.
 
-**WARNING:** The latest update has bought MANY breaking changes to the server!
-
 ---
-Quick installation (Fedora Linux Server Edition) <br>
-Required: `node`, `pm2` (npm i -g pm2), ``
+Quick installation (Fedora Linux) <br>
+Required: `node`, `npm`, `git`
 ```sh
 curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
 ```
