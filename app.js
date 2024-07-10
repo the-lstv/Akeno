@@ -667,13 +667,7 @@ function build(){
 
             // Configure SSL
             if(Backend.config.block("server").properties.enableSSL) {
-                SSLApp = uws.SSLApp({
-
-                    /* There are more SSL options, cut for brevity */
-                    key_file_name: '/www/server/certs/extragon.cloud/privkey.pem',
-                    cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem',
-                    
-                  });
+                SSLApp = uws.SSLApp();
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
 
@@ -706,6 +700,7 @@ function build(){
                             // For some reason we still have to include a separate router like so:
                             SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, true)).ws("/*", wss)
                             // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
+                            // A bit wasteful right? For every domain..
                         }
 
                         for(let domain of SNIDomains) {
