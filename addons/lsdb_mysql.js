@@ -81,7 +81,7 @@ lsdb = {
                     use,
 
                     async query(query, data, callback){
-                        await use();
+                        // await use();
                         return new Promise(resolve=>{
                             return _this.pool.query(`${query}`, data, function(err, result){
                                 if(callback) callback(err, result)
@@ -97,9 +97,9 @@ lsdb = {
                             tableName,
 
                             async has(column, data, callback){
-                                await use();
+                                // await use();
                                 return new Promise(resolve=>{
-                                    return _this.pool.query(`SELECT 1 FROM ${tableName} WHERE ${column} = ? LIMIT 1;`, data, function(err, result){
+                                    return _this.pool.query(`SELECT 1 FROM \`${tableName}\` WHERE ${column} = ? LIMIT 1;`, data, function(err, result){
                                         if(callback) callback(err, result)
                                         resolve({err, result})
                                     })
@@ -107,9 +107,9 @@ lsdb = {
                             },
 
                             async insert(data, callback){
-                                await use();
+                                // await use();
                                 return new Promise(resolve=>{
-                                    _this.pool.query(`INSERT INTO ${tableName} (${Object.keys(data).join(",")}) VALUES (${",?".repeat(Object.keys(data).length).substring(1)})`, Object.values(data), function(err, result){
+                                    _this.pool.query(`INSERT INTO \`${tableName}\` (${Object.keys(data).join(",")}) VALUES (${",?".repeat(Object.keys(data).length).substring(1)})`, Object.values(data), function(err, result){
                                         if(callback) callback(err, result)
                                         resolve({err, result})
                                     })
@@ -117,9 +117,9 @@ lsdb = {
                             },
 
                             async update(selector = "*", data, callback){
-                                await use();
+                                // await use();
                                 return new Promise(resolve=>{
-                                    _this.pool.query(`UPDATE ${tableName} SET ${Object.keys(data).map(key => key + "=?").join(",")} ${(selector == "?" || !selector)? "" : selector}`, Object.values(data), function(err, result){
+                                    _this.pool.query(`UPDATE \`${tableName}\` SET ${Object.keys(data).map(key => key + "=?").join(",")} ${(selector == "?" || !selector)? "" : selector}`, Object.values(data), function(err, result){
                                         if(callback) callback(err, result)
                                         resolve({err, result})
                                     })

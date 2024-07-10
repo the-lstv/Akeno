@@ -490,6 +490,8 @@ server = {
 
 // Section: functions
 
+let lsVersion = fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8").trim();
+
 function get_content(app, url, file){
     server.log.debug("Server is parsing dynamic file '" + file + "'!");
 
@@ -529,16 +531,12 @@ function get_content(app, url, file){
     }
 
     let waterfall = {
-        head: `<meta charset=UTF-8><meta name=viewport content="width=device-width, initial-scale=1.0">`,
-
+        head: "",
         body: "",
 
         merged: [],
-
         resources: [],
-
         bodyAttributes: {},
-
         exposed: [],
 
         htmlLang: "en",
@@ -851,7 +849,7 @@ function get_content(app, url, file){
     if(waterfall.resources["ls-js"]){
         hasLS = true
 
-        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/${Backend.isDev? "js" : "js.min"}/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8")}/${waterfall.resources["ls-js"].join(",")}`;
+        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/${Backend.isDev? "js" : "js.min"}/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: lsVersion}/${waterfall.resources["ls-js"].join(",")}`;
 
         if(waterfall.resources["defer-js"]){
             waterfall.deferResources.push("js:" + url)
@@ -865,7 +863,7 @@ function get_content(app, url, file){
     }
 
     if(waterfall.resources["ls-css"]){
-        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/css/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8")}/${waterfall.resources["ls-css"].join(",")}`;
+        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/css/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: lsVersion}/${waterfall.resources["ls-css"].join(",")}`;
         
         if(waterfall.resources["defer-css"]){
             waterfall.deferResources.push("css:" + url)
@@ -911,7 +909,7 @@ function get_content(app, url, file){
         return `${waterfall.body}`
     }
 
-    return Buffer.from(`<!DOCTYPE html>\n<!-- WARNING:\n    This is automatically generated and compressed code. It may not represent the original source.\n-->\n<html lang=${waterfall.htmlLang}><head>${waterfall.head}</head><body${attributesString(waterfall.bodyAttributes)}>${waterfall.body}${waterfall.exposed.length > 0? `<script>let ${waterfall.exposed.map(element => element + "=" + ((hasLS && !waterfall.resources["defer-js"])? "O('#" : "document.querySelector('#") + element + "')").join(",")}</script>`: ""}</body></html>`)
+    return Buffer.from(`<!DOCTYPE html>\n<!-- WARNING:\n\tThis is automatically generated and compressed code. It may not represent the source.\n-->\n<html lang=${waterfall.htmlLang}><head><meta charset=UTF-8><meta name=viewport content="width=device-width, initial-scale=1.0">${waterfall.head}</head><body${attributesString(waterfall.bodyAttributes)}>${waterfall.body}${waterfall.exposed.length > 0? `<script>let ${waterfall.exposed.map(element => element + "=" + ((hasLS && !waterfall.resources["defer-js"])? "O('#" : "document.querySelector('#") + element + "')").join(",")}</script>`: ""}</body></html>`)
 }
 
 module.exports = server

@@ -254,7 +254,7 @@ function build(){
 
             let segments = req.getUrl().split("/").filter(garbage => garbage);
             
-            if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments.replace("v", ""))) segments.shift();
+            if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments[0].replace("v", ""))) segments.shift();
 
             let handler = API[API._latest].GetHandler(segments[0]);
 
@@ -334,17 +334,18 @@ function build(){
             res.writeHeaders({
                 'X-Powered-By': 'Akeno Server/' + version,
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
+                "Access-Control-Allow-Methods": "GET,HEAD,POST,PUT,DELETE",
                 "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Allow-Headers": "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, Authorization"
+                "Access-Control-Allow-Headers": "Authorization, *",
+                "Origin": req.domain
             })
             return res
         }
 
         // Handle preflights:
         if(req.method == "OPTIONS"){
-            // Prevent preflights for 16 days
-            res.corsHeaders().writeHeader("Cache-Control", "public, max-age=1382400").end()
+            // Prevent preflights for 16 days... which chrome totally ignores anyway
+            res.corsHeaders().writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").writeHeader("CORS-is", "a piece of crap").end()
             return
         }
 
@@ -552,7 +553,7 @@ function build(){
             }
 
             res.cork(() => {
-                res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code},"error":"${(error || "Unknown error").replaceAll('"', '\\"')}"}`);
+                res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
             })
         }
 
@@ -774,6 +775,10 @@ function build(){
         SSLApp,
         API,
         CreationCache: {},
+
+        broadcast(topic, data, isBinary, compress){
+            if(Backend.config.block("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
+        },
 
         // resolve,
 
@@ -1242,6 +1247,7 @@ function build(){
             46: "Invalid email address.",
             47: "Username must be within 2 to 200 characters in range and only contain bare letters, numbers, and _, -, .",
             48: "Weak password.",
+            49: "Sent data exceed maximum allowed size."
         }
     }
 })()

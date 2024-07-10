@@ -164,19 +164,19 @@ main = {
             case"localcommands":
                 return backend.addon("localCommands")
 
-            case"mazec":
-                return backend.addon("mazec")
+            // case"mazec":
+            //     return backend.addon("mazec")
 
             default:
                 let api = backend.apiExtensions[part];
-                if(!api) return 1;
+                if(!api) return;
 
                 if(typeof api == "string"){
                     // The API addon has not been loaded yet - lets do it now;
                     backend.apiExtensions[part] = api = backend.addon(part, api)
 
                     if(!api){
-                        return 1
+                        return
                     }
                 }
                 return api
@@ -549,7 +549,7 @@ main = {
             default:
                 // Custom router handles!
                 let handler = main.GetHandler(part);
-                if(handler.HandleRequest) handler.HandleRequest({backend, req, res, segments, error, shift}); else res.cork(() => { res.writeStatus("404").end() });
+                if(handler && handler.HandleRequest) handler.HandleRequest({req, res, segments, error, shift}); else res.cork(() => { res.writeStatus("404").corsHeaders().end("404") });
         }
     },
 
