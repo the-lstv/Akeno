@@ -252,7 +252,11 @@ function build(){
 
             // Upgrading a HTTP connection to a WebSocket
 
-            let segments = req.getUrl().split("/").filter(garbage => garbage);
+            res.onAborted(() => {
+                continueUpgrade = false
+            })
+
+            let segments = req.getUrl().split("/").filter(garbage => garbage), continueUpgrade = true;
             
             if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments[0].replace("v", ""))) segments.shift();
 
@@ -260,7 +264,7 @@ function build(){
 
             if(!handler || !handler.HandleSocket) return res.end();
 
-            res.upgrade({
+            if(continueUpgrade) res.upgrade({
                 uuid: uuid(),
                 url: req.getUrl(),
                 host: req.getHeader("host"),
@@ -673,28 +677,12 @@ function build(){
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
 
-                SSLApp.ws('/*', {
-      
-                    /* There are many common helper features */
-                    //idleTimeout: 32,
-                    //maxBackpressure: 1024,
-                    //maxPayloadLength: 512,
-                    //compression: SSOR_3KB,
-                  
-                    /* For brevity we skip the other events (upgrade, open, ping, pong, close) */
-                    message: (ws, message, isBinary) => {
-                      /* You can do app.publish('sensors/home/temperature', '22C') kind of pub/sub as well */
-                      
-                      /* Here we echo the message back, using compression if available */
-                      let ok = ws.send(message, isBinary, true);
-                    }
-                    
-                })
+                SSLApp.ws('/*', wss)
 
                 SSLApp.any('/*', (res, req) => resolve(res, req, true))
 
                 // If sslRouter is defined
-                if(false && Backend.config.block("sslRouter")){
+                if(Backend.config.block("sslRouter")){
                     let SNIDomains = Backend.config.block("sslRouter").properties.domains;
     
                     if(SNIDomains){
@@ -716,7 +704,7 @@ function build(){
                             })
     
                             // For some reason we still have to include a separate router like so:
-                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, true))
+                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, true)).ws("/*", wss)
                             // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
                         }
 
