@@ -673,23 +673,8 @@ function build(){
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
 
-                SSLApp.ws('/*', {
-      
-                    /* There are many common helper features */
-                    //idleTimeout: 32,
-                    //maxBackpressure: 1024,
-                    //maxPayloadLength: 512,
-                    //compression: SSOR_3KB,
-                  
-                    /* For brevity we skip the other events (upgrade, open, ping, pong, close) */
-                    message: (ws, message, isBinary) => {
-                      /* You can do app.publish('sensors/home/temperature', '22C') kind of pub/sub as well */
-                      
-                      /* Here we echo the message back, using compression if available */
-                      let ok = ws.send(message, isBinary, true);
-                    }
-                    
-                  })
+                SSLApp.ws('/*', wss)
+
                 SSLApp.any('/*', (res, req) => resolve(res, req, true))
 
                 // If sslRouter is defined
