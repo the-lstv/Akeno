@@ -652,7 +652,7 @@ function build(){
     app = uws.App()
 
     // Initialize WebSockets
-    // app.ws('/*', wss)
+    app.ws('/*', wss)
     
     // Initialize WebServer
     app.any('/*', (res, req) => resolve(res, req, true))
@@ -674,11 +674,10 @@ function build(){
                 SSLApp.any('/*', (res, req) => resolve(res, req, true))
 
                 // If sslRouter is defined
-                if(Backend.config.block("sslRouter")){
+                if(false&&Backend.config.block("sslRouter")){
                     let SNIDomains = Backend.config.block("sslRouter").properties.domains;
     
                     if(SNIDomains){
-
 
                         // This entire proccess is a bit annoying and messy due to the weird API for SNI domains in uWebSockets.
                         // If it will be necessary, a fork of uWS could be made to make the API cleaner, faster and more fitting to our use-case.
