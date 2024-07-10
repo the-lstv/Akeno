@@ -663,7 +663,10 @@ function build(){
 
             // Configure SSL
             if(Backend.config.block("server").properties.enableSSL) {
-                SSLApp = uws.SSLApp();
+                SSLApp = uws.SSLApp({
+                    key_file_name:  Backend.config.block("sslRouter").properties.keyBase[0].replace("{domain}", "extragon.cloud"),
+                    cert_file_name: Backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", "extragon.cloud")
+                });
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
 
