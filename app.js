@@ -663,10 +663,7 @@ function build(){
 
             // Configure SSL
             if(Backend.config.block("server").properties.enableSSL) {
-                SSLApp = uws.SSLApp({
-                    key_file_name:  Backend.config.block("sslRouter").properties.keyBase[0].replace("{domain}", "extragon.cloud"),
-                    cert_file_name: Backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", "extragon.cloud")
-                });
+                SSLApp = uws.SSLApp();
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
 
@@ -678,6 +675,7 @@ function build(){
                     let SNIDomains = Backend.config.block("sslRouter").properties.domains;
     
                     if(SNIDomains){
+
 
                         // This entire proccess is a bit annoying and messy due to the weird API for SNI domains in uWebSockets.
                         // If it will be necessary, a fork of uWS could be made to make the API cleaner, faster and more fitting to our use-case.
