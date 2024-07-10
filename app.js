@@ -652,7 +652,7 @@ function build(){
     app = uws.App()
 
     // Initialize WebSockets
-    app.ws('/*', wss)
+    // app.ws('/*', wss)
     
     // Initialize WebServer
     app.any('/*', (res, req) => resolve(res, req, true))
