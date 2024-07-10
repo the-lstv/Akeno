@@ -248,39 +248,39 @@ function build(){
 
         sendPingsAutomatically: true,
 
-        // upgrade(res, req, context) {
+        upgrade(res, req, context) {
 
-        //     // Upgrading a HTTP connection to a WebSocket
+            // Upgrading a HTTP connection to a WebSocket
 
-        //     let segments = req.getUrl().split("/").filter(garbage => garbage);
+            let segments = req.getUrl().split("/").filter(garbage => garbage);
             
-        //     if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments[0].replace("v", ""))) segments.shift();
+            if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments[0].replace("v", ""))) segments.shift();
 
-        //     let handler = API[API._latest].GetHandler(segments[0]);
+            let handler = API[API._latest].GetHandler(segments[0]);
 
-        //     if(!handler || !handler.HandleSocket) return res.end();
+            if(!handler || !handler.HandleSocket) return res.end();
 
-        //     res.upgrade({
-        //         uuid: uuid(),
-        //         url: req.getUrl(),
-        //         host: req.getHeader("host"),
-        //         handler: handler.HandleSocket,
-        //         segments
-        //     }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
-        // },
+            res.upgrade({
+                uuid: uuid(),
+                url: req.getUrl(),
+                host: req.getHeader("host"),
+                handler: handler.HandleSocket,
+                segments
+            }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
+        },
 
-        // open(ws) {
-        //     if(ws.handler.open) ws.handler.open(ws);
-        // },
+        open(ws) {
+            if(ws.handler.open) ws.handler.open(ws);
+        },
         
-        // message(ws, message, isBinary) {
-        //     if(ws.handler.message) ws.handler.message(ws, message, isBinary);
-        // },
+        message(ws, message, isBinary) {
+            if(ws.handler.message) ws.handler.message(ws, message, isBinary);
+        },
         
         
-        // close(ws, code, message) {
-        //     if(ws.handler.close) ws.handler.close(ws, code, message);
-        // }
+        close(ws, code, message) {
+            if(ws.handler.close) ws.handler.close(ws, code, message);
+        }
     };
 
     let types = {
