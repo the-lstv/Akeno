@@ -656,6 +656,41 @@ function build(){
     
     // Initialize WebServer
     app.any('/*', (res, req) => resolve(res, req, true))
+
+    uws.SSLApp({
+
+        /* There are more SSL options, cut for brevity */
+        key_file_name: '/www/server/certs/extragon.cloud/privkey.pem',
+        cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem',
+        
+      }).ws('/*', {
+      
+        /* There are many common helper features */
+        //idleTimeout: 32,
+        //maxBackpressure: 1024,
+        //maxPayloadLength: 512,
+        //compression: SSOR_3KB,
+      
+        /* For brevity we skip the other events (upgrade, open, ping, pong, close) */
+        message: (ws, message, isBinary) => {
+          /* You can do app.publish('sensors/home/temperature', '22C') kind of pub/sub as well */
+          
+          /* Here we echo the message back, using compression if available */
+          let ok = ws.send(message, isBinary, true);
+        }
+        
+      }).get('/*', (res, req) => {
+      
+        /* It does Http as well */
+        res.writeStatus('200 OK').writeHeader('IsExample', 'Yes').end('Hello there!');
+        
+      }).listen(50000, (listenSocket) => {
+      
+        if (listenSocket) {
+          console.log('Listening to port 9001');
+        }
+        
+      });
     
     app.listen(port, (listenSocket) => {
         if (listenSocket) {
