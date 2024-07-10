@@ -663,7 +663,13 @@ function build(){
 
             // Configure SSL
             if(Backend.config.block("server").properties.enableSSL) {
-                SSLApp = uws.SSLApp();
+                SSLApp = uws.SSLApp({
+
+                    /* There are more SSL options, cut for brevity */
+                    key_file_name: '/www/server/certs/extragon.cloud/privkey.pem',
+                    cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem',
+                    
+                  });
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
 
@@ -688,7 +694,7 @@ function build(){
                 SSLApp.any('/*', (res, req) => resolve(res, req, true))
 
                 // If sslRouter is defined
-                if(Backend.config.block("sslRouter")){
+                if(false && Backend.config.block("sslRouter")){
                     let SNIDomains = Backend.config.block("sslRouter").properties.domains;
     
                     if(SNIDomains){
