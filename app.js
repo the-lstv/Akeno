@@ -244,9 +244,9 @@ function build(){
         // idleTimeout: 32,
         // maxBackpressure: 1024,
         // maxPayloadLength: 512,
-        compression: uws.DEDICATED_COMPRESSOR_32KB,
+        // compression: uws.DEDICATED_COMPRESSOR_32KB,
 
-        sendPingsAutomatically: true,
+        // sendPingsAutomatically: true,
 
         upgrade(res, req, context) {
 
@@ -675,7 +675,6 @@ function build(){
                     let SNIDomains = Backend.config.block("sslRouter").properties.domains;
     
                     if(SNIDomains){
-
 
                         // This entire proccess is a bit annoying and messy due to the weird API for SNI domains in uWebSockets.
                         // If it will be necessary, a fork of uWS could be made to make the API cleaner, faster and more fitting to our use-case.
