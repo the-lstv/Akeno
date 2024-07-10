@@ -674,7 +674,7 @@ function build(){
                 SSLApp.any('/*', (res, req) => resolve(res, req, true))
 
                 // If sslRouter is defined
-                if(false&&Backend.config.block("sslRouter")){
+                if(Backend.config.block("sslRouter")){
                     let SNIDomains = Backend.config.block("sslRouter").properties.domains;
     
                     if(SNIDomains){
