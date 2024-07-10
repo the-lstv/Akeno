@@ -663,22 +663,32 @@ function build(){
 
             // Configure SSL
             if(Backend.config.block("server").properties.enableSSL) {
-                SSLApp = uws.SSLApp({
-
-                    /* There are more SSL options, cut for brevity */
-                    key_file_name: '/www/server/certs/extragon.cloud/privkey.pem',
-                    cert_file_name: '/www/server/certs/extragon.cloud/fullchain.pem',
-                    
-                  });
+                SSLApp = uws.SSLApp();
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
 
-                SSLApp.ws('/*', wss)
+                SSLApp.ws('/*', {
+      
+                    /* There are many common helper features */
+                    //idleTimeout: 32,
+                    //maxBackpressure: 1024,
+                    //maxPayloadLength: 512,
+                    //compression: SSOR_3KB,
+                  
+                    /* For brevity we skip the other events (upgrade, open, ping, pong, close) */
+                    message: (ws, message, isBinary) => {
+                      /* You can do app.publish('sensors/home/temperature', '22C') kind of pub/sub as well */
+                      
+                      /* Here we echo the message back, using compression if available */
+                      let ok = ws.send(message, isBinary, true);
+                    }
+                    
+                })
 
                 SSLApp.any('/*', (res, req) => resolve(res, req, true))
 
                 // If sslRouter is defined
-                if(false && Backend.config.block("sslRouter")){
+                if(Backend.config.block("sslRouter")){
                     let SNIDomains = Backend.config.block("sslRouter").properties.domains;
     
                     if(SNIDomains){
