@@ -365,7 +365,7 @@ main = {
 
                             let permissions = decodePermissions(data.permissions || "");
 
-                            backend.db.database("extragon").query(`SELECT displayname, name, owner, icon, accent, banner, pocket_id FROM apps WHERE id = ?`,
+                            backend.db.database("extragon").query(`SELECT displayname, name, owner, icon, accent, banner, pocket_id FROM \`lstv.apps\` WHERE id = ?`,
                                 [data.app],
                                 function (err, result){
                                     if(err){
@@ -405,7 +405,7 @@ main = {
                                 return error(2)
                             }
 
-                            backend.db.database("extragon").query(`SELECT 1 FROM apps WHERE id = ?`,
+                            backend.db.database("extragon").query(`SELECT 1 FROM \`lstv.apps\` WHERE id = ?`,
                                 [data.app],
                                 function (err, result){
                                     if(err){
