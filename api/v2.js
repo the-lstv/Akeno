@@ -532,8 +532,8 @@ main = {
                                     }
     
                                     token.success = true;
-                                    
-                                    res.send(token, {
+
+                                    res.send(JSON.stringify(token), {
                                         'Access-Control-Allow-Origin': origin
                                     })
 
