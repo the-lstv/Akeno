@@ -535,9 +535,7 @@ main = {
 
                                     console.log(JSON.stringify(token));
 
-                                    res.send(JSON.stringify(token), {
-                                        'Access-Control-Allow-Origin': origin
-                                    })
+                                    res.send(JSON.stringify(token))
 
                                     resolve()
                                 }, ip)
