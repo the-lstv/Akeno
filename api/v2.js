@@ -4,7 +4,7 @@
 
 */
 
-var main, backend;
+var main, backend, decoder = new TextDecoder();
 
 function setAuthCookie(req, res, token, expiresIn){
     res.cookie('token', token, {
@@ -500,7 +500,7 @@ main = {
                         if(!req.secured) return error(35);
                         if(req.method != "POST") return error(30);
 
-                        let origin = req.getHeader("origin"), ip = res.getRemoteAddressAsText();
+                        let origin = req.getHeader("origin"), ip = decoder.decode(res.getRemoteAddressAsText());
                         
                         await new Promise(resolve => {
                             req.parseBody((data, fail) => {

@@ -892,7 +892,7 @@ function build(){
                             username: user.username,
                             hash: await bcrypt.hash(user.password, 12),
                             email: user.email,
-                            ip
+                            ip: ip || ""
 
                         };
 
