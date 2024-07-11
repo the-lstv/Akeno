@@ -499,6 +499,8 @@ main = {
                     case "create":
                         if(!req.secured) return error(35);
                         if(req.method != "POST") return error(30);
+
+                        let origin = req.getHeader("origin"), ip = res.getRemoteAddressAsText();
                         
                         await new Promise(resolve => {
                             req.parseBody((data, fail) => {
@@ -532,11 +534,11 @@ main = {
                                     token.success = true;
                                     
                                     res.send(token, {
-                                        'Access-Control-Allow-Origin': req.getHeader("origin")
+                                        'Access-Control-Allow-Origin': origin
                                     })
 
                                     resolve()
-                                }, req.ip)
+                                }, ip)
                             }).data()
                         })
                     break;
