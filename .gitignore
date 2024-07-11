@@ -19,5 +19,8 @@ version/v1.old.js
 
 /addons/nsfw-detector/
 addons/data/arisen/failed.log
+addons/arisen.js
+addons/currency.js
+addons/remoteSync.js
 model.nlp
 config

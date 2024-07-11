@@ -35,6 +35,7 @@ let
 ;
 
 try {
+    // Disable uWebSockets version header, remove to re-enable
     uws._cfg('999999990007');
 } catch (error) {}
 
@@ -60,7 +61,7 @@ let
     PATH = __dirname + "/",
 
     total_hits,
-    saved_hits,
+    // saved_hits,
     since_startup = Date.now()
 ;
 
@@ -71,22 +72,20 @@ async function save_hits(){
 
     buffer.writeUInt32LE(total_hits, 0);
     fs.writeFileSync(PATH + "./etc/hits", buffer);
-    saved_hits = total_hits
+    // saved_hits = total_hits
 }
 
 // Initialize is the first thing that runs after the config is loaded and basics (like the backend object) initialized.
 function initialize(){
-    saved_hits = total_hits = fs.existsSync(PATH + "/etc/hits") ? fs.readFileSync(PATH + "./etc/hits").readUInt32LE(0) : 0;
+    // saved_hits = total_hits = fs.existsSync(PATH + "/etc/hits") ? fs.readFileSync(PATH + "./etc/hits").readUInt32LE(0) : 0;
     
     // Hit counter
     
     process.on('uncaughtException', (err) => {
         // Why does this even happen in the first place
-        console.debug("[system] [ERROR] It's probably fine, just some poorly written module can't throw a proper error instead of crashing the whole thread.\nThe error: ", err);
+        console.debug("[system] [ERROR] It's probably fine, most likely some poorly written module can't throw a proper error instead of crashing the whole thread.\nNot this might also be an actual fatal error and you shouldn't continue (reload might be required).\nThe error: ", err);
     });
 
-    process.on('uncaughtException', (err) => {});
-    
     process.on('exit', () => {
         save_hits()
         console.log(`[system] API is stopping.`);
