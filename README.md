@@ -4,6 +4,7 @@ Akeno is a fast, rich, modular, mostly automated Node.JS web (static and dynamic
 It uses its universal config system to make it easy to manage large quantities of projects or servers all at once.<br>
 <br>
 It has a performance-first webserver, with automated caching, code compression, and a custom HTML parser which allows you to write clean and easier-to-read code, with less maintenance needed.
+<br><br>**NOTE:** Currently Akeno only works on Linux. Windows support is not planned anytime soon due to the complexity and missing features of the Windows platform and low interest. If you must run this on Windows, wsl is the only way.<br>
 
 ---
 Quick installation (Fedora Linux) <br>
@@ -24,7 +25,7 @@ sudo pm2 start /www/content/akeno/app.js --name egapi # If your path differs fro
 
 Akeno excels in top-notch performance.
 
-The entire server is started and ready in **5ms** or less on average (making it faster than most modern large servers which can take minutes), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
+The entire server is started and ready in **10ms** or less on average (making it faster than most modern large servers which can even take minutes), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
 
 On top of that, Akeno has smart caching directly to memory, automatic cache header, automatic ?mtime query parametter for file changes, and much more.
 
