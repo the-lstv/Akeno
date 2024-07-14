@@ -242,20 +242,24 @@ api = {
                     
                                 if(size.length < 2) size[1] = size[0];
                     
+                                size = size.map(value => Math.max(12, Math.min(+value, 1024)))
+
                                 size[0] = +size[0]
                                 size[1] = +size[1]
                     
                                 if(isNaN(size[0])) size[0] = null;
                                 if(isNaN(size[1])) size[1] = null;
                     
-                                content = await sharp(filePath).resize(size[0] === 0 ? null : size[0], size[1] === 0 ? null : size[1], {fit: req.getQuery("fit") || "cover"}).toBuffer()
+                                content = await sharp(filePath).resize(size[0] === 0 ? null : size[0], size[1] === 0 ? null : size[1], {fit: req.getQuery("fit") || "cover"}).webp({
+                                    quality: 80,
+                                    lossless: false
+                                }).toBuffer()
                             }
 
                             send(content || filePath, 31536000, mimeType, content? false : true)
                             return
                         } else {
-                            error(43)
-                            return
+                            return error(43)
                         }
                         return;
                     break;
@@ -340,22 +344,22 @@ api = {
                     case"upload": case"file":
                         req.parseBody(async (data, fail) => {
                             if(fail){
-                                error(fail)
-                                return send()
+                                return error(fail)
                             }
 
                             let finalResult = [];
 
-                            if(!data || !data.files){
+                            if(!data || !Array.isArray(data)){
                                 return error(2)
                             }
 
-                            for(let file of data.files){
-                                fs.renameSync("/www/ram/" + file.path.split("/").at(-1), "/www/ram/" + file.md5)
-                                file.path = "/www/ram/" + file.md5;
+                            for(let file of data){
+                                // fs.renameSync("/www/ram/" + file.path.split("/").at(-1), "/www/ram/" + file.md5)
 
-                                let ext = (file.originalname.match(/\.[^.]+$/)?.[0] || "").replace(".", ""),
-                                    mimeType = mime.getType(ext) || "text/plain",
+                                // file.path = "/www/ram/" + file.md5;
+
+                                let ext = (file.filename.match(/\.[^.]+$/)?.[0] || "").replace(".", ""),
+                                    mimeType = file.type || mime.getType(ext) || "text/plain",
                                     ignored = false
                                 ;
 
@@ -371,14 +375,14 @@ api = {
                                     if(!fileMetadataCache[file.md5].extensionHistory) fileMetadataCache[file.md5].extensionHistory = [];
                                     if(!fileMetadataCache[file.md5].mimeTypeHistory) fileMetadataCache[file.md5].mimeTypeHistory = [];
 
-                                    if(!fileMetadataCache[file.md5].nameHistory.includes(file.originalname)) fileMetadataCache[file.md5].nameHistory.push(file.originalname)
+                                    if(!fileMetadataCache[file.md5].nameHistory.includes(file.filename)) fileMetadataCache[file.md5].nameHistory.push(file.filename)
                                     if(!fileMetadataCache[file.md5].extensionHistory.includes(ext)) fileMetadataCache[file.md5].extensionHistory.push(ext)
                                     if(!fileMetadataCache[file.md5].mimeTypeHistory.includes(ext)) fileMetadataCache[file.md5].mimeTypeHistory.push(mimeType)
 
                                     saveMetadata()
                                 } else {
                                     updateMetadataOf(file.md5, {
-                                        nameHistory: [file.originalname],
+                                        nameHistory: [file.filename],
                                         extensionHistory: [ext],
                                         mimeTypeHistory: [mimeType],
                                         lastUploaderIP: req.ip,
@@ -393,9 +397,9 @@ api = {
                                         success: true,
                                         mimeType,
                                         hash: file.md5,
-                                        originalName: file.originalname,
+                                        originalName: file.filename,
                                         url: "https://cdn.extragon.cloud/file/" + file.md5 + "." + ext,
-                                        ... typeof req.getQuery("checkNSFW") == "string" && ["png", "gif", "jpg", "jpeg", "webp", "webm", "mp4", "tiff", "bmp"].includes(ext.toLowerCase()) ? {
+                                        ... mimeType.startsWith("image") ? {
                                             nsfw: await imageCheckNSFW(file.md5)
                                         } : {}
                                     }
@@ -405,13 +409,16 @@ api = {
                                 if(fs.existsSync(newPath)){
                                     ignored = true
                                 }else{
-                                    fs.copyFileSync(file.path, newPath)
+                                    // fs.copyFileSync(file.path, newPath)
+                                    fs.writeFile(newPath, file.data, () => {
+                                        delete file.data
+                                    })
                                     ignored = false
                                 }
 
                                 result.ignored = ignored;
 
-                                fs.rmSync(file.path)
+                                // fs.rmSync(file.path)
 
                                 if(!fileMetadataCache[file.md5].nsfw) await imageCheckNSFW(file.md5)
                         
@@ -419,7 +426,7 @@ api = {
                             }
 
                             send(finalResult);
-                        }).upload()
+                        }).upload("file", true)
                     break;
                     default:
                         error(1)

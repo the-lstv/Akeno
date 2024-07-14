@@ -288,7 +288,7 @@ function build(){
 
     let types = {
         json: "application/json; charset=utf-8",
-        js: "application/javascript; charset=utf-8",
+        js: "text/javascript; charset=utf-8",
         css: "text/css; charset=utf-8",
         html: "text/html; charset=utf-8",
     }
@@ -325,8 +325,6 @@ function build(){
         req.path = req.getUrl();
         req.secured = secured; // If the communication is done over HTTP or HTTPS
 
-        req.bodyChunks = []
-
         if(req.domain == "upedie.online"){
             return proxyReq(req, res, {port: 42069})
         }
@@ -353,25 +351,29 @@ function build(){
         }
 
         if(req.method === "POST"){
+            req.fullBody = Buffer.from('');
+
             // To be honest; Body on GET requests SHOULD be allowed. There are many legitimate uses for it. But since current browser implementations usually block the body for GET requests, I am also skipping their body proccessing.
 
             req.hasFullBody = false
+            req.contentType = req.getHeader('content-type');
 
             res.onData((chunk, isLast) => {
-                req.bodyChunks.push(Buffer.from(chunk));
+                req.fullBody = Buffer.concat([req.fullBody, Buffer.from(chunk)]);
+
+                // req.bodyChunks.push(Buffer.from(chunk.slice(0)));
                 // console.log("data: ", chunk, isLast);
     
                 if (isLast) {
-                    Object.defineProperties(req, {
-                        fullBody: {
-                            get(){
-                                if(req._fullBody) return req._fullBody;
-                                // req.bodyChunks = []
-                                return req._fullBody = Buffer.concat(req.bodyChunks)
-                            }
-                        }
-                    })
-
+                    // Object.defineProperties(req, {
+                    //     fullBody: {
+                    //         get(){
+                    //             if(req._fullBody) return req._fullBody;
+                    //             // req.bodyChunks = []
+                    //             return req._fullBody = Buffer.concat(req.bodyChunks)
+                    //         }
+                    //     }
+                    // })
                     req.hasFullBody = true;
 
                     if(req.onFullData) req.onFullData();
@@ -389,15 +391,28 @@ function build(){
                         return req.getHeader("content-length")
                     },
     
-                    upload(key = "file"){
-                        return (upload.array(key)) (req, res, ()=>{
-                            req.body = {
-                                type: "multipart",
-                                fields: req.body,
-                                files: req.files
+                    upload(key = "file", hash){
+
+                        function done(){
+                            let parts = uws.getParts(req.fullBody, req.contentType);
+                            
+                            for(let part of parts){
+                                part.data = Buffer.from(part.data)
+                                if(hash) part.md5 = crypto.createHash('md5').update(part.data).digest('hex')
                             }
-                            return callback(req.body)
-                        })
+
+                            callback(parts)
+                        }
+
+                        // return (upload.array(key)) (req, res, ()=>{
+                        //     req.body = {
+                        //         type: "multipart",
+                        //         fields: req.body,
+                        //         files: req.files
+                        //     }
+                        //     return callback(req.body)
+                        // })
+                        if(req.hasFullBody) done(); else req.onFullData = done;
                     },
     
                     data(){
