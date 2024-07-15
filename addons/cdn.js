@@ -206,14 +206,14 @@ api = {
 
                         if(segments[0] == "info"){
                             if(fileMetadataCache[file[0]]){
-                                return res.json({
+                                return res.send({
                                     ...fileMetadataCache[file[0]],
                                     likelyMimeType: mostCommonItem(fileMetadataCache[file[0]].mimeTypeHistory),
                                     likelyName: mostCommonItem(fileMetadataCache[file[0]].nameHistory),
                                     likelyExtension: mostCommonItem(fileMetadataCache[file[0]].extensionHistory),
                                 }, {'cache-control': "no-cache"})
                             } else {
-                                return res.json({
+                                return res.send({
                                     success: false,
                                     code: 43,
                                     error: "File metadata not found.",
@@ -398,7 +398,8 @@ api = {
                                         mimeType,
                                         hash: file.md5,
                                         originalName: file.filename,
-                                        url: "https://cdn.extragon.cloud/file/" + file.md5 + "." + ext,
+                                        name: file.md5 + (ext? "." + ext: ""),
+                                        url: "https://cdn.extragon.cloud/file/" + file.md5 + (ext? "." + ext: ""),
                                         ... mimeType.startsWith("image") ? {
                                             nsfw: await imageCheckNSFW(file.md5)
                                         } : {}
