@@ -742,6 +742,9 @@ function build(){
             }
         } else Backend.log.error("[error] Could not start the server!")
     });
+
+
+    if(Backend.config.block("server").properties.preloadWeb) Backend.addon("core/web");
 }
 
 
