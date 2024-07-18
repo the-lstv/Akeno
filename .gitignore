@@ -1,3 +1,4 @@
+.vscode
 
 etc/hits
 /addons/data/arisen/build
@@ -24,3 +25,5 @@ addons/currency.js
 addons/remoteSync.js
 model.nlp
 config
+
+core/native/build
