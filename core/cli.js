@@ -13,7 +13,7 @@ let exec = require("child_process").execSync,
     fs = require("fs-extra"),
 
     // Local libraries
-    { parse } = require("./parser"),
+    { parse, stringify, configTools, merge } = require("./parser"),
 
     path = require('path'),
     axios = require('axios')
@@ -130,12 +130,6 @@ process.argv.includes("--no-ascii")? "" : (gradient(`\x1b[1m
 
 
 if(process.argv.includes("-h") || process.argv.includes("--help") || process.argv.includes("help") || process.argv.length < 3){
-    try {
-        getInfo();
-    } catch {
-        console.error("\n\x1b[31m[Akeno] [Error]\x1b[0m\nWe could not fetch information about the backend.\nAre you sure that you are running the server via PM2 (as the setup script does)?\nMake sure that you are the same user that ran the server setup (probably root - in that case, you can try running this command with sudo).\n\n\x1b[31mIf you have not yet set-up the server, this is an expected error!\x1b[0m\n\nIf you are a regular user without sudo permissions, you may safely ignore this error and continue using akeno.");
-        process.exit(2)
-    }
 
     log(logo + box(`Global options:
     \x1b[1m--json                      \x1b[90m│\x1b[0m  Preffer JSON output (where supported)
@@ -149,17 +143,22 @@ Base command list:
     \x1b[1minfo | --info | -i          \x1b[90m│\x1b[0m  Display some current information about the server and its status
     \x1b[1mreload                      \x1b[90m│\x1b[0m  Reload the API server
        \x1b[90m⤷\x1b[0m --hot                  \x1b[90m│\x1b[0m  Hot-reload of the web addon (for when you add/remove apps)
-       \x1b[90m⤷\x1b[0m -a | --app             \x1b[90m│\x1b[0m  Hot-reload a specific web application (basic configuration)
-       \x1b[90m⤷\x1b[0m --host                 \x1b[90m│\x1b[0m  Reload the host server (eg. Nginx, DNS...)
-       \x1b[90m⤷\x1b[0m --logs                 \x1b[90m│\x1b[0m  Display live logs while loading the server
+       \x1b[90m⤷\x1b[0m --host                 \x1b[90m│\x1b[0m  [Deprecated] Reload the host server (eg. Nginx, DNS...)
+       \x1b[90m⤷\x1b[0m --logs                 \x1b[90m│\x1b[0m  Display log while loading the server
+    \x1b[1mhot-reload                  \x1b[90m│\x1b[0m  Same as "reload --hot"
   \x1b[93m•\x1b[0m \x1b[1mlist | ls                   \x1b[90m│\x1b[0m  List web applications
     \x1b[1mlogs [filter]               \x1b[90m│\x1b[0m  View server logs
-  \x1b[93m•\x1b[0m \x1b[1mfabricate <path>            \x1b[90m│\x1b[0m  Simulate a GET request to the server
-  \x1b[93m•\x1b[0m \x1b[1mget-config                  \x1b[90m│\x1b[0m  Parse the main Akeno/EGAPI config file and return it as JSON
-  \x1b[93m•\x1b[0m \x1b[1mparse-config <file|text>    \x1b[90m│\x1b[0m  Parse a compatible Akeno config file and return it as JSON
-        \x1b[90m⤷\x1b[0m -t                    \x1b[90m│\x1b[0m  Parse from text instead of a file
-        \x1b[90m⤷\x1b[0m -d                    \x1b[90m│\x1b[0m  Parse dynamic content (eg. code - keep all plaintext and start blocks with @)
-        \x1b[90m⤷\x1b[0m -p                    \x1b[90m│\x1b[0m  Prettify JSON
+  \x1b[93m•\x1b[0m \x1b[1mparse-config <file|text>    \x1b[90m│\x1b[0m  Parse a config file and return it as JSON. Defaults to the main config.
+        \x1b[90m⤷\x1b[0m -t                    \x1b[90m│\x1b[0m  Parse from text input instead of a file
+        \x1b[90m⤷\x1b[0m -d                    \x1b[90m│\x1b[0m  Parse as plain content (HTML code - keep text and require blocks to start with @)
+        \x1b[90m⤷\x1b[0m -p                    \x1b[90m│\x1b[0m  Prettify JSON output
+        \x1b[90m⤷\x1b[0m --stringify           \x1b[90m│\x1b[0m  Return as re-stringified config, aka "clean" output
+---
+Web addon:
+    \x1b[1mcreate <name> [path]                \x1b[90m│\x1b[0m  Setup a new web application. Automatically updates server config and creates a template.
+    \x1b[1mbundle <source> [target path]       \x1b[90m│\x1b[0m  Bundle a web application for offline use
+    \x1b[1mtemp-hostname [app]                 \x1b[90m│\x1b[0m  Generate a temporary hostname for an app
+    \x1b[1mrenew-cert [domain]                 \x1b[90m│\x1b[0m  Automatically renew a certificate for a domain
 ---
 Auth addon:
   \x1b[93m•\x1b[0m \x1b[1mauth login [name] [password]       \x1b[90m│\x1b[0m  Attempt login and return token
@@ -171,11 +170,6 @@ Auth addon:
     \x1b[1mauth status [status]               \x1b[90m│\x1b[0m  Get/Set account status (ok, disabled, ...)
     \x1b[1mauth delete [name|token]           \x1b[90m│\x1b[0m  Delete an account
         \x1b[90m⤷\x1b[0m -f                           \x1b[90m│\x1b[0m  Skip confirmation
----
-Web addon:
-    \x1b[1mrenew-cert [domain]                \x1b[90m│\x1b[0m  Automatically renew a certificate for a domain
-        \x1b[90m⤷\x1b[0m --namecheap                  \x1b[90m│\x1b[0m  Use the NameCheap API for DNS instead of local DNS
-    \x1b[1mtemp-hostname [app]                \x1b[90m│\x1b[0m  Generate a temporary hostname for an app
 ---
 \x1b[93m•\x1b[0m = Supports JSON output`))
     process.exit()
@@ -204,12 +198,7 @@ Some command examples:
     akeno\x1b[1m reload                   \x1b[90m│\x1b[0m  Reload the API server
     akeno\x1b[1m bundle <source> [target] \x1b[90m│\x1b[0m  Bundle a web application
     akeno\x1b[1m logs [my_web_app]        \x1b[90m│\x1b[0m  Show (and stream) logs, with a filter
-    akeno\x1b[1m load <path>              \x1b[90m│\x1b[0m  Load an application from a directory
     akeno\x1b[1m disable <id>             \x1b[90m│\x1b[0m  Disable an application
-    akeno\x1b[1m addon -l <path> [id]     \x1b[90m│\x1b[0m  Load an addon
-    akeno\x1b[1m bump <api|cdn|ls|...>    \x1b[90m│\x1b[0m  Bump version
-    akeno\x1b[1m fabricate <path>         \x1b[90m│\x1b[0m  Simulate a GET request to the server & return the result
-    akeno\x1b[1m auth [user]              \x1b[90m│  [auth addon]\x1b[0m Attempt a login and return a token
     ...
 
 ---
@@ -282,8 +271,8 @@ async function resolve(command){
             let file = !process.argv.includes("-t"), input;
 
             if(!command[1]) {
-                command[1] = ""
-                file = false
+                command[1] = PATH + "/config"
+                file = true
             }
 
             if(file){
@@ -294,17 +283,9 @@ async function resolve(command){
 
             data = parse(input, !process.argv.includes("-d"));
 
-            if(!process.argv.includes("-p")) data = JSON.stringify(data);
+            if(process.argv.includes("--stringify")) data = stringify(data); else if(process.argv.includes("-p")) data = JSON.stringify(data, null, 4); else data = JSON.stringify(data);
 
             return log(data)
-        break;
-
-        case "get-config":
-
-            if(process.argv.includes("--source")) return log(fs.readFileSync(PATH + "../config", "utf8"));
-
-            return log(JSON.stringify(parse(fs.readFileSync(PATH + "../config", "utf8"), true), null, process.argv.includes("-p")? 4 : 0))
-        break;
 
         case "temp-hostname":
             (async()=>{
@@ -325,6 +306,15 @@ async function resolve(command){
                 log(await(await fetch(`${api}/temporaryDomain?app=${app}`)).text())
             })()
         break;
+
+        case "create":
+            return (()=>{
+                let path = command[2] || process.env["PWD"];
+    
+                log(`${signature} Creating a new web application named ${command[1]} at "${path}"`)
+
+
+            })()
 
         case "bundle":
             thing = await(await fetch(api + "/list")).json();

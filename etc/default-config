@@ -2,6 +2,9 @@
 
 # This is the default config that will get created after you first launch the server with no /config file.
 
+# Import generated configs created automatically by the CLI
+import("./etc/generated");
+
 # Do not change
 configVersion("1.3.0");
 

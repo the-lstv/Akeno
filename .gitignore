@@ -1,6 +1,7 @@
 .vscode
 
 etc/hits
+etc/generated
 /addons/data/arisen/build
 /addons/data/pixel
 

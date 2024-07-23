@@ -31,7 +31,7 @@ let
     lsdb = require("./addons/lsdb_mysql.js"),
 
     // Config parser
-    { parse, configTools } = require("./core/parser.js")
+    { parse, stringify, merge, configTools } = require("./core/parser.js")
 ;
 
 try {
@@ -777,8 +777,51 @@ function build(){
                 fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
             }
 
-            configRaw = Backend.configRaw = parse(fs.readFileSync(PATH + "/config", "utf8"), true);
-            config = Backend.config = configTools(configRaw)
+            let alreadyResolved = {}; // Prevent infinite loops
+
+            function resolveImports(parsed, stack, referer){
+                let imports = [];
+
+                
+                configTools(parsed).forEach("import", (block, remove) => {
+                    remove() // remove the block from the config
+
+                    if(block.values[0][0]){
+                        let path = block.values[0].join("").replace("./", PATH + "/");
+                        
+                        if(path === stack) return Backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
+
+                        if(!fs.existsSync(path)){
+                            Backend.log.warn("Failed import of \"" + path + "\", file not found")
+                            return;
+                        }
+
+                        imports.push(path)
+                    }
+                })
+
+                alreadyResolved[stack] = imports;
+
+                for(let path of imports){
+                    if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
+                        Backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
+                        continue
+                    }
+
+                    parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, stack))
+                }
+
+
+
+                return parsed
+            }
+
+            
+            let path = PATH + "/config";
+
+            configRaw = Backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, null);
+            config = Backend.config = configTools(configRaw);
+
         },
 
         jwt: {

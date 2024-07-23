@@ -1,4 +1,5 @@
-let fs = require("fs");
+let fs;
+if(globalThis.require) fs = require("fs");
 
 
 
@@ -800,29 +801,152 @@ function parse(code, direct, sourcePath){
     return parseRecursive(0)[1];
 }
 
+function stringify(config){
+    let result = "";
+
+    for(let block of config){
+        if(!block) continue;
+
+        result += `${
+            // Block name
+            block.key
+        }${
+            // Values
+            block.values.length > 1 || block.values[0].length > 0? ` (${block.values.map(value => value.map(value => {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`}).join(" ")).join(", ") })` : ""
+        }${
+            // Properties
+            Object.keys(block.properties).length > 0? ` {\n    ${Object.keys(block.properties).map(key => `${key}${block.properties[key] === true? "": `: ${block.properties[key].map(value => {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`}).join(", ")}`};`).join("\n    ")}\n}` : ";"
+        }\n\n`
+    }
+    
+    return result;
+}
+
+function merge(base, newConfig){
+    const mergedConfig = [];
+
+    const findBlockIndex = (config, key) => config.findIndex(
+        block => block.key === key && (block.values.length === 0 || (block.values.length === 1 && block.values[0].length === 0))
+    );
+
+    base.forEach(block => mergedConfig.push({ ...block }));
+
+    newConfig.forEach(newBlock => {
+        if(!newBlock) return;
+
+        const { key, values: newValues, properties: newProperties } = newBlock;
+
+        // Check if the block with the same key and empty values already exists in the merged config
+        const baseBlockIndex = findBlockIndex(mergedConfig, key);
+
+        if (baseBlockIndex !== -1) {
+            const baseBlock = mergedConfig[baseBlockIndex];
+            const baseProperties = baseBlock.properties;
+
+            // Merge properties
+            for (const prop in newProperties) {
+                if (prop in baseProperties) {
+                    if (Array.isArray(baseProperties[prop]) && Array.isArray(newProperties[prop])) {
+                        // Concatenate arrays, avoiding duplicates
+                        baseProperties[prop] = Array.from(new Set(baseProperties[prop].concat(newProperties[prop])));
+                    } else {
+                        // Overwrite value
+                        baseProperties[prop] = newProperties[prop];
+                    }
+                } else {
+                    // Add new property
+                    baseProperties[prop] = newProperties[prop];
+                }
+            }
+        } else {
+            // Add the new block if not present in baseConfig
+            mergedConfig.push({ ...newBlock });
+        }
+    });
+
+    return mergedConfig;
+}
+
 function configTools(parsed){
     if(!Array.isArray(parsed)) throw new Error("You must provide a parsed config as an array.");
 
     let tools = {
         data: parsed,
 
+        has(name){
+            for(let block of parsed){
+                if(block.key === name) return true;
+            }
+            return false;
+        },
+
         block(name){
-            return parsed.find(block => block.key == name)
+            return parsed.find(block => block && block.key == name)
         },
 
         blocks(name){
-            return parsed.filter(block => block.key == name)
+            return parsed.filter(block => block && block.key == name)
+        },
+
+        add(name, values, properties){
+
+            if(!values) values = [[]];
+            if(!properties) properties = {};
+
+            for(let i = 0; i < values.length; i++) {
+                if(!Array.isArray(values[i])) values[i] = [values[i]];
+            }
+
+            for(let key in properties) {
+                if(!Array.isArray(properties[key]) || typeof properties[key] !== "boolean") properties[key] = [properties[key]];
+            }
+
+            parsed.push({
+                type: "block",
+                key: name,
+                values,
+                properties
+            })
+        },
+
+        forEach(name, callback){
+            let i = -1, _break = false;
+            for(let block of parsed){
+                i++;
+
+                if(!block || typeof block !== "object") continue;
+                if(_break) break;
+
+                if(block.key === name) callback(block, function(){
+                    delete parsed[i]
+                }, () => _break = true)
+            }
+
+            // parsed = parsed.filter(garbage => garbage)
         },
 
         valueOf(name){
             let block = tools.block(name);
             return block? block.values[0].join("") : null
+        },
+
+        stringify(){
+            return stringify(parsed)
+        },
+
+        toString(){
+            return tools.stringify()
+        },
+
+        merge(config){
+            parsed = merge(parsed, config)
+            return parsed
         }
     }
     
     return tools
 }
 
-if(module) {
-    module.exports = {parse, configTools, replaceObjects}
-}
+let _exports = {parse, stringify, merge, configTools, replaceObjects};
+
+if(!globalThis.window) module.exports = _exports; else window.AkenoConfigParser = _exports;
