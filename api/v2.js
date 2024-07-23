@@ -137,32 +137,35 @@ main = {
 
     GetHandler(part){
         switch(part){
-            case"pixel":
+            case "pixel":
                 return backend.addon("pixel")
 
-            case"arisen":
+            case "arisen":
                 return backend.addon("arisen")
 
-            case"net":
+            case "net":
                 return backend.addon("net")
 
-            case"iproxy":
+            case "iproxy":
                 return backend.addon("iproxy")
 
-            case"currency":
+            case "currency":
                 return backend.addon("currency")
 
-            case"remote":
+            case "remote":
                 return backend.addon("remoteSync")
 
-            case"currency":
+            case "currency":
                 return backend.addon("currency")
 
-            case"remote":
+            case "remote":
                 return backend.addon("remoteSync")
 
-            case"localcommands":
+            case "localcommands":
                 return backend.addon("localCommands")
+
+            case "quicc": case "qblaze":
+                return backend.addon("core/qblaze")
 
             // case"mazec":
             //     return backend.addon("mazec")

@@ -133,7 +133,7 @@ if(process.argv.includes("-h") || process.argv.includes("--help") || process.arg
     try {
         getInfo();
     } catch {
-        console.error("[Akeno] [Error] Could not fetch information about the backend. Are you sure that you are running the API server via PM2? Make sure that you are logged in on the same user as where the API was started, try running with sudo or try to set-up the server with pm2-make if your environment has this.\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error !\x1b[0m\nInstall NodeJS and PM2 on your system, then run the api with \x1b[1m\"pm2 start app.js --name egapi\"\x1b[0m from the root directory of the API.\nAfter that try running this again.");
+        console.error("\x1b[31m[Akeno] [Error]\x1b[0m Could not fetch information about the backend. Are you sure that you are running the API server via PM2? Make sure that you are on the same user as where the API was started (probably root - in that case, try running this command as sudo).\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error. !\x1b[0m");
         process.exit(2)
     }
 
@@ -185,7 +185,7 @@ if(process.argv.includes("-i") || process.argv.includes("--info") || process.arg
     try {
         getInfo();
     } catch {
-        console.error("[Akeno] [Error] Could not fetch information about the backend. Are you sure that you are running the API server via PM2? Make sure that you are logged in on the same user as where the API was started, try running with sudo or try to set-up the server with pm2-make if your environment has this.\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error !\x1b[0m\nInstall NodeJS and PM2 on your system, then run the api with \x1b[1m\"pm2 start app.js --name egapi\"\x1b[0m from the root directory of the API.\nAfter that try running this again.");
+        console.error("\x1b[31m[Akeno] [Error]\x1b[0m Could not fetch information about the backend. Are you sure that you are running the API server via PM2? Make sure that you are on the same user as where the API was started (probably root - in that case, try running this command as sudo).\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error. !\x1b[0m");
         process.exit(2)
     }
 

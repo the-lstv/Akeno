@@ -352,7 +352,7 @@ function build(){
             return
         }
 
-        if(req.method === "POST"){
+        if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
             req.fullBody = Buffer.from('');
 
             // To be honest; Body on GET requests SHOULD be allowed. There are many legitimate uses for it. But since current browser implementations usually block the body for GET requests, I am also skipping their body proccessing.
