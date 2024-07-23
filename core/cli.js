@@ -133,7 +133,7 @@ if(process.argv.includes("-h") || process.argv.includes("--help") || process.arg
     try {
         getInfo();
     } catch {
-        console.error("\x1b[31m[Akeno] [Error]\x1b[0m Could not fetch information about the backend. Are you sure that you are running the API server via PM2? Make sure that you are on the same user as where the API was started (probably root - in that case, try running this command as sudo).\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error. !\x1b[0m");
+        console.error("\x1b[31m[Akeno] [Error]\x1b[0m\nCould not fetch information about the backend.\nAre you sure that you are running the API server via PM2?\nMake sure that you are the same user as where the server was setup (probably root - in that case, try running this command with sudo).\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error. !\x1b[0m\n\nIf you are a regular user without sudo permissions, you may safely ignore this error.");
         process.exit(2)
     }
 
@@ -185,7 +185,7 @@ if(process.argv.includes("-i") || process.argv.includes("--info") || process.arg
     try {
         getInfo();
     } catch {
-        console.error("\x1b[31m[Akeno] [Error]\x1b[0m Could not fetch information about the backend. Are you sure that you are running the API server via PM2? Make sure that you are on the same user as where the API was started (probably root - in that case, try running this command as sudo).\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error. !\x1b[0m");
+        console.error("\x1b[31m[Akeno] [Error]\x1b[0m\nCould not fetch information about the backend.\nAre you sure that you are running the API server via PM2?\nMake sure that you are the same user as where the server was setup (probably root - in that case, try running this command with sudo).\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error. !\x1b[0m\n\nIf you are a regular user without sudo permissions, you may safely ignore this error.");
         process.exit(2)
     }
 
