@@ -267,6 +267,8 @@ function build(){
                 uuid: uuid(),
                 url: req.getUrl(),
                 host: req.getHeader("host"),
+                ip: res.getRemoteAddress(),
+                ipAsText: res.getRemoteAddressAsText(),
                 handler: handler.HandleSocket,
                 segments
             }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
@@ -743,6 +745,7 @@ function build(){
         } else Backend.log.error("[error] Could not start the server!")
     });
 
+    Backend.resolve = resolve;
 
     if(Backend.config.block("server").properties.preloadWeb) Backend.addon("core/web");
 }
@@ -801,8 +804,6 @@ function build(){
         broadcast(topic, data, isBinary, compress){
             if(Backend.config.block("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
         },
-
-        // resolve,
 
         user: {
             get(idList, callback, items = ["username", "displayname", "pfp", "email", "verified_email", "status", "id"]){
