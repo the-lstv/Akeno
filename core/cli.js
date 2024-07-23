@@ -133,7 +133,7 @@ if(process.argv.includes("-h") || process.argv.includes("--help") || process.arg
     try {
         getInfo();
     } catch {
-        console.error("\x1b[31m[Akeno] [Error]\x1b[0m\nCould not fetch information about the backend.\nAre you sure that you are running the API server via PM2?\nMake sure that you are the same user as where the server was setup (probably root - in that case, try running this command with sudo).\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error. !\x1b[0m\n\nIf you are a regular user without sudo permissions, you may safely ignore this error.");
+        console.error("\n\x1b[31m[Akeno] [Error]\x1b[0m\nWe could not fetch information about the backend.\nAre you sure that you are running the server via PM2 (as the setup script does)?\nMake sure that you are the same user that ran the server setup (probably root - in that case, you can try running this command with sudo).\n\n\x1b[31mIf you have not yet set-up the server, this is an expected error!\x1b[0m\n\nIf you are a regular user without sudo permissions, you may safely ignore this error and continue using akeno.");
         process.exit(2)
     }
 
@@ -185,7 +185,7 @@ if(process.argv.includes("-i") || process.argv.includes("--info") || process.arg
     try {
         getInfo();
     } catch {
-        console.error("\x1b[31m[Akeno] [Error]\x1b[0m\nCould not fetch information about the backend.\nAre you sure that you are running the API server via PM2?\nMake sure that you are the same user as where the server was setup (probably root - in that case, try running this command with sudo).\n\n\x1b[31m! If you have not yet set-up the server, this is an expected error. !\x1b[0m\n\nIf you are a regular user without sudo permissions, you may safely ignore this error.");
+        console.error("\n\x1b[31m[Akeno] [Error]\x1b[0m\nWe could not fetch information about the backend.\nAre you sure that you are running the server via PM2 (as the setup script does)?\nMake sure that you are the same user that ran the server setup (probably root - in that case, you can try running this command with sudo).\n\n\x1b[31mIf you have not yet set-up the server, this is an expected error!\x1b[0m\n\nIf you are a regular user without sudo permissions, you may safely ignore this error and continue using akeno.");
         process.exit(2)
     }
 
@@ -224,7 +224,7 @@ Some command examples:
 // });
 
 
-let values = process.argv.slice(2).filter(arg => !arg.startsWith("-")), api = "http://0.0.0.0/internal";
+let values = process.argv.slice(2).filter(arg => !arg.startsWith("-")), api = "http://0.0.0.0/___internal";
 
 async function resolve(command){
     let thing, domain, data; // Theese mean NOTHING for most commands, its there just for commands that define the same variable name as you cannot do that inside a switch.
@@ -275,7 +275,7 @@ async function resolve(command){
                 return log(thing)
             }
             
-            return log(box(thing.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}`).join("\n---\n")))
+            return log(box(thing.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}\n\n\x1b[1mDomains:\x1b[0m\n${app.domains.join("\n")}`).join("\n---\n")))
         break;
 
         case "parse-config":

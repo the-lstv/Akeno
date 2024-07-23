@@ -406,30 +406,56 @@ server = {
         }
     },
 
-    async HandleInternal(command, req, res){
-        switch (command[0]) {
+    async HandleInternal({segments, req, res}){
+        switch (segments[1]) {
             case "list":
+
+                for(let app of applicationCache){
+                    app.domains = Object.keys(assignedDomains).filter(domain => assignedDomains[domain] === app.path)
+                }
+
                 res.send(applicationCache)
-            break
+                break
+
             case "resolve":
-                applications.find(app => app.path == req.getQuery("app")).serve({ domain: "internal", method: "GET", segments: req.getQuery("path").replace(/\?.*$/, '').split("/").filter(g => g), req, res })
-            break
+
+                if(!req.getQuery("app") || !req.getQuery("path")) return res.writeStatus("500").end();
+                
+                let application = applications.find(app => app.path == req.getQuery("app"));
+                if(!application) return res.writeStatus("500").end();
+
+                application.serve({ domain: "internal", method: "GET", segments: req.getQuery("path").replace(/\?.*$/, '').split("/").filter(g => g), req, res })
+                break
+
             case "domain":
                 for(asd in assignedDomains){
                     if(assignedDomains[asd] == req.getQuery("app")) return res.send(asd);
                 }
                 return res.send("");
-            break
+
+            case "domains":
+                let list = [];
+
+                for(domain in assignedDomains){
+                    if(assignedDomains[domain] == req.getQuery("app")) list.push(domain);
+                }
+
+                return res.send(list);
+
             case "temporaryDomain":
+
                 let random = Backend.uuid();
                 assignedDomains[random] = req.getQuery("app");
+
                 return res.send(random);
-            break
+
             case "reload":
                 server.log("Server is reloading!")
                 await server.Reload()
-                return res.send("");
-            break
+                return res.end();
+
+            default:
+                res.end()
         }
     },
 

@@ -582,8 +582,13 @@ function build(){
             return segments[index] || "";
         }
 
+        if(segments[0] === "___internal"){
+            // console.log(res.getRemoteAddressAsText()); // this does not get the text for some reason
+            Backend.addon("core/web").HandleInternal({segments, req, res})
+        }
+
         // Handle the builtin CDN
-        if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
+        else if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
             Backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
         }
         
