@@ -1,6 +1,4 @@
 let fs;
-if(globalThis.require) fs = require("fs");
-
 
 
 // This file contains a collection of parsers made for Akeno.
@@ -759,6 +757,8 @@ function parse(code, direct, sourcePath){
                     break;
 
                     default:
+                        if(!fs) fs = require("fs");
+
                         if(typeof token === "object" && token.key === "import"){
                             if(!sourcePath){
                                 console.warn("Invalid import statement in document; sourcePath must be specified")

@@ -1,0 +1,87 @@
+<head>
+
+	@resources {
+		ls-js: tiny;
+		ls-css: base, ls-flat;
+		fonts: "Poppins";
+		bootstrap-icons;
+	}
+
+	@manifest {
+		title: "Akeno Dashboard";
+		style: flat;
+		theme: dark;
+	}
+
+</head>
+
+<body>
+
+	<button .pill onclick="list()"><i .bi-arrow-clockwise></i> Refresh</button>
+	<div %list></div>
+
+	<script>
+		let app = {
+
+		}
+
+		let api = "http://0.0.0.0/___internal/"
+
+		async function list() {
+			O("#list").getAll().all().remove()
+
+			app.appList = await (await fetch(api + "list")).json()
+
+			for (let application of app.appList) {
+				O("#list").add(N("ls-box", {
+					class: "app contained",
+					inner: [
+						N("h2", {innerText: application.basename}),
+						N("span", {class: "app-path", innerText: application.path}),
+
+						N("br"),
+						N("br"),
+
+						N("label", {class: "ls-checkbox", inner: [N("input", {
+							type: "checkbox",
+							checked: application.enabled,
+							async onchange(){
+								await fetch(`${api}${this.checked? "enable": "disable"}?app=${application.path}`)
+							}
+						}), "Enabled", N("span")]}),
+
+						N("br"),
+						N("br"),
+						
+						N("b", "Domains:"),
+						N("br"),
+						N("span", {inner: application.domains.map(link => `<a href="http://${link}" target="_blank">${link}</a>`).join("\n")}),
+					]
+				}))
+			}
+		}
+
+
+		list()
+	</script>
+
+	<style>
+		:root {
+			font-family: Poppins;
+		}
+
+		h1, h2, h3 {
+			margin: 0;
+		}
+
+		.app {
+			white-space: pre-wrap;
+		}
+
+		.app-path {
+			font-size: small;
+			color: gray;
+		}
+	</style>
+
+</body>

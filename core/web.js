@@ -173,7 +173,7 @@ server = {
                 return
             }
 
-            let manifestPath = files_try(path + "/app.manifest", path + "/app.conf", path + "/v3.manifest", path + "/app.info", path + "/manifest", path + "/index.manifest", path + "/app.main", path + "/manifest.app");
+            let manifestPath = files_try(path + "/app.conf", path + "/app.manifest", path + "/v3.manifest", path + "/app.info", path + "/akeno.app.conf", path + "/manifest", path + "/index.manifest", path + "/manifest.app");
 
             if(!manifestPath){
                 server.log.debug("Loading of web application (at " + path + ") was skipped (couldn't find a config file)");
@@ -407,6 +407,8 @@ server = {
     },
 
     async HandleInternal({segments, req, res}){
+        let application;
+
         switch (segments[1]) {
             case "list":
 
@@ -421,10 +423,25 @@ server = {
 
                 if(!req.getQuery("app") || !req.getQuery("path")) return res.writeStatus("500").end();
                 
-                let application = applications.find(app => app.path == req.getQuery("app"));
+                application = applications.find(app => app.path == req.getQuery("app"));
                 if(!application) return res.writeStatus("500").end();
 
                 application.serve({ domain: "internal", method: "GET", segments: req.getQuery("path").replace(/\?.*$/, '').split("/").filter(g => g), req, res })
+                break
+
+            case "enable": case "disable":
+
+                if(!req.getQuery("app")) return res.writeStatus("500").end();
+                
+                for(let application of applications) {
+                    if(application.path === req.getQuery("app")) {
+                        application.enabled = segments[1] === "enable"
+                        res.end()
+                        return
+                    }
+                }
+
+                res.writeStatus("500").end();
                 break
 
             case "domain":

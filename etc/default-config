@@ -31,7 +31,8 @@ web {
         # Website locations - /* will take all directories inside as individual locations.
         # If the directory is not found, it is simply skipped along with a console warning.
         "/www/content/web/*",
-        "/www/content/akeno/examples/hello-world-website"
+        "/www/content/akeno/examples/hello-world-website",
+        "/www/content/akeno/core/gui",
     ;
 }
 
