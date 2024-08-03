@@ -209,10 +209,14 @@ server = {
 
                         let url = ("/" + segments.join("/")), file;
 
+                        if(!file) file = files_try(path + url + ".html", path + url + "/index.html", path + url, path + "/" + (manifest.server && manifest.server.properties.fallback? manifest.server.properties.fallback[0]: url));
+
+                        if(file) file = nodePath.normalize(file);
+
                         for(const route of app.routes){
                             if(route.values.find(route => url.startsWith(route))){
                                 if(route.properties.files) {
-                                    let fExt = nodePath.extname(url).replace(".", ""), match = false;
+                                    let fExt = nodePath.extname(file).replace(".", ""), match = false;
 
                                     if(fExt === "" && route.properties["notStrict"]){
                                         match = true;
@@ -237,10 +241,6 @@ server = {
                                 break
                             }
                         }
-
-                        if(!file) file = files_try(path + url + ".html", path + url + "/index.html", path + url, path + "/" + (manifest.server && manifest.server.properties.fallback? manifest.server.properties.fallback[0]: url));
-
-                        if(file) file = nodePath.normalize(file);
     
                         server.log.verbose(`[${basename}] [${Date.now()}] Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}, client ${req.ip}`)
 
