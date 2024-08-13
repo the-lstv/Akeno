@@ -49,13 +49,27 @@ This includes API extensions - simply create a JS file with your server-side API
 ---
 Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats, manage apps, or interact with its API.
 
+## Examples
+### Creating a simple web app (bare minimum example)
+1. Create a new directory for your app (make sure it is defined in the config file under web > locations - for folders that end with `/*`, all sub-directories will be automatically detected, eg. if you make your directory under `/www/content/web/` (added by default), you do **not** need to add an entry to the config each time)
+2. Create an `app.conf` file and an index.html file
+3. Place this basic config:
+   ```
+   server {
+     domains: your.domain.name, ...;
+   }
+   ```
+   (Of course, replacing the value with the actual domain names you want your website/app to live on. Wildcards are supported - `example.*`, `*.example.com`, `*.*.example.*` or `*-example.com` will all work, including just `*`. Additionally, to include an unlimited count of domain levels, use `**.example.com` to match both `a.example.com` and `b.a.example.com` and so on.)
+4. Restart akeno
+5. Done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP.
+
 ## New: Debug Akeno easily with DevTools (or other inspectors)! 
 ![Debugger](https://github.com/user-attachments/assets/c659ef12-eb18-4679-a94c-6bc1f7ff4bbd) <br>
 Starting version 1.5, Akeno is compatible with the node `--inspect` flag and allows you to debug or test your server with DevTools!<br><br>
 ### How to enable:
 1. Open chrome://inspect/ and click "Open dedicated DevTools for Node"
 2. Start Akeno in dev mode and with the `--inspect` flag
-3. Enjoy debugging! You can directly access the backend (`backend` is a global getter to the backend object).
+3. Enjoy debugging! The process will be detected and attached automatically. You can directly access the backend (`backend` is a global getter to the backend object).
 
 Exposed properties by default:
 - Backend as `backend`
@@ -64,7 +78,9 @@ Exposed properties by default:
 - resolve as `router` (core HTTP router)
 - proxyReq as `proxyRouter` (proxy router)
 - app as `uws` (uWebSockets instance)
-- SSLApp as `uws_ssl` (only if SSL is enabled)
+- SSLApp as `uws_ssl` (only if SSL is enabled)<br>
+
+Any other variables are *not* acessible to the debugger even if global, unless you expose them manually!<br>
 
 From within your addons, scripts or handlers you can use `backend.exposeToDebugger(key, value)` to expose an object globally (as a getter to prevent copying - readonly).<br>
 This method will silently do nothing if inspect is disabled, so you can call even in production.
