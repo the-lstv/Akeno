@@ -50,11 +50,12 @@ This includes API extensions - simply create a JS file with your server-side API
 Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats, manage apps, or interact with its API.
 
 ## New: Debug Akeno easily with DevTools (or other inspectors)! 
-![Debugger](https://github.com/user-attachments/assets/c659ef12-eb18-4679-a94c-6bc1f7ff4bbd)
-Starting version 1.5, Akeno is compatible with the node `--inspect` flag and allows you to debug or test your server with DevTools!<br>
-How to enable:
+![Debugger](https://github.com/user-attachments/assets/c659ef12-eb18-4679-a94c-6bc1f7ff4bbd) <br>
+Starting version 1.5, Akeno is compatible with the node `--inspect` flag and allows you to debug or test your server with DevTools!<br><br>
+### How to enable:
 1. Go (here)[chrome://inspect/] and click "Open dedicated DevTools for Node"
 2. Start Akeno in dev mode and with the `--inspect` flag
 3. Enjoy debugging! You can directly access the backend (`backend` is a global getter to the backend object)
+
 From within your addons, scripts or handlers you can use `backend.exposeToDebugger(key, value)` to expose an object globally (as a getter to prevent copying - readonly).<br>
 This method will silently do nothing if inspect is disabled, so you can call even in production.
