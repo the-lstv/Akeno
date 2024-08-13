@@ -61,8 +61,10 @@ Exposed properties by default:
 - Backend as `backend`
 - AddonCache as `addons`
 - API as `api`
-- app as `uws`
-- SSLApp as `uws_ssl`
+- resolve as `router` (core HTTP router)
+- proxyReq as `proxyRouter` (proxy router)
+- app as `uws` (uWebSockets instance)
+- SSLApp as `uws_ssl` (only if SSL is enabled)
 
 From within your addons, scripts or handlers you can use `backend.exposeToDebugger(key, value)` to expose an object globally (as a getter to prevent copying - readonly).<br>
 This method will silently do nothing if inspect is disabled, so you can call even in production.
