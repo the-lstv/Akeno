@@ -55,7 +55,14 @@ Starting version 1.5, Akeno is compatible with the node `--inspect` flag and all
 ### How to enable:
 1. Open chrome://inspect/ and click "Open dedicated DevTools for Node"
 2. Start Akeno in dev mode and with the `--inspect` flag
-3. Enjoy debugging! You can directly access the backend (`backend` is a global getter to the backend object)
+3. Enjoy debugging! You can directly access the backend (`backend` is a global getter to the backend object).
+
+Exposed properties by default:
+- Backend as `backend`
+- AddonCache as `addons`
+- API as `api`
+- app as `uws`
+- SSLApp as `uws_ssl`
 
 From within your addons, scripts or handlers you can use `backend.exposeToDebugger(key, value)` to expose an object globally (as a getter to prevent copying - readonly).<br>
 This method will silently do nothing if inspect is disabled, so you can call even in production.
