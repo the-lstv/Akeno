@@ -49,3 +49,78 @@ This includes API extensions - simply create a JS file with your server-side API
 ---
 Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats, manage apps, or interact with its API.
 
+## Examples
+### 1 - Creating a simple web app (minimal example, 4 steps)
+1. Create a new directory for your app
+   (make sure it is included in your main (or imported) config file under `web > locations` - for entries that end with `/*`, all sub-directories will be automatically detected, eg. if you make your directory under `/www/content/web/` (added by default), you do **not** need to add an entry to the config each time you make a new app - they will be simply automatically added as long as there is an app.conf file in them)
+2. Create an `app.conf` file and an `index.html` file
+3. Place this basic config:
+   ```
+   server {
+     domains: your.domain.name, ...;
+   }
+   ```
+   (Of course, replacing the value with the actual domain names you want your website/app to live on. Wildcards are supported - `example.*`, `*.example.com`, `*.*.example.*` or `*-example.com` will all work, including just `*`. Additionally, to include an unlimited count of domain levels, use `**.example.com` to match both `a.example.com` and `b.a.example.com` and so on.)
+4. Restart akeno<br>
+And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP.
+
+
+<br>
+
+
+### 2 - Say hello to the builtin pre-processor
+Tired of the repetetive and long HTML templates? How about doing it the Akeno way instead!<br>
+Let's say that you want to make a simple site with a title, favicon and a font from Google fonts, and a script:
+```html
+<head>
+
+    @manifest {
+         title: "This is an example :)";
+         favicon: /icon.svg;
+    }
+
+    @resources {
+         fonts: Poppins; # Defaults to Google fonts
+         js: /main.js;
+    }
+
+</head>
+
+<body>
+    Hello world!
+
+   <style>
+      :root {
+         font-family: Poppins;
+      }
+   </style>
+</body>
+```
+That's it! All the repetetive work is done for you. Akeno even cleans and compresses the code for you (HTML, CSS, and JS)! (Including removing the script tag if the file cannot be resolved)<br>
+Also - are you tired of your clients not receiving up-to-date resources and dont want to manually bump versions or add `?random` to each resource? Now you don't have to. Akeno will check for changes for local resources automatically and assign a `?mtime` query which contains the last time that the file was changed, to efficiently manage cache while keeping the content always up-to-date!
+<br>
+
+
+
+<br><br>
+## New in v1.5: Debug Akeno easily with DevTools (or other inspectors)! 
+![Debugger](https://github.com/user-attachments/assets/c659ef12-eb18-4679-a94c-6bc1f7ff4bbd) <br>
+Starting version 1.5, Akeno is compatible with the node `--inspect` flag and allows you to debug or test your server with DevTools!<br><br>
+### How to enable:
+1. Open chrome://inspect/ and click "Open dedicated DevTools for Node"
+2. Start Akeno in dev mode and with the `--inspect` flag
+3. Enjoy debugging! The process will be detected and attached automatically. You can directly access the backend (`backend` is a global getter to the backend object).
+
+Exposed properties by default:
+- Backend as `backend`
+- AddonCache as `addons`
+- API as `api`
+- resolve as `router` (core HTTP router)
+- proxyReq as `proxyRouter` (proxy router)
+- app as `uws` (uWebSockets instance)
+- SSLApp as `uws_ssl` (only if SSL is enabled)<br>
+
+Any other variables are *not* acessible to the debugger even if global, unless you expose them manually!<br>
+
+From within your addons, scripts or handlers you can use `backend.exposeToDebugger(key, value)` to expose an object globally (as a getter to prevent copying - readonly).<br>
+This method will silently do nothing if inspect is disabled, so you can call it even in production.
