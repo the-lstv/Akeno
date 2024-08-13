@@ -62,9 +62,10 @@ let
 
     total_hits,
     // saved_hits,
-    since_startup = Date.now()
-;
+    since_startup = Date.now(),
 
+    devInspecting = isDev && !!process.execArgv.find(v => v.startsWith("--inspect"));
+;
 
     
 async function save_hits(){
@@ -242,7 +243,7 @@ function build(){
 
         // idleTimeout: 32,
         // maxBackpressure: 1024,
-        // maxPayloadLength: 512,
+        maxPayloadLength: 2**16,
         compression: uws.DEDICATED_COMPRESSOR_32KB,
 
         sendPingsAutomatically: true,
@@ -684,7 +685,7 @@ function build(){
     
     app.listen(port, (listenSocket) => {
         if (listenSocket) {
-            console.log(`[system] [ time:${Date.now()} ] > The Akeno server has started and is listening on port ${port}! Total hits so far: ${total_hits}, startup took ${Date.now() - since_startup}ms`)
+            console.log(`[system] [ time:${Date.now()} ] > The Akeno server has started and is listening on port ${port}! Total hits so far: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${Date.now() - since_startup}ms`)
 
             // Configure SSL
             if(Backend.config.block("server").properties.enableSSL) {
@@ -1167,7 +1168,9 @@ function build(){
             if(severity < (5 - Backend.logLevel)) return;
             if(!Array.isArray(data)) data = [data];
 
-            console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`[${source}]`, ...data)
+            if(devInspecting) data.unshift("color: aquamarine");
+
+            console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`${devInspecting? "%c": ""}[${source}]`, ...data)
         },
 
         logger(target){
@@ -1319,6 +1322,16 @@ function build(){
             47: "Username must be within 2 to 200 characters in range and only contain bare letters, numbers, and _, -, .",
             48: "Weak password.",
             49: "Sent data exceed maximum allowed size."
+        },
+
+        exposeToDebugger(key, thing){
+            if(!devInspecting) return;
+
+            Object.defineProperty(global, key, {
+                get(){
+                    return thing
+                }
+            })
         }
     }
 })()
@@ -1328,7 +1341,14 @@ Backend.refreshConfig()
 
 if(isDev){
     Backend.log("NOTE: API is running in developmenmt mode.")
+
+    if(devInspecting){
+        console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
+        console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
+    }
 }
+
+Backend.exposeToDebugger("backend", Backend)
 
 port = (+Backend.config.block("server").properties.port) || 7007;
 doHost = Backend.config.block("server").properties.enableHost == "prod"? !isDev: Backend.config.block("server").properties.enableHost;
