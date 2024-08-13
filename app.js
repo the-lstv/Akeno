@@ -624,6 +624,8 @@ function build(){
         }, res.timeout || 15000)
     }
 
+    Backend.exposeToDebugger("router", resolve)
+
     function proxyReq(req, res, options){
         options = {
             path: req.path,
@@ -674,8 +676,12 @@ function build(){
         });
     }
 
+    Backend.exposeToDebugger("proxyRouter", proxyReq)
+
     // Create server instances
     app = uws.App()
+
+    Backend.exposeToDebugger("uws", app)
 
     // Initialize WebSockets
     app.ws('/*', wss)
@@ -690,6 +696,7 @@ function build(){
             // Configure SSL
             if(Backend.config.block("server").properties.enableSSL) {
                 SSLApp = uws.SSLApp();
+                Backend.exposeToDebugger("uws_ssl", SSLApp)
 
                 let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
 
@@ -1272,47 +1279,47 @@ function build(){
         },
 
         Errors:{
-            0: "Invalid API version",
+            0: "Unknown API version",
             1: "Invalid API endpoint",
-            2: "Missing or invalid parameters in request body/query string.",
+            2: "Missing parameters in request body/query string.",
             3: "Internal Server Error.",
             4: "Access denied.",
-            5: "This user does not have access to this service.",
+            5: "You do not have access to this endpoint.",
             6: "User not found.",
             7: "Username already taken.",
             8: "Email address is already registered.",
-            9: "Session/API token expired/is invalid. Please log-in again.",
-            10: "Incorrect verification code.",
+            9: "Your login session has expired. Please log-in again.",
+            10: "Incorrect verification code.", // FIXME: What does this even mean
             11: "Invalid password.",
             12: "Authentication failed.",
-            13: "Session/API token missing or expired.",
-            14: "This account is under suspension/termination/other kind of penalty.",
-            15: "Forbidden action.",
-            16: "This service does not exist.",
+            13: "Session/API token missing or expired.", // FIXME: Identical to 9
+            14: "This account is suspended.",
+            15: "Forbidden action.", // FIXME: Unclear
+            16: "Entity not found.",
             17: "Request timed out.",
-            18: "Too many requests. Try again in a few seconds.",
+            18: "Too many requests. Try again in a few seconds.", // FIXME: Identical to 34/36/429
             19: "Service temporarily unavailable.",
             20: "Service/Feature not enabled. It might first require setup from your panel, is not available (or is paid and you don't have access).",
             21: "Unsupported media type.",
             22: "Deprecated endpoint. Consult documentation for a replacement.",
             23: "Not implemented.",
             24: "Conflict.",
-            25: "Data already exist",
+            25: "Data already exist.",
             26: "Deprecated endpoint. Consult documentation for a replacement.",
-            27: "Deprecated endpoint for this API version. Please update your code to the latest API version. (GET /latest)",
-            28: "Access blocked for suspicious/illegal activity. Please, explain yourself to the support team to get the chance to re-enable access.",
-            29: "Missing a sub-endpoint. This endpoint does not have a default response.",
-            30: "Invalid method.",
+            27: "This endpoint has been removed from this version of the API. Please migrate your code to the latest API version to keep using it.",
+            28: "Access blocked for the suspicion of fraudulent/illegal activity. Contact our support team to get this resolved.",
+            29: "This endpoint requires an additional parametter (cannot be called directly)",
+            30: "Invalid method.", // FIXME: Identical to 39
             31: "",
-            32: "",
-            33: "",
-            34: "",
-            35: "This endpoint may handle sensitive data and so you can only use it over HTTPS. Please do not use it from unsecured environments to prevent attacks.",
-            36: "Rate-Limited (API level). Please try again in a few seconds (or when your usage recharges).",
-            37: "Rate-Limited (API level). You have used all of your requests for a given time period. For more info, look into your panel.",
-            38: "Rate-Limited (Account level). Please contact support for more information.",
+            32: "Fuck you",
+            33: "Temporarily down due to high demand. Please try again in a few moments.",
+            34: "Global rate-limit has been reached. Please try again in a few moments.",
+            35: "This endpoint may handle sensitive data, so you must use HTTPS. Do not use unsecured connections to avoid your information being vulnerable to attacks.",
+            36: "Rate-Limited. Please try again in a few minutes.",
+            37: "Rate-Limited. You have used all of your requests for a given time period.",
+            38: "Rate-Limited. Please contact support for more information.",
             39: "Invalid method for this endpoint.",
-            40: "This endpoint is a WebSocket endpoint. Use the ws:// or wss:// protocol instead of http.",
+            40: "This is a WebSocket-only endpoint. Use the ws:// or wss:// protocol instead of http.",
             41: "Wrong protocol.",
             42: "Internal error: Configured backend type doesn't have a driver for it. Please contact support.",
             43: "File not found.",
@@ -1321,7 +1328,49 @@ function build(){
             46: "Invalid email address.",
             47: "Username must be within 2 to 200 characters in range and only contain bare letters, numbers, and _, -, .",
             48: "Weak password.",
-            49: "Sent data exceed maximum allowed size."
+            49: "Sent data exceed maximum allowed size.",
+
+
+            // HTTP-compatible error codes, this does NOT mean this list is meant for HTTP status codes.
+            404: "Request Timed Out.",
+            408: "Not Found.",
+            409: "Conflict.",
+            429: "Too Many Requests",
+            500: "Internal Server Error."
+        },
+
+        claimedErrorRanges: [
+            [0, 100],
+            [400, 600]
+        ],
+
+        claimErrorCodeRange(from = 0, to = 0){
+            if(typeof from !== "number" || typeof to !== "number") throw "Invalid type";
+            if(from < 0) throw "Minimum for an error range is 0";
+            if(to > from) throw "Invalid range; 'from' must be smaller than 'to'";
+            if(to - from > 1000) throw "Error range is too big - maximum size per range is 1000";
+
+            for(let range of Backend.claimedErrorRanges){
+                if(range[0] > code || range[1] < code) throw "Error range is conflicting with another range: " + range.join(" - ");
+            }
+
+            Backend.claimedErrorRanges.push([from, to]);
+
+            function registerError(code, message){
+                if(from > code || to < code) throw "Error code is outside of claimed range";
+                Backend.Errors[code] = message
+            }
+
+            return {
+                error: registerError,
+                errors(list){
+                    if(!Array.isArray(list)) list = Object.entries(list);
+
+                    for(let [code, message] of list){
+                        registerError(code, message)
+                    }
+                }
+            }
         },
 
         exposeToDebugger(key, thing){
@@ -1332,6 +1381,8 @@ function build(){
                     return thing
                 }
             })
+
+            return thing
         }
     }
 })()
@@ -1340,7 +1391,7 @@ Backend.log = Backend.logger("api")
 Backend.refreshConfig()
 
 if(isDev){
-    Backend.log("NOTE: API is running in developmenmt mode.")
+    Backend.log("NOTE: API is running in development mode.")
 
     if(devInspecting){
         console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
@@ -1349,6 +1400,8 @@ if(isDev){
 }
 
 Backend.exposeToDebugger("backend", Backend)
+Backend.exposeToDebugger("addons", AddonCache)
+Backend.exposeToDebugger("api", API)
 
 port = (+Backend.config.block("server").properties.port) || 7007;
 doHost = Backend.config.block("server").properties.enableHost == "prod"? !isDev: Backend.config.block("server").properties.enableHost;
