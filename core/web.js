@@ -148,6 +148,18 @@ server = {
         Backend = Backend_;
         server.Reload(true)
 
+        try {
+            // Reserve API error codes from 1000 to 1200
+
+            server.errorRange = backend.claimErrorCodeRange(1000, 1200)
+
+            // server.errorRange.errors({
+            //     1000: "Hi (Reserved for future use)"
+            // })
+        } catch (e) {
+            server.log.warn("Could not reserve errors (", e.toString(), ")")
+        }
+
         mime = Backend.mime;
     },
     

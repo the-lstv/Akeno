@@ -1172,15 +1172,29 @@ function build(){
         writeLog(data, severity = 2, source = "api"){
             // 0 = Debug (Verbose), 1 = Info (Verbose), 2 = Info, 3 = Warning, 4 = Error, 5 = Important
 
-            if(severity < (5 - Backend.logLevel)) return;
             if(!Array.isArray(data)) data = [data];
+
+            for(let callback of Backend.__logListeners){
+                if(callback(source, severity, data) === false){
+                    return;
+                }
+            }
+
+            if(severity < (5 - Backend.logLevel)) return;
 
             if(devInspecting) data.unshift("color: aquamarine");
 
             console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`${devInspecting? "%c": ""}[${source}]`, ...data)
         },
 
-        logger(target){
+        __logListeners: [],
+
+        onLog(callback){
+            if(typeof callback !== "function") throw "Callback must be a function";
+            Backend.__logListeners.push(callback)
+        },
+
+        createLoggerContext(target){
             let logger = function (...data){
                 Backend.writeLog(data, 2, target)
             }
@@ -1215,12 +1229,14 @@ function build(){
         addon(name, path){
             // if(!fs.existsSync("./addons/"+name+".js")) return false;
 
+            path = path || `./${name.startsWith("core/") ? "" : "addons/"}${name}`;
+
             if(!AddonCache[name]){
                 Backend.log("Loading addon; " + name);
 
-                AddonCache[name] = require(path || `./${name.startsWith("core/") ? "" : "addons/"}${name}`);
+                AddonCache[name] = require(path);
 
-                AddonCache[name].log = Backend.logger(name)
+                AddonCache[name].log = Backend.createLoggerContext(name)
 
                 if(AddonCache[name].Initialize) AddonCache[name].Initialize(Backend);
             }
@@ -1229,7 +1245,7 @@ function build(){
         },
 
         mime: {
-            // Had to make my own mimetype "library" since the current mimetype library for Node is total ass.
+            // Had to make my own mimetype "library" since the current mimetype library for Node is... meh.
 
             types: null,
             extensions: null,
@@ -1278,7 +1294,7 @@ function build(){
             CV: 100
         },
 
-        Errors:{
+        Errors: {
             0: "Unknown API version",
             1: "Invalid API endpoint",
             2: "Missing parameters in request body/query string.",
@@ -1347,16 +1363,17 @@ function build(){
         claimErrorCodeRange(from = 0, to = 0){
             if(typeof from !== "number" || typeof to !== "number") throw "Invalid type";
             if(from < 0) throw "Minimum for an error range is 0";
-            if(to > from) throw "Invalid range; 'from' must be smaller than 'to'";
+            if(from > to) throw "Invalid range; 'from' must be smaller than 'to'";
             if(to - from > 1000) throw "Error range is too big - maximum size per range is 1000";
 
             for(let range of Backend.claimedErrorRanges){
-                if(range[0] > code || range[1] < code) throw "Error range is conflicting with another range: " + range.join(" - ");
+                if((from >= range[0] && from <= range[1]) || (to <= range[1] && from >= range[1])) throw "Error range is conflicting with another range: " + range.join(" - ");
             }
 
             Backend.claimedErrorRanges.push([from, to]);
 
             function registerError(code, message){
+                if(typeof code !== "number") throw "Code must be a number";
                 if(from > code || to < code) throw "Error code is outside of claimed range";
                 Backend.Errors[code] = message
             }
@@ -1387,7 +1404,7 @@ function build(){
     }
 })()
 
-Backend.log = Backend.logger("api")
+Backend.log = Backend.createLoggerContext("api")
 Backend.refreshConfig()
 
 if(isDev){

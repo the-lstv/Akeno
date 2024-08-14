@@ -13,6 +13,8 @@ cdn/flags
 cdn/temp
 cdn/tw
 cdn/beta
+cdn/lib/*
+!cdn/lib/example
 
 /archive
 version/v1.js
