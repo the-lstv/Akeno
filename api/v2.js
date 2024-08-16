@@ -556,7 +556,7 @@ main = {
             default:
                 // Custom router handles!
                 let handler = main.GetHandler(part);
-                console.log(part, handler);
+                console.log(backend.apiExtensions, part, handler);
                 if(handler && handler.HandleRequest) handler.HandleRequest({req, res, segments, error, shift}); else res.cork(() => { res.writeStatus("404").corsHeaders().end("404") });
         }
     },
