@@ -1326,8 +1326,8 @@ function build(){
             28: "Access blocked for the suspicion of fraudulent/illegal activity. Contact our support team to get this resolved.",
             29: "This endpoint requires an additional parametter (cannot be called directly)",
             30: "Invalid method.", // FIXME: Identical to 39
-            31: "",
-            32: "Fuck you",
+            31: "Underlying host could not be resolved.",
+            32: "Underlying host could not resolve this request due to a server error.",
             33: "Temporarily down due to high demand. Please try again in a few moments.",
             34: "Global rate-limit has been reached. Please try again in a few moments.",
             35: "This endpoint may handle sensitive data, so you must use HTTPS. Do not use unsecured connections to avoid your information being vulnerable to attacks.",
