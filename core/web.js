@@ -228,7 +228,7 @@ server = {
                         for(const route of app.routes){
                             if(route.values.find(route => url.startsWith(route))){
                                 if(route.properties.files) {
-                                    let fExt = nodePath.extname(file).replace(".", ""), match = false;
+                                    let fExt = nodePath.extname(file || "").replace(".", ""), match = false;
 
                                     if(fExt === "" && route.properties["notStrict"]){
                                         match = true;
