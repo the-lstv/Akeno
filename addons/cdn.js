@@ -1,25 +1,22 @@
-let isDev = false, // Do not change - its now inherited from Backend.isDev when initialized. This only serves as a fallback at this point
-
-    Backend,
+let backend,
     api,
 
-    // app=(require('express'))(),
-    // id=Date.now(),
-    // compression = (require("compression"))(),
-    // cors = (require('cors'))(),
-
     fs = require("fs"),
-    // multer = require('multer-md5'),
     mime,
     sharp = require('sharp'),
 
     CleanCSS = new (require('clean-css'))({
         keepSpecialComments: '*'
     }),
+
     UglifyJS = require("uglify-js"),
 
     lsCache = {},
-    fileMetadataCache = {}
+    fileMetadataCache = {},
+
+
+    // Libraries
+    libLocations
 ;
 
 var Path = "/www/content/akeno/cdn",
@@ -42,7 +39,7 @@ fileMetadataCache = JSON.parse(fs.readFileSync(Path + "/metadata.cache.json", "u
 // const storage = multer.diskStorage({
 //     destination: Path + '/temp/',
 //     filename: (req, file, callback) => {
-//         callback(null, Backend.uuid());
+//         callback(null, backend.uuid());
 //     }
 // });
 
@@ -120,17 +117,73 @@ function saveMetadata(){
 
 // CDN API:
 
-
 var STREAM_CHUNK_SIZE = 4_500000; // When streaming videos, how many bytes should a chunk have
 
-
 api = {
-    Initialize(Backend_){
-        Backend = Backend_;
-        isDev = Backend.isDev;
+    Initialize(backend_){
+        backend = backend_;
 
-        mime = Backend.mime;
+        mime = backend.mime;
+
+        try {
+            // Reserve API error codes from 1201 to 1300
+
+            api.errorRange = backend.claimErrorCodeRange(1201, 1300)
+
+            // api.errorRange.errors({
+            //     1201: "Hi (Reserved for future use)"
+            // })
+        } catch (e) {
+            api.log.warn("Could not reserve errors (", e.toString(), ")")
+        }
+
+        api.Reload(true)
     },
+
+        
+    async Reload(firstTime){
+        if(!firstTime){
+            backend.refreshConfig()
+        }
+
+        version = backend.config.valueOf("version") || "unknown";
+    
+        let libConfig = backend.config.block("cdn.libraries");
+    
+        libLocations = libConfig && libConfig.properties.locations? libConfig.properties.locations : [Path + "/lib/*"]
+
+        await api.LoadLibraries();
+    },
+
+
+    async LoadLibraries(){
+
+        function load(path){
+            console.log("loading ", path);
+        }
+
+        for(let location of libLocations){
+
+            if(location.startsWith("./")) location = backend.path + location.replace("./", "/");
+
+            if(!fs.existsSync(location.replace("/*", ""))) {
+                api.log.warn("Library directory (" + location + ") does not exist");
+                continue
+            }
+
+            if(location.endsWith("*")){
+                let path = (location.replace("*", "") + "/").replaceAll("//", "/");
+                libLocations.push(...fs.readdirSync(path).map(location => path + location).filter(path => fs.statSync(path).isDirectory()))
+                continue
+            }
+
+            if(fs.statSync(location).isDirectory()){
+                load(location)
+            }
+        }
+    },
+
+
     async HandleRequest({segments, shift, error, req, res}){
         function send(data = {}, cache = false, type = null, isFilePath){
             let mime = type || (typeof data == "object"? "application/json" : typeof data == "string" ? "text/plain" : "application/octet-stream");
@@ -184,6 +237,12 @@ api = {
         switch(req.method){
             case "GET":
                 switch(first){
+                    case"lib":
+                        // Library
+
+                        req.end("a")
+                    break;
+
                     case"file":
 
                         if(!segments[0]){
@@ -289,10 +348,10 @@ api = {
 
                         file = segments[0].split(".").reverse().join(".")
                         
-                        if (isDev || !fs.existsSync(CompiledPath + "ls." + file + ".json")) {
-                            if (isDev || fs.existsSync(SourcePath + "ls." + file)){
+                        if (backend.isDev || !fs.existsSync(CompiledPath + "ls." + file + ".json")) {
+                            if (backend.isDev || fs.existsSync(SourcePath + "ls." + file)){
                                 code = lsParse(fs.readFileSync(SourcePath + "ls." + file, "utf8"), file.endsWith("min.js"))
-                                fs.writeFileSync(CompiledPath + "ls." + file + ".json", JSON.stringify(code, ...(isDev? [null, 4]: [])))
+                                fs.writeFileSync(CompiledPath + "ls." + file + ".json", JSON.stringify(code, ...(backend.isDev? [null, 4]: [])))
                             }else{
                                 return error(43)
                             }
@@ -321,7 +380,7 @@ api = {
                         // Bug with minification
                         if(code.endsWith(",;")) code = code.replace(",;", ";")
 
-                        send(code, isDev? "no-cache": 31536000, file.endsWith("js")? "text/javascript": file.endsWith("css")? "text/css": "text/plain")
+                        send(code, backend.isDev? "no-cache": 31536000, file.endsWith("js")? "text/javascript": file.endsWith("css")? "text/css": "text/plain")
                     break;
                     default:
                         file = Path + "/" + first + "/" + req.path;
@@ -439,6 +498,7 @@ api = {
     }
 };
 
+
 function lsShake(tree, list) {
     let result = "",
         all = list.includes("*")
@@ -458,6 +518,7 @@ function lsShake(tree, list) {
     return result
 }
 
+
 function lsParse(code, compression){
     let tokens = [],
         cs = "",
@@ -475,11 +536,13 @@ function lsParse(code, compression){
         i = -1,
         variables = {}
     ;
+
     function stringVar(str){
         return (str||"").replace(/\$[\w\-\_]+/g, (a)=>{
             return stringVar(variables[a.replace("$", "").toLowerCase().trim()])
         })
     }
+
     function push(){
         if(cs){
             if(typeof tokens[tokens.length-1] == "string"){
@@ -613,8 +676,7 @@ function lsParse(code, compression){
 
                     case"switch_dev":
                         let values = stringVar(token.value).split(",").map(asd => asd.trim());
-                        // api.log("asdasdas",values)
-                        result.push(isDev? values[0] : values[1])
+                        result.push(backend.isDev? values[0] : values[1])
                     break;
 
                     case"mark":

@@ -36,6 +36,13 @@ web {
     ;
 }
 
+# More info on libraries is in /cdn/lib
+cdn.libraries {
+    locations:
+        "./cdn/lib/*",
+    ;
+}
+
 sslRouter {
     # Currently the options for sslRouter are very limited and only suited for a thin range of configurations
     # To allow multiple certificates, you add server names below.

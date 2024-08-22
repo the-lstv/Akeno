@@ -454,7 +454,7 @@ function parse(code, direct, sourcePath){
 
                 temporaryBlockRaw += char;
 
-                if(/[a-zA-Z-_]/.test(char) && !flag_arguments_set){
+                if(/[a-zA-Z-_.]/.test(char) && !flag_arguments_set){
 
                     keyword += char
                     continue

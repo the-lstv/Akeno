@@ -151,7 +151,7 @@ server = {
         try {
             // Reserve API error codes from 1000 to 1200
 
-            server.errorRange = backend.claimErrorCodeRange(1000, 1200)
+            server.errorRange = Backend.claimErrorCodeRange(1000, 1200)
 
             // server.errorRange.errors({
             //     1000: "Hi (Reserved for future use)"
@@ -211,7 +211,7 @@ server = {
             let app = {
                 cache: {},
                 routes: [],
-                stacks: [], // A feature to be potentially deprecated?s
+                stacks: [], // A feature to be potentially deprecated?
                 path,
                 basename,
                 enabled: true,
@@ -381,6 +381,7 @@ server = {
         }
 
         for(let location of locations){
+            if(location.startsWith("./")) location = backend.path + location.replace("./", "/");
 
             if(!fs.existsSync(location.replace("/*", ""))) {
                 server.log.warn("Web application directory (" + location + ") does not exist");

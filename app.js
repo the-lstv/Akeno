@@ -775,6 +775,14 @@ function build(){
         config,
         configRaw,
 
+        get path(){
+            return PATH
+        },
+
+        get PATH(){
+            return PATH
+        },
+
         // configTools,
 
         refreshConfig(){
