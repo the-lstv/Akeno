@@ -377,8 +377,9 @@ api = {
                         // Now we perform a tree-shake, where we only include needed components, recruisively.
                         code = lsShake(code.content, list).replace(/\/\*\*\/|\/\*\//g, "").trim();
 
-                        // Bug with minification
+                        // Bugs with minification
                         if(code.endsWith(",;")) code = code.replace(",;", ";")
+                        code = code.replace(",,LS", ",LS")
 
                         send(code, backend.isDev? "no-cache": 31536000, file.endsWith("js")? "text/javascript": file.endsWith("css")? "text/css": "text/plain")
                     break;
