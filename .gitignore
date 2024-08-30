@@ -2,8 +2,7 @@
 
 etc/hits
 etc/generated
-/addons/data/arisen/build
-/addons/data/pixel
+/addons/data/
 
 cdn/metadata.cache.json
 cdn/ls
