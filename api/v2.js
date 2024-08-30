@@ -161,6 +161,9 @@ main = {
             case "remote":
                 return backend.addon("remoteSync")
 
+            case "telemetry":
+                return backend.addon("telemetry")
+
             case "localcommands":
                 return backend.addon("localCommands")
 
