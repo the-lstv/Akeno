@@ -298,330 +298,337 @@ function build(){
 
     let version = Backend.config.valueOf("version") || "unknown";
 
-    function resolve(res, req, secured) {
+    function resolve(res, req, secured, virtual) {
         total_hits++
         // if((total_hits - saved_hits) > 500) save_hits();
 
         // Helper variables
+
+        if(virtual){
+            if(virtual.method) req.getMethod = () => virtual.method
+            if(virtual.path) req.getUrl = () => virtual.path
+            if(virtual.domain) req.getHeader = header => header === "host"? virtual.domain: req.getHeader(header)
+        }
+
         req.method = req.getMethod().toUpperCase(); // Lowercase would be pretty but harder to adapt
         req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
         // req.port = +req.getHeader("host").match(/:([0-9]+)/)[1];
 
-        res.writeHeaders = (headers) => {
-            if(!headers) return res;
-
-            res.cork(() => {
-                for(let header in headers){
-                    if(!headers[header]) return;
-                    res.writeHeader(header, headers[header])
-                }
-            });
-
-            return res
-        }
-
-        res.onAborted(() => {
-            clearTimeout(res.timeout)
-            req.abort = true;
-        })
-
         req.path = req.getUrl();
         req.secured = secured; // If the communication is done over HTTP or HTTPS
 
-        if(req.domain == "upedie.online"){
-            return proxyReq(req, res, {port: 42069})
-        }
+        if(!req.wasResolved){
 
-        if(req.domain == "127.0.0.1") return res.end("pong");
+            req.wasResolved = true; // To handle virtual redirecions
 
-        res.corsHeaders = () => {
-            res.writeHeaders({
-                'X-Powered-By': 'Akeno Server/' + version,
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET,HEAD,POST,PUT,DELETE",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Allow-Headers": "Authorization, *",
-                "Origin": req.domain
+            res.writeHeaders = (headers) => {
+                if(!headers) return res;
+    
+                res.cork(() => {
+                    for(let header in headers){
+                        if(!headers[header]) return;
+                        res.writeHeader(header, headers[header])
+                    }
+                });
+    
+                return res
+            }
+    
+            res.onAborted(() => {
+                clearTimeout(res.timeout)
+                req.abort = true;
             })
-            return res
-        }
-
-        // Handle preflights:
-        if(req.method == "OPTIONS"){
-            // Prevent preflights for 16 days... which chrome totally ignores anyway
-            res.corsHeaders().writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").writeHeader("CORS-is", "a piece of crap").end()
-            return
-        }
-
-        if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
-            req.fullBody = Buffer.from('');
-
-            // To be honest; Body on GET requests SHOULD be allowed. There are many legitimate uses for it. But since current browser implementations usually block the body for GET requests, I am also skipping their body proccessing.
-
-            req.hasFullBody = false
-            req.contentType = req.getHeader('content-type');
-
-            res.onData((chunk, isLast) => {
-                req.fullBody = Buffer.concat([req.fullBody, Buffer.from(chunk)]);
-
-                // req.bodyChunks.push(Buffer.from(chunk.slice(0)));
-                // console.log("data: ", chunk, isLast);
     
-                if (isLast) {
-                    // Object.defineProperties(req, {
-                    //     fullBody: {
-                    //         get(){
-                    //             if(req._fullBody) return req._fullBody;
-                    //             // req.bodyChunks = []
-                    //             return req._fullBody = Buffer.concat(req.bodyChunks)
-                    //         }
-                    //     }
-                    // })
-                    req.hasFullBody = true;
-
-                    if(req.onFullData) req.onFullData();
-                }
-            })
-
-            // Helper function
-            req.parseBody = function bodyParser(callback){
-                return {
-                    get type(){
-                        return req.getHeader("content-type")
-                    },
     
-                    get length(){
-                        return req.getHeader("content-length")
-                    },
+            if(req.domain == "upedie.online"){
+                return proxyReq(req, res, {port: 42069})
+            }
     
-                    upload(key = "file", hash){
-
-                        function done(){
-                            let parts = uws.getParts(req.fullBody, req.contentType);
-                            
-                            for(let part of parts){
-                                part.data = Buffer.from(part.data)
-                                if(hash) part.md5 = crypto.createHash('md5').update(part.data).digest('hex')
-                            }
-
-                            callback(parts)
-                        }
-
-                        // return (upload.array(key)) (req, res, ()=>{
-                        //     req.body = {
-                        //         type: "multipart",
-                        //         fields: req.body,
-                        //         files: req.files
-                        //     }
-                        //     return callback(req.body)
-                        // })
-                        if(req.hasFullBody) done(); else req.onFullData = done;
-                    },
+            res.corsHeaders = () => {
+                res.writeHeaders({
+                    'X-Powered-By': 'Akeno Server/' + version,
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET,HEAD,POST,PUT,DELETE",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Headers": "Authorization, *",
+                    "Origin": req.domain
+                })
+                return res
+            }
     
-                    data(){
-                        function done(){
-                            req.body = {
-                                get data(){
-                                    return req.fullBody
-                                },
+            // Handle preflights:
+            if(req.method == "OPTIONS"){
+                // Prevent preflights for 16 days... which chrome totally ignores anyway
+                res.corsHeaders().writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").writeHeader("CORS-is", "a piece of crap").end()
+                return
+            }
 
-                                get string(){
-                                    return req.fullBody.toString('utf8');
-                                },
-
-                                get json(){
-                                    let data;
-
-                                    try{
-                                        data = JSON.parse(req.fullBody.toString('utf8'));
-                                    } catch {
-                                        return null
-                                    }
-
-                                    return data
-                                }
-                            }
+            if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
+                req.fullBody = Buffer.from('');
+    
+                // To be honest; Body on GET requests SHOULD be allowed. There are many legitimate uses for it. But since current browser implementations usually block the body for GET requests, I am also skipping their body proccessing.
+    
+                req.hasFullBody = false
+                req.contentType = req.getHeader('content-type');
+    
+                res.onData((chunk, isLast) => {
+                    req.fullBody = Buffer.concat([req.fullBody, Buffer.from(chunk)]);
+    
+                    // req.bodyChunks.push(Buffer.from(chunk.slice(0)));
+                    // console.log("data: ", chunk, isLast);
         
-                            callback(req.body)
-                        }
-
-
-                        if(req.hasFullBody) done(); else req.onFullData = done;
-                    },
-    
-                    form(){
-                        // const form = formidable.formidable({});
-                        // form.parse(req, (err, fields, files) => {
-                        //     if (err) {
-                        //         callback(null, err);
-                        //         return;
+                    if (isLast) {
+                        // Object.defineProperties(req, {
+                        //     fullBody: {
+                        //         get(){
+                        //             if(req._fullBody) return req._fullBody;
+                        //             // req.bodyChunks = []
+                        //             return req._fullBody = Buffer.concat(req.bodyChunks)
+                        //         }
                         //     }
-    
-                        //     req.body = {
-                        //         type: "multipart",
-                        //         fields,
-                        //         files
-                        //     }
-    
-                        //     callback(req.body);
                         // })
+                        req.hasFullBody = true;
+    
+                        if(req.onFullData) req.onFullData();
+                    }
+                })
+    
+                // Helper function
+                req.parseBody = function bodyParser(callback){
+                    return {
+                        get type(){
+                            return req.getHeader("content-type")
+                        },
+        
+                        get length(){
+                            return req.getHeader("content-length")
+                        },
+        
+                        upload(key = "file", hash){
+    
+                            function done(){
+                                let parts = uws.getParts(req.fullBody, req.contentType);
+                                
+                                for(let part of parts){
+                                    part.data = Buffer.from(part.data)
+                                    if(hash) part.md5 = crypto.createHash('md5').update(part.data).digest('hex')
+                                }
+    
+                                callback(parts)
+                            }
+    
+                            // return (upload.array(key)) (req, res, ()=>{
+                            //     req.body = {
+                            //         type: "multipart",
+                            //         fields: req.body,
+                            //         files: req.files
+                            //     }
+                            //     return callback(req.body)
+                            // })
+                            if(req.hasFullBody) done(); else req.onFullData = done;
+                        },
+        
+                        data(){
+                            function done(){
+                                req.body = {
+                                    get data(){
+                                        return req.fullBody
+                                    },
+    
+                                    get string(){
+                                        return req.fullBody.toString('utf8');
+                                    },
+    
+                                    get json(){
+                                        let data;
+    
+                                        try{
+                                            data = JSON.parse(req.fullBody.toString('utf8'));
+                                        } catch {
+                                            return null
+                                        }
+    
+                                        return data
+                                    }
+                                }
+            
+                                callback(req.body)
+                            }
+    
+    
+                            if(req.hasFullBody) done(); else req.onFullData = done;
+                        },
+        
+                        form(){
+                            // const form = formidable.formidable({});
+                            // form.parse(req, (err, fields, files) => {
+                            //     if (err) {
+                            //         callback(null, err);
+                            //         return;
+                            //     }
+        
+                            //     req.body = {
+                            //         type: "multipart",
+                            //         fields,
+                            //         files
+                            //     }
+        
+                            //     callback(req.body);
+                            // })
+                        }
                     }
                 }
-            }
-        }
 
-        // let end_response = res.end;
-
-        // res.end = body => {
-        //     if(req.abort || res.sent) return;
-        //     res.sent = true
-        //     clearTimeout(res.timeout)
-
-        //     end_response(body)
-        // }
-
-        res.send = (message, headers = {}, status) => {
-            if(req.abort) return;
-            // OUTDATED!
-            // Should be avoided for performance reasons
-        
-            if(Array.isArray(message) || (typeof message !== "string" && !(message instanceof ArrayBuffer) && !(message instanceof Uint8Array) && !(message instanceof DataView) && !(message instanceof Buffer))) {
-                headers["content-type"] = types["json"];
-
-                message = JSON.stringify(message);
-                Backend.log.warn("[performance] Warning: You are not properly encoding your data before sending. The data were automatically stringified using JSON.stringify, but this has a bad impact on performance. If possible, either send a string, binary data or stringify using fast-json-stringify.")
             }
 
-            if(res.setType){
-                headers["content-type"] = res.setType;
-            }
-
-            if(res.setCache){
-                headers["Cache-Control"] = "public, max-age=" + res.setCache;
-            }
-
-            if(req.begin && headers) {
-                let hrTime = process.hrtime()
-                headers["server-timing"] = `generation;dur=${hrTime[0] * 1000 + hrTime[1] / 1000000 - req.begin}`
-            };
-
-            res.cork(() => {
-                res.writeStatus(status? status + "": "200 OK").corsHeaders().writeHeaders(headers).end(message)
-            });
-        }
-
-        res.stream = (stream, totalSize) => {
-            stream.on('data', (chunk) => {
-                let buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength), lastOffset = res.getWriteOffset();
-
-                // Try writing the chunk
-                const [ok, done] = res.tryEnd(buffer, totalSize);
-
-                if (!done && !ok) {
-                    // Backpressure handling
-                    stream.pause();
-
-                    // Resume once the client is ready
-                    res.onWritable((offset) => {
-                        const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
-
-                        if (done) {
-                            stream.close();
-                        } else if (ok) {
-                            stream.resume();
-                        }
-
-                        return ok;
-                    });
-                } else if (done) stream.close();
-            });
-
-            stream.on('error', (err) => {
-                res.writeStatus('500 Internal Server Error').end();
-            });
-
-            stream.on('end', () => {
-                res.end();
-            });
-
-            res.onAborted(() => {
-                stream.destroy();
-            });
-        }
-
-        res.type = (type) => {
-            res.setType = types[type] || type
-            return res
-        }
-
-        res.cache = (duration) => {
-            res.setCache = duration
-            return res
-        }
-
-        let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
-
-        let hrTime = process.hrtime()
-        req.begin = hrTime[0] * 1000 + hrTime[1] / 1000000;
-
-        function error(error, code){
-            if(req.abort) return;
-
-            if(typeof error == "number" && Backend.Errors[error]){
-                let _code = code;
-                code = error;
-                error = (_code? code : "") + Backend.Errors[code]
-            }
-
-            res.cork(() => {
-                res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
-            })
-        }
-
-        function shift(){
-            index++
-            return segments[index] || "";
-        }
-
-        if(segments[0] === "___internal"){
-            // console.log(res.getRemoteAddressAsText()); // this does not get the text for some reason
-            Backend.addon("core/web").HandleInternal({segments, req, res})
-        }
-
-        // Handle the builtin CDN
-        else if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
-            Backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
-        }
-        
-        // Handle the builtin API
-        else if(req.domain.startsWith("api.extragon")){
-            let ver = segments[0] ? +(segments[0].slice(1)) : 0;
-
-            if(ver && segments[0].toLowerCase().startsWith("v")){
-                segments.shift()
-            }
+            // 15s timeout when the request doesnt get answered
+            res.timeout = setTimeout(() => {
+                try {
+                    if(req.abort) return;
     
-            ver = (ver? ver : API._default);
-    
-            if(API[ver]){
-                API[ver].HandleRequest({segments, shift, error, req, res})
-            } else {
-                return error(0)
-            }
-        }
+                    if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
+                } catch {}
+            }, res.timeout || 15000)
 
-        else {
-            // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
-            Backend.addon("core/web").HandleRequest({segments, req, res})
-        }
-
-        res.timeout = setTimeout(() => {
-            try {
+            res.send = (message, headers = {}, status) => {
                 if(req.abort) return;
+                // OUTDATED!
+                // Should be avoided for performance reasons
+            
+                if(Array.isArray(message) || (typeof message !== "string" && !(message instanceof ArrayBuffer) && !(message instanceof Uint8Array) && !(message instanceof DataView) && !(message instanceof Buffer))) {
+                    headers["content-type"] = types["json"];
+    
+                    message = JSON.stringify(message);
+                    Backend.log.warn("[performance] Warning: You are not properly encoding your data before sending. The data were automatically stringified using JSON.stringify, but this has a bad impact on performance. If possible, either send a string, binary data or stringify using fast-json-stringify.")
+                }
+    
+                if(res.setType){
+                    headers["content-type"] = res.setType;
+                }
+    
+                if(res.setCache){
+                    headers["Cache-Control"] = "public, max-age=" + res.setCache;
+                }
+    
+                if(req.begin && headers) {
+                    let hrTime = process.hrtime()
+                    headers["server-timing"] = `generation;dur=${hrTime[0] * 1000 + hrTime[1] / 1000000 - req.begin}`
+                };
+    
+                res.cork(() => {
+                    res.writeStatus(status? status + "": "200 OK").corsHeaders().writeHeaders(headers).end(message)
+                });
+            }
+    
+            res.stream = (stream, totalSize) => {
+                stream.on('data', (chunk) => {
+                    let buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength), lastOffset = res.getWriteOffset();
+    
+                    // Try writing the chunk
+                    const [ok, done] = res.tryEnd(buffer, totalSize);
+    
+                    if (!done && !ok) {
+                        // Backpressure handling
+                        stream.pause();
+    
+                        // Resume once the client is ready
+                        res.onWritable((offset) => {
+                            const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
+    
+                            if (done) {
+                                stream.close();
+                            } else if (ok) {
+                                stream.resume();
+                            }
+    
+                            return ok;
+                        });
+                    } else if (done) stream.close();
+                });
+    
+                stream.on('error', (err) => {
+                    res.writeStatus('500 Internal Server Error').end();
+                });
+    
+                stream.on('end', () => {
+                    res.end();
+                });
+    
+                res.onAborted(() => {
+                    stream.destroy();
+                });
+            }
+    
+            res.type = (type) => {
+                res.setType = types[type] || type
+                return res
+            }
+    
+            res.cache = (duration) => {
+                res.setCache = duration
+                return res
+            }
+        }
 
-                if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
-            } catch {}
-        }, res.timeout || 15000)
+        // And when we finally finish with all the utility and other things, let's route the request.
+
+        router: {
+            let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
+    
+            let hrTime = process.hrtime()
+            req.begin = hrTime[0] * 1000 + hrTime[1] / 1000000;
+
+            function error(error, code){
+                if(req.abort) return;
+    
+                if(typeof error == "number" && Backend.Errors[error]){
+                    let _code = code;
+                    code = error;
+                    error = (_code? code : "") + Backend.Errors[code]
+                }
+    
+                res.cork(() => {
+                    res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
+                })
+            }
+    
+            function shift(){
+                index++
+                return segments[index] || "";
+            }
+    
+            if(segments[0] === "___internal"){
+                // console.log(res.getRemoteAddressAsText()); // this does not get the text for some reason
+                Backend.addon("core/web").HandleInternal({segments, req, res})
+            }
+    
+            // Handle the builtin CDN
+            else if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
+                Backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
+            }
+            
+            // Handle the builtin API
+            else if(req.domain.startsWith("api.extragon")){
+                let ver = segments[0] ? +(segments[0].slice(1)) : 0;
+    
+                if(ver && segments[0].toLowerCase().startsWith("v")){
+                    segments.shift()
+                }
+        
+                ver = (ver? ver : API._default);
+        
+                if(API[ver]){
+                    API[ver].HandleRequest({segments, shift, error, req, res})
+                } else {
+                    return error(0)
+                }
+            }
+    
+            else {
+                // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
+                Backend.addon("core/web").HandleRequest({segments, req, res})
+            }
+        }
     }
 
     Backend.exposeToDebugger("router", resolve)

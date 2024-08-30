@@ -211,15 +211,16 @@ server = {
             let app = {
                 cache: {},
                 routes: [],
+                handles: [],
                 stacks: [], // A feature to be potentially deprecated?
                 path,
                 basename,
                 enabled: true,
 
-                serve({segments, req, res}){
+                serve({segments, req, res, url}){
                     try {
 
-                        let url = ("/" + segments.join("/")), file;
+                        let file;
 
                         if(!file) file = files_try(path + url + ".html", path + url + "/index.html", path + url, path + "/" + (manifest.server && manifest.server.properties.fallback? manifest.server.properties.fallback[0]: url));
 
@@ -357,6 +358,11 @@ server = {
                         continue
                     }
 
+                    if(block.key == "handle"){
+                        app.handles.push({properties: block.properties, values: block.values});
+                        continue
+                    }
+
                     if(block.key == "stack"){
                         app.stacks.push({properties: block.properties, values: block.values});
                         continue
@@ -416,6 +422,65 @@ server = {
                     Backend.apiExtensions[api[0]] = app.path + "/" + api[1]
                 }
             }
+        }
+    },
+
+    async HandleRequest({segments, req, res}){
+        // This is the main handler for websites/webapps.
+
+        if(req.domain.startsWith("www.")) req.domain = req.domain.replace("www.", "");
+
+        let appPath = assignedDomains[req.domain] ?? assignedDomains[":default"], app;
+
+        if(typeof appPath !== "undefined") {
+            app = applications.find(app => app.path == appPath)
+
+            if(app.manifest.server.properties.redirect_https && !Backend.isDev && !req.secured){
+                res.redirect(301, `https://${req.getHeader("host")}${req.path}`);
+                return
+            }
+
+            if(!app.enabled){
+                res.send("This website is temporarily disabled.", null, 422)
+                return
+            }
+
+            if(app.manifest.server.properties.handle){
+                console.error("server().handle has been deprecated, please use handle() instead")
+                return res.close()
+            }
+
+            let url = ("/" + segments.join("/"));
+
+            // Redirect handles
+            if(app.handles && app.handles.length > 0){
+                for(const handle of app.handles){
+                    if(handle.values.find(route => url.startsWith(route))){
+                        if(handle.properties.target) {
+                            return Backend.resolve(res, req, req.secured, {
+                                domain: "api.extragon.cloud",
+                                path: "/" + handle.properties.target.join("/") + (handle.properties.appendPath? "/" + segments.join("/"): ""),
+                                virtual: true
+                            })
+                        }
+                    }
+                }
+            }
+
+            if(app.manifest.browserSupport){
+                if(!checkSupportedBrowser(req.getHeader('user-agent'), +app.manifest.browserSupport.properties.chrome[0], +app.manifest.browserSupport.properties.firefox[0])){
+                    res.cork(() => {
+                        res.writeHeader('Content-Type', 'text/html').writeStatus('403 Forbidden').end(`<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${app.manifest.browserSupport.properties.chrome[0]} and up, Firefox ${app.manifest.browserSupport.properties.firefox[0]} and up.`)
+                    })
+                    return
+                }
+            }
+
+            app.serve({ segments, req, res, url })
+        } else {
+            res.cork(() => {
+                res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${version}`)
+            })
         }
     },
 
@@ -488,59 +553,6 @@ server = {
                 res.end()
         }
     },
-
-    async HandleRequest({segments, req, res}){
-        // This is the main handler for websites/webapps.
-
-        if(req.domain.startsWith("www.")) req.domain = req.domain.replace("www.", "");
-
-        let appPath = assignedDomains[req.domain] ?? assignedDomains[":default"], app;
-
-        if(typeof appPath !== "undefined") {
-            app = applications.find(app => app.path == appPath)
-
-            if(app.manifest.server.properties.redirect_https && !Backend.isDev && !req.secured){
-                res.redirect(301, `https://${req.getHeader("host")}${req.path}`);
-                return
-            }
-
-            if(!app.enabled){
-                res.send("This website is temporarily disabled.", null, 422)
-                return
-            }
-
-            if(app.manifest.server.properties.handle){
-
-                // Redirects the request to an API endpoint instead
-                // TODO: Extend this so that it is a standalone block that can specify which URLs get forwarded to which endpoint.
-
-                let handle = app.manifest.server.properties.handle;
-
-                req.wait = true;
-                Backend.resolve(req.method, req, res, "", {
-                    domain: "api.extragon.cloud",
-                    path: handle + "/" + segments.join("/"),
-                    virtual: true
-                })
-                return
-            }
-
-            if(app.manifest.browserSupport){
-                if(!checkSupportedBrowser(req.getHeader('user-agent'), +app.manifest.browserSupport.properties.chrome[0], +app.manifest.browserSupport.properties.firefox[0])){
-                    res.cork(() => {
-                        res.writeHeader('Content-Type', 'text/html').writeStatus('403 Forbidden').end(`<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${app.manifest.browserSupport.properties.chrome[0]} and up, Firefox ${app.manifest.browserSupport.properties.firefox[0]} and up.`)
-                    })
-                    return
-                }
-            }
-
-            app.serve({ segments, req, res })
-        } else {
-            res.cork(() => {
-                res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${version}`)
-            })
-        }
-    }
 }
 
 

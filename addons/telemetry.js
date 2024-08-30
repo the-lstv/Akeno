@@ -6,7 +6,7 @@ module.exports = {
     async HandleRequest({req, res, segments, error, shift}){
         switch(shift()){
             case "get":
-                return res.send(JSON.stringify(sessions))
+                return res.send(sessions)
             break;
 
             case "session":
@@ -17,7 +17,13 @@ module.exports = {
                             return error(fail)
                         }
 
-                        sessions.push(data.data)
+                        try{
+                            let _data = data.json;
+
+                            if(_data) sessions.push(_data);
+                        } catch {}
+
+                        res.end()
                     }).data()
 
                 } else res.end()
