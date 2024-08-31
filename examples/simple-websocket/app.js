@@ -1,11 +1,9 @@
 
 
-let app, backend;
-
-app = {
+let backend, app = module.exports = {
     // Expose the backend object
-    Initialize(backend_){
-        backend = backend_
+    Initialize(_backend){
+        backend = _backend
     },
 
     // Handle WebSocket connections
@@ -23,12 +21,12 @@ app = {
 
         },
 
-        open(ws, code, message){
+        close(ws, code, message){
             console.log("WebSocket ID", ws.uuid, "has disconnected with code", code, "!");
         }
     },
 
-    // Handle HTTP requests
+    // Optionally handle HTTP requests
     HandleRequest({req, res, error, segments}){
         res.end("Hello world!")
     }
