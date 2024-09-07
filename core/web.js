@@ -124,18 +124,21 @@ function updateCache(file, content){
 }
 
 
-function checkSupportedBrowser(userAgent, minChrome, minFirefox) {
+function checkSupportedBrowser(userAgent, properties) {
     const ua = userAgent.toLowerCase();
 
-    if (ua.includes('chrome')) {
+    if (ua.includes('chrome') && properties.chrome) {
         const match = ua.match(/chrome\/(\d+)/);
 
-        if (match && parseInt(match[1], 10) < minChrome) return false;
+        if(properties.disableChrome) return false;
 
-    } else if (ua.includes('firefox')) {
+        if (match && parseInt(match[1], 10) < +properties.chrome[0]) return false;
+    } else if (ua.includes('firefox') && properties.firefox) {
         const match = ua.match(/firefox\/(\d+)/);
 
-        if (match && parseInt(match[1], 10) < minFirefox) return false;
+        if(properties.disableFirefox) return false;
+
+        if (match && parseInt(match[1], 10) < +properties.firefox[0]) return false;
 
     } else if (ua.includes('msie') || ua.includes('trident')) return false;
 
@@ -452,6 +455,17 @@ server = {
 
             let url = ("/" + segments.join("/"));
 
+            if(app.manifest.browserSupport){
+                let browserRequirements = app.manifest.browserSupport.properties;
+
+                if(!checkSupportedBrowser(req.getHeader('user-agent'), browserRequirements)){
+                    res.cork(() => {
+                        res.writeHeader('Content-Type', (browserRequirements.contentType && browserRequirements.contentType[0]) || 'text/html').writeStatus('403 Forbidden').end((browserRequirements.message && browserRequirements.message[0]) || `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${browserRequirements.chrome && browserRequirements.chrome[0]} and up, Firefox ${browserRequirements.firefox && browserRequirements.firefox[0]} and up.`)
+                    })
+                    return
+                }
+            }
+
             // Redirect handles
             if(app.handles && app.handles.length > 0){
                 for(const handle of app.handles){
@@ -464,15 +478,6 @@ server = {
                             })
                         }
                     }
-                }
-            }
-
-            if(app.manifest.browserSupport){
-                if(!checkSupportedBrowser(req.getHeader('user-agent'), +app.manifest.browserSupport.properties.chrome[0], +app.manifest.browserSupport.properties.firefox[0])){
-                    res.cork(() => {
-                        res.writeHeader('Content-Type', 'text/html').writeStatus('403 Forbidden').end(`<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${app.manifest.browserSupport.properties.chrome[0]} and up, Firefox ${app.manifest.browserSupport.properties.firefox[0]} and up.`)
-                    })
-                    return
                 }
             }
 

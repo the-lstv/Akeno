@@ -6,8 +6,9 @@ let
 
     fastJson = require("fast-json-stringify"),
 
-    // Used for proxy
+    // Used only for proxy requests
     http = require("http"),
+    https = require("https"),
 
     // cookieParser = require('cookie-parser'),
 
@@ -214,6 +215,15 @@ apiVersions = Object.keys(API).filter(version => !isNaN(+version));
 
 API._latest = Math.max(...apiVersions.map(number => +number));
 
+
+
+let noCorsHeaders = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,HEAD,POST,PUT,DELETE",
+    "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "Authorization, *"
+};
+
 // The init fucntion that initializes and starts the server.
 function build(){
     if(initialized) return;
@@ -344,15 +354,27 @@ function build(){
                 return proxyReq(req, res, {port: 42069})
             }
     
-            res.corsHeaders = () => {
-                res.writeHeaders({
-                    'X-Powered-By': 'Akeno Server/' + version,
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "GET,HEAD,POST,PUT,DELETE",
-                    "Access-Control-Allow-Credentials": "true",
-                    "Access-Control-Allow-Headers": "Authorization, *",
-                    "Origin": req.domain
+            if(req.domain.startsWith("proxy.")){
+                let url;
+                
+                try {
+                    url = new URL(decodeURIComponent(req.getUrl().substring(1)));
+                } catch {
+                    return res.writeStatus("400 Bad Request").end("Proxy error: Invalid URL")
+                }
+
+                return proxyReq(req, res, {
+                    overwriteHeaders: noCorsHeaders,
+                    hostname: url.hostname,
+                    protocol: url.protocol,
+                    path: url.pathname
                 })
+            }
+    
+            res.corsHeaders = () => {
+                res .writeHeader('X-Powered-By', 'Akeno Server/' + version)
+                    .writeHeaders(noCorsHeaders)
+                    .writeHeader("Origin", req.domain)
                 return res
             }
     
@@ -639,14 +661,17 @@ function build(){
             method: req.method,
             hostname: "localhost",
             headers: {},
+            overwriteHeaders: {},
             ...options
         }
 
         req.forEach((key, value) => {
+            if(key.toLowerCase() === "host") return;
+
             options.headers[key] = value;
         });
       
-        const proxyReq = http.request(options, (proxyRes) => {
+        const proxyReq = (options.protocol && options.protocol === "https:"? https: http).request(options, (proxyRes) => {
             let chunks = []
 
             proxyRes.on('data', (chunk) => {
@@ -658,10 +683,15 @@ function build(){
                     res.writeStatus(`${proxyRes.statusCode} ${proxyRes.statusMessage}`);
                     proxyRes.headers.server = "Akeno Server Proxy/" + version;
 
+                    for(let header in options.overwriteHeaders){
+                        res.writeHeader(header, options.overwriteHeaders[header]);
+                    }
+
                     for(let header in proxyRes.headers){
+                        if(options.overwriteHeaders.hasOwnProperty(header) || !proxyRes.headers.hasOwnProperty(header)) continue;
                         if(header === "date" || header === "content-length") continue;
     
-                        res.writeHeader(header, proxyRes.headers[header]);
+                        if(typeof proxyRes.headers[header] === "string") res.writeHeader(header, proxyRes.headers[header]);
                     }
 
                     res.end(Buffer.concat(chunks));

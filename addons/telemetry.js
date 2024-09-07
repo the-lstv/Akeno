@@ -35,14 +35,18 @@ module.exports = {
                         try{
                             let _data = data.json;
 
-                            
                             if(_data && _data.id) {
+                                _data.end = Date.now()
+
                                 if(!sessionSet.has(_data.id)){
-                                    _data.index = sessionIndex
+                                    sessionSet.add(_data.id)
                                     sessionIndex++
                                 }
+                                
+                                _data.index = sessions[_data.id]? sessions[_data.id].index: sessionIndex
+                                _data.ip = `${new Uint8Array(res.getRemoteAddress())}`.replaceAll(",", ".").replace("0.0.0.0.0.0.0.0.0.0.255.255.", "")
 
-                                sessionSet.add(_data.id)
+                                _data.pings = sessions[_data.id]? sessions[_data.id].pings +1: 0
                                 sessions[_data.id] = _data
                             }
                         } catch {}
