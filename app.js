@@ -689,7 +689,7 @@ function build(){
 
                     for(let header in proxyRes.headers){
                         if(options.overwriteHeaders.hasOwnProperty(header) || !proxyRes.headers.hasOwnProperty(header)) continue;
-                        if(header === "date" || header === "content-length") continue;
+                        if(header === "date" || header === "content-length" || header === "transfer-encoding") continue;
     
                         if(typeof proxyRes.headers[header] === "string") res.writeHeader(header, proxyRes.headers[header]);
                     }
