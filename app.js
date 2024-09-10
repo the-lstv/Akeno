@@ -6,21 +6,15 @@ let
 
     fastJson = require("fast-json-stringify"),
 
-    // Used only for proxy requests
-    http = require("http"),
-    https = require("https"),
-
-    // cookieParser = require('cookie-parser'),
-
     fs = require("fs"),
 
     app,
     SSLApp,
 
-    bcrypt = require("bcrypt"),
-    crypto = require('crypto'),
-    uuid = (require("uuid")).v4,
-    jwt = require('jsonwebtoken'),
+    bcrypt = require("bcrypt"),     // Secure hashing
+    crypto = require('crypto'),     // Cryptographic utils
+    uuid = (require("uuid")).v4,    // UUID
+    jwt = require('jsonwebtoken'),  // Web tokens
 
     ipc,
     { exec, spawn } = require('child_process'),
@@ -29,10 +23,14 @@ let
     // multer = require('multer-md5'),
     // formidable = require('formidable'),
 
-    lsdb = require("./addons/lsdb_mysql.js"),
+    lsdb = require("./addons/lsdb_mysql.js"),   // SQL Wrapperr (temporary)
 
     // Config parser
-    { parse, stringify, merge, configTools } = require("./core/parser.js")
+    { parse, stringify, merge, configTools } = require("./core/parser.js"),
+    { proxyReq, proxyWebSocket, proxySFTP } = require("./core/proxy.js"),
+
+    textEncoder = new TextEncoder,
+    textDecoder = new TextDecoder
 ;
 
 try {
@@ -224,6 +222,66 @@ let noCorsHeaders = {
     "access-control-allow-headers": "Authorization, *"
 };
 
+
+function shouldProxy(req, res, secured = false, ws = false, wsContext){
+
+    if(!req.domain) req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
+
+    if(req.domain == "upedie.online"){
+        // Redirect to a diferent server on a specific port
+
+        if(!ws) return proxyReq(req, res, {port: 42069}), true;
+    }
+    
+    if(req.domain.startsWith("proxy.") || req.domain.startsWith("gateway_") || req.domain.startsWith("gateway.") || req.domain.startsWith("discord.")){
+        let url,
+            subdomain = req.domain.split(".")[0],
+            query = req.getQuery(),
+            reportedUrl = decodeURIComponent(req.getUrl()).substring(1) + (query? `?${query}`: "")
+        ;
+
+        // Handle special cases
+        if(subdomain.startsWith("gateway_")){
+            reportedUrl = `http${secured? "s": ""}://${subdomain.replace("gateway_", "").replaceAll("_", ".")}/${reportedUrl}`
+        } else if(subdomain === "discord"){
+            reportedUrl = `https://discord.com/${reportedUrl}`
+        }
+
+        try {
+            url = new URL(decodeURIComponent(reportedUrl));
+        } catch {
+            return res.writeStatus("400 Bad Request").end("Proxy error: Invalid URL")
+        }
+
+        if(ws){
+            let headers = {};
+
+            req.forEach((key, value) => {
+                if(key.toLowerCase() === "host") return;
+
+                headers[key] = key.toLowerCase() === "origin"? "https://remote-auth-gateway.discord.gg" : value;
+            });
+
+            return proxyWebSocket(req, res, wsContext, {
+                url: decodeURIComponent(reportedUrl), parsedUrl: url, headers
+            }), true
+        }
+
+        return proxyReq(req, res, {
+            overwriteHeaders: noCorsHeaders,
+            hostname: url.hostname,
+            protocol: url.protocol,
+            path: url.pathname + url.search
+        }, {
+            mode: subdomain === "proxy"? "normal": "web",
+            subdomainMode: subdomain !== "proxy" && subdomain !== "gateway"
+        }), true
+    }
+
+    return false
+}
+
+
 // The init fucntion that initializes and starts the server.
 function build(){
     if(initialized) return;
@@ -248,7 +306,7 @@ function build(){
     // });
 
     // const upload = multer({ storage })
-    
+
     let wss = {
 
         // idleTimeout: 32,
@@ -266,6 +324,18 @@ function build(){
                 continueUpgrade = false
             })
 
+            let host = req.getHeader("host");
+
+
+            // Handle proxied websockets when needed
+            if(shouldProxy(req, res, true, true, context)) return;
+
+
+            if(req.domain.startsWith("ssh.")) {
+                return proxySFTP(req, res, context, "will-provide")
+            }
+
+
             let segments = req.getUrl().split("/").filter(garbage => garbage), continueUpgrade = true;
             
             if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments[0].replace("v", ""))) segments.shift();
@@ -277,7 +347,7 @@ function build(){
             if(continueUpgrade) res.upgrade({
                 uuid: uuid(),
                 url: req.getUrl(),
-                host: req.getHeader("host"),
+                host,
                 ip: res.getRemoteAddress(),
                 ipAsText: res.getRemoteAddressAsText(),
                 handler: handler.HandleSocket,
@@ -348,36 +418,19 @@ function build(){
                 clearTimeout(res.timeout)
                 req.abort = true;
             })
-    
-    
-            if(req.domain == "upedie.online"){
-                return proxyReq(req, res, {port: 42069})
-            }
-    
-            if(req.domain.startsWith("proxy.")){
-                let url;
-                
-                try {
-                    url = new URL(decodeURIComponent(req.getUrl().substring(1)));
-                } catch {
-                    return res.writeStatus("400 Bad Request").end("Proxy error: Invalid URL")
-                }
 
-                return proxyReq(req, res, {
-                    overwriteHeaders: noCorsHeaders,
-                    hostname: url.hostname,
-                    protocol: url.protocol,
-                    path: url.pathname
-                })
-            }
-    
+
+            // Handle proxied requests
+            if(shouldProxy(req, res, secured)) return;
+
+
             res.corsHeaders = () => {
                 res .writeHeader('X-Powered-By', 'Akeno Server/' + version)
                     .writeHeaders(noCorsHeaders)
                     .writeHeader("Origin", req.domain)
                 return res
             }
-    
+
             // Handle preflights:
             if(req.method == "OPTIONS"){
                 // Prevent preflights for 16 days... which chrome totally ignores anyway
@@ -387,34 +440,23 @@ function build(){
 
             if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
                 req.fullBody = Buffer.from('');
-    
-                // To be honest; Body on GET requests SHOULD be allowed. There are many legitimate uses for it. But since current browser implementations usually block the body for GET requests, I am also skipping their body proccessing.
-    
+
+                // In my opinion; Body on GET requests SHOULD be allowed. There are many legitimate uses for it (eg. when I need to provide extra data, like a query, for the information i want to fetch).
+                // But since current browser implementations usually block the body for GET requests, I am also skipping their body proccessing.
+                // Weirdly enough, the spec itself does not prohibit body on GET requests, and yet it is still not widely available.
+
                 req.hasFullBody = false
                 req.contentType = req.getHeader('content-type');
-    
+
                 res.onData((chunk, isLast) => {
                     req.fullBody = Buffer.concat([req.fullBody, Buffer.from(chunk)]);
-    
-                    // req.bodyChunks.push(Buffer.from(chunk.slice(0)));
-                    // console.log("data: ", chunk, isLast);
-        
+
                     if (isLast) {
-                        // Object.defineProperties(req, {
-                        //     fullBody: {
-                        //         get(){
-                        //             if(req._fullBody) return req._fullBody;
-                        //             // req.bodyChunks = []
-                        //             return req._fullBody = Buffer.concat(req.bodyChunks)
-                        //         }
-                        //     }
-                        // })
                         req.hasFullBody = true;
-    
                         if(req.onFullData) req.onFullData();
                     }
                 })
-    
+
                 // Helper function
                 req.parseBody = function bodyParser(callback){
                     return {
@@ -425,7 +467,7 @@ function build(){
                         get length(){
                             return req.getHeader("content-length")
                         },
-        
+
                         upload(key = "file", hash){
     
                             function done(){
@@ -438,15 +480,7 @@ function build(){
     
                                 callback(parts)
                             }
-    
-                            // return (upload.array(key)) (req, res, ()=>{
-                            //     req.body = {
-                            //         type: "multipart",
-                            //         fields: req.body,
-                            //         files: req.files
-                            //     }
-                            //     return callback(req.body)
-                            // })
+
                             if(req.hasFullBody) done(); else req.onFullData = done;
                         },
         
@@ -479,31 +513,13 @@ function build(){
     
     
                             if(req.hasFullBody) done(); else req.onFullData = done;
-                        },
-        
-                        form(){
-                            // const form = formidable.formidable({});
-                            // form.parse(req, (err, fields, files) => {
-                            //     if (err) {
-                            //         callback(null, err);
-                            //         return;
-                            //     }
-        
-                            //     req.body = {
-                            //         type: "multipart",
-                            //         fields,
-                            //         files
-                            //     }
-        
-                            //     callback(req.body);
-                            // })
                         }
                     }
                 }
 
             }
 
-            // 15s timeout when the request doesnt get answered
+            // Default 15s timeout when the request doesnt get answered
             res.timeout = setTimeout(() => {
                 try {
                     if(req.abort) return;
@@ -655,64 +671,6 @@ function build(){
 
     Backend.exposeToDebugger("router", resolve)
 
-    function proxyReq(req, res, options){
-        options = {
-            path: req.path,
-            method: req.method,
-            hostname: "localhost",
-            headers: {},
-            overwriteHeaders: {},
-            ...options
-        }
-
-        req.forEach((key, value) => {
-            if(key.toLowerCase() === "host") return;
-
-            options.headers[key] = value;
-        });
-      
-        const proxyReq = (options.protocol && options.protocol === "https:"? https: http).request(options, (proxyRes) => {
-            let chunks = []
-
-            proxyRes.on('data', (chunk) => {
-                chunks.push(Buffer.from(chunk));
-            });
-            
-            proxyRes.on('end', () => {
-                res.cork(() => {
-                    res.writeStatus(`${proxyRes.statusCode} ${proxyRes.statusMessage}`);
-                    proxyRes.headers.server = "Akeno Server Proxy/" + version;
-
-                    for(let header in options.overwriteHeaders){
-                        res.writeHeader(header, options.overwriteHeaders[header]);
-                    }
-
-                    for(let header in proxyRes.headers){
-                        if(options.overwriteHeaders.hasOwnProperty(header) || !proxyRes.headers.hasOwnProperty(header)) continue;
-                        if(header === "date" || header === "content-length" || header === "transfer-encoding") continue;
-    
-                        if(typeof proxyRes.headers[header] === "string") res.writeHeader(header, proxyRes.headers[header]);
-                    }
-
-                    res.end(Buffer.concat(chunks));
-                })
-            });
-        });
-      
-        proxyReq.on('error', (e) => {
-            res.cork(() => {
-                res.writeStatus('500 Internal Server Error').end(`Proxy error: ${e.message}\nPowered by Akeno/${version}`);
-            })
-        });
-      
-        res.onData((chunk, isLast) => {
-            // proxyReq.write(chunk);
-            if (isLast) {
-                proxyReq.end();
-            }
-        });
-    }
-
     Backend.exposeToDebugger("proxyRouter", proxyReq)
 
     // Create server instances
@@ -724,7 +682,7 @@ function build(){
     app.ws('/*', wss)
     
     // Initialize WebServer
-    app.any('/*', (res, req) => resolve(res, req, true))
+    app.any('/*', (res, req) => resolve(res, req, Backend.isDev))
     
     app.listen(port, (listenSocket) => {
         if (listenSocket) {

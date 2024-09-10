@@ -5,7 +5,7 @@
 
 /*
 
-    Welcome to the Akeno (formerly ExtraGon) web backend!
+    Welcome to the Akeno web backend!
     This is an extension to Akeno/ExtraGon API that acts as a webserver handler.
     It features automation, neat application structure.. if you know, you know.
     Read more at https://lstv.space/akeno for information about its APIs.
@@ -225,7 +225,7 @@ server = {
 
                         let file;
 
-                        if(!file) file = files_try(path + url + ".html", path + url + "/index.html", path + url, path + "/" + (manifest.server && manifest.server.properties.fallback? manifest.server.properties.fallback[0]: url));
+                        if(!file) file = files_try(path + url + ".html", path + url + "/index.html", path + url, ...(manifest.server.properties.fallbackFiles? manifest.server.properties.fallbackFiles: []).map(file => path + url + file), path + "/" + (manifest.server && manifest.server.properties.fallback? manifest.server.properties.fallback[0]: url));
 
                         if(file) file = nodePath.normalize(file);
 

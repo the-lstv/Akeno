@@ -5,7 +5,7 @@ let fs;
 // That includes parsing configs, client code, and so on.
 
 
-function replaceObjects(code, dynamicObjects = {}, fill = false) {
+function assignObjects(code, dynamicObjects = {}, fill = false) {
     /*
     
         This is a speical parser made for clientside JavaScript code, which allows the server to dynamically expose an object or multiple to the client.
@@ -183,6 +183,152 @@ function replaceObjects(code, dynamicObjects = {}, fill = false) {
     push()
 
     return result
+}
+
+function replaceObjects(code, replacements) {
+
+    // FIXME: Needs improved parsing logic to choose when to replace
+
+    let keys = Object.keys(replacements);
+
+    if(!replacements || typeof replacements !== "object" || keys.length < 1) return code;
+
+    let output = '', i = -1, length = code.length;
+
+    // Optimization
+    let firstIndex = keys.map(key => key[0]);
+
+    let insideString = false, stringChar = '', insideSingleLineComment = false, insideMultiLineComment = false, insideRegex = false, insideTemplateStringInsert = false;
+
+    while (i < length) {
+        i++
+
+        let char = code[i];
+        let nextChar = code[i + 1];
+
+        if(!char) break;
+
+        if (insideString) {
+            if (char === stringChar && code[i - 1] !== '\\') {
+
+                insideString = false;
+
+            }
+            
+            // else if(stringChar === "`" && char === "$" && nextChar === "{" && code[i - 1] !== '\\'){
+
+            //     insideTemplateStringInsert = true
+            //     output += "${"
+            //     i++
+            //     continue
+
+            // }
+
+            output += char;
+
+            continue
+        }
+
+        // if(insideTemplateStringInsert){
+        //     if(char === "}"){
+        //         // FIXME: Bracket matching needed :(
+
+        //         insideTemplateStringInsert = false
+        //         output += "}";
+        //         continue
+        //     }
+
+        //     // Also match in template strings
+        //     if(find()) continue;
+
+        //     output += char;
+        //     continue
+        // }
+
+        if (insideRegex) {
+            if (char === "/" && code[i - 1] !== '\\') {
+                insideRegex = false;
+            }
+
+            output += char;
+            continue
+        }
+
+        if (insideSingleLineComment) {
+            if (char === '\n') {
+                insideSingleLineComment = false;
+            }
+            output += char;
+
+            continue
+        }
+
+        if (insideMultiLineComment) {
+            if (char === '*' && nextChar === '/') {
+                insideMultiLineComment = false;
+                output += '*/';
+                i++
+            } else {
+                output += char;
+            }
+
+            continue
+        }
+
+        if (char === '"' || char === "'" || char === '`') {
+            insideString = true;
+            stringChar = char;
+            output += char;
+
+            continue
+        }
+
+        if (char === '/') {
+
+            if(nextChar === '/'){
+                insideSingleLineComment = true;
+                output += '//';
+                i++
+                continue
+            }
+
+            if(nextChar === '*'){
+                insideMultiLineComment = true;
+                output += '/*';
+                i++
+                continue
+            }
+
+            insideRegex = true;
+            output += '/' + nextChar;
+            i++
+
+            continue
+        }
+
+        function find(){
+            let find = firstIndex.includes(char) && keys.find(key => code.substring(i, i + key.length) === key);
+    
+            if (
+                find &&
+                !/[a-zA-Z0-9_$]/.test(code[i - 1]) && // Make sure it's not part of a larger identifier
+                !/[a-zA-Z0-9_$:]/.test(code[i + find.length])   // Make sure it's not part of a larger identifier
+            ) {
+                output += replacements[find];
+                i += find.length - 1
+    
+                return true
+            }
+
+            return false
+        }
+
+        if(find()) continue;
+
+        output += char;
+    }
+
+    return output;
 }
 
 function parse(code, direct, sourcePath){
@@ -947,6 +1093,6 @@ function configTools(parsed){
     return tools
 }
 
-let _exports = {parse, stringify, merge, configTools, replaceObjects};
+let _exports = {parse, stringify, merge, configTools, assignObjects, replaceObjects};
 
 if(!globalThis.window) module.exports = _exports; else window.AkenoConfigParser = _exports;
