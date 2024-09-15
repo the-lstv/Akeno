@@ -158,20 +158,20 @@ main = {
             case "currency":
                 return backend.addon("currency")
 
-            case "remote":
+            case "remote": // to be deprecated
                 return backend.addon("remoteSync")
 
-            case "telemetry":
+            case "telemetry": // meh
                 return backend.addon("telemetry")
 
-            case "localcommands":
+            case "localcommands": // huh
                 return backend.addon("localCommands")
 
             case "quicc": case "qblaze":
                 return backend.addon("core/qblaze")
 
-            // case"mazec":
-            //     return backend.addon("mazec")
+            case "ssh":
+                return backend.addon("ssh-over-http")
 
             default:
                 let api = backend.apiExtensions[part];

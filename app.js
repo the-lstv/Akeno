@@ -347,6 +347,7 @@ function build(){
             if(continueUpgrade) res.upgrade({
                 uuid: uuid(),
                 url: req.getUrl(),
+                query: req.getQuery(),
                 host,
                 ip: res.getRemoteAddress(),
                 ipAsText: res.getRemoteAddressAsText(),
