@@ -16,6 +16,7 @@ let
     uuid = (require("uuid")).v4,    // UUID
     jwt = require('jsonwebtoken'),  // Web tokens
 
+
     ipc,
     { exec, spawn } = require('child_process'),
 
@@ -27,7 +28,7 @@ let
 
     // Config parser
     { parse, stringify, merge, configTools } = require("./core/parser.js"),
-    { proxyReq, proxyWebSocket, proxySFTP } = require("./core/proxy.js"),
+    { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy.js"),
 
     textEncoder = new TextEncoder,
     textDecoder = new TextDecoder
@@ -232,7 +233,7 @@ function shouldProxy(req, res, secured = false, ws = false, wsContext){
 
         if(!ws) return proxyReq(req, res, {port: 42069}), true;
     }
-    
+
     if(req.domain.startsWith("proxy.") || req.domain.startsWith("gateway_") || req.domain.startsWith("gateway.") || req.domain.startsWith("discord.")){
         let url,
             subdomain = req.domain.split(".")[0],
@@ -335,6 +336,46 @@ function build(){
                 return proxySFTP(req, res, context, "will-provide")
             }
 
+            if(req.domain.startsWith("node.")) {
+                return remoteNodeShell(req, res, context)
+            }
+
+            if(req.domain.startsWith("ffmpeg-proxy.")){
+                // let ws;
+
+                res.upgrade({
+                    handler: {
+                        open(_ws){
+                            // ws = _ws
+                        },
+
+                        message(ws, chunk, isBinary){
+                            // For WebSocket receivers
+                            // Backend.broadcast("akeno.ffmpeg.stream", chunk, isBinary, true)
+
+                            // For HTTP receivers
+                            for(let receiverID in ffmpegStreamReceivers) {if(typeof ffmpegStreamReceivers[receiverID] === "function") ffmpegStreamReceivers[receiverID](chunk)}
+                        },
+
+                        close(){
+
+                        }
+                    }
+                }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
+                return
+            }
+
+            // if(req.domain.startsWith("ffmpeg-receiver.")){
+            //     res.upgrade({
+            //         handler: {
+            //             open(ws){
+            //                 ws.subscribe("akeno.ffmpeg.stream")
+            //             },
+            //         }
+            //     }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
+            //     return
+            // }
+
 
             let segments = req.getUrl().split("/").filter(garbage => garbage), continueUpgrade = true;
             
@@ -378,6 +419,8 @@ function build(){
     }
 
     let version = Backend.config.valueOf("version") || "unknown";
+
+    let ffmpegStreamReceivers = [], ffmpegStreamReceiverID = 0;
 
     function resolve(res, req, secured, virtual) {
         total_hits++
@@ -423,6 +466,41 @@ function build(){
 
             // Handle proxied requests
             if(shouldProxy(req, res, secured)) return;
+
+            // if(req.domain.startsWith("ffmpeg-proxy.")){
+            //     res.onData((chunk, isLast) => {
+            //         console.log("Received chunk", chunk);
+                    
+            //         for(let receiverID in ffmpegStreamReceivers) {if(typeof ffmpegStreamReceivers[receiverID] === "function") ffmpegStreamReceivers[receiverID](chunk, isLast)}
+            //     });
+
+            //     res.onAborted(() => {
+            //         console.log('Stream aborted.');
+            //     });
+            //     return
+            // }
+
+            if(req.domain.startsWith("ffmpeg-receiver.")){
+                let id = ffmpegStreamReceiverID++;
+
+                res.writeHeaders({
+                    // 'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                    // 'Accept-Ranges': 'bytes',
+                    // 'Content-Length': chunk.,
+                    'Content-Type': 'audio/mpeg',
+                })
+
+                ffmpegStreamReceivers[id] = function(chunk, isLast){
+                    res.cork(() => {
+                        res.write(chunk)
+                    })
+                }
+
+                res.onAborted(() => {
+                    delete ffmpegStreamReceivers[id]
+                });
+                return
+            }
 
 
             res.corsHeaders = () => {
@@ -563,9 +641,11 @@ function build(){
                 stream.on('data', (chunk) => {
                     let buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength), lastOffset = res.getWriteOffset();
     
-                    // Try writing the chunk
-                    const [ok, done] = res.tryEnd(buffer, totalSize);
-    
+                    res.cork(() => {
+                        // Try writing the chunk
+                        const [ok, done] = res.tryEnd(buffer, totalSize);
+                    })
+                    
                     if (!done && !ok) {
                         // Backpressure handling
                         stream.pause();
@@ -635,7 +715,7 @@ function build(){
                 index++
                 return segments[index] || "";
             }
-    
+
             if(segments[0] === "___internal"){
                 // console.log(res.getRemoteAddressAsText()); // this does not get the text for some reason
                 Backend.addon("core/web").HandleInternal({segments, req, res})
