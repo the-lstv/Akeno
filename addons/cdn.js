@@ -245,6 +245,8 @@ api = {
 
                     case"file":
 
+                        // FIXME: This needs changes
+
                         if(!segments[0]){
                             return res.send(`{"success":false,"error":"This endpoint is currently not supported directly as for unstable behavior. Use /file/[hash][.format][?options] instead."}`, {'cache-control': "no-cache"}, 400)
                         }
@@ -295,31 +297,51 @@ api = {
                             return 
                         }
 
-                        if(fs.existsSync(filePath)){
-                            if(req.getQuery("size") && mimeType.startsWith("image")){
-                                let size = req.getQuery("size").split(",");
-                    
-                                if(size.length < 2) size[1] = size[0];
-                    
-                                size = size.map(value => Math.max(12, Math.min(+value, 1024)))
+                        if(req.getQuery("size") && mimeType.startsWith("image")){
+                            let size = req.getQuery("size").split(",");
+                
+                            if(size.length < 2) size[1] = size[0];
+                
+                            size = size.map(value => Math.max(12, Math.min(+value, 1024)))
 
-                                size[0] = +size[0]
-                                size[1] = +size[1]
-                    
-                                if(isNaN(size[0])) size[0] = null;
-                                if(isNaN(size[1])) size[1] = null;
-                    
-                                content = await sharp(filePath).resize(size[0] === 0 ? null : size[0], size[1] === 0 ? null : size[1], {fit: req.getQuery("fit") || "cover"}).webp({
-                                    quality: 80,
-                                    lossless: false
-                                }).toBuffer()
+                            size[0] = +size[0]
+                            size[1] = +size[1]
+                
+                            if(isNaN(size[0])) size[0] = null;
+                            if(isNaN(size[1])) size[1] = null;
+                
+                            content = await sharp(filePath).resize(size[0] === 0 ? null : size[0], size[1] === 0 ? null : size[1], {fit: req.getQuery("fit") || "cover"}).webp({
+                                quality: 80,
+                                lossless: false
+                            }).toBuffer()
+                        }
+
+                        send(content || filePath, 31536000, mimeType, content? false : true)
+                        return;
+                    break;
+
+                    case"archive":
+                        (() => {
+                            let file = segments.join("/"),
+                                extension = file.split(".").at(-1).toLowerCase(),
+                                filePath = Path + "/archive/" + segments.join("/"),
+                                mimeType = mime.getType(extension) || "text/plain",
+                                exists = fs.existsSync(filePath),
+                                content
+                            ;
+    
+                            if(!exists) {
+                                return error(43)
+                            }
+    
+                            if(fs.lstatSync(filePath).isDirectory()){
+                                send(fs.readdirSync(filePath))
+                                return
                             }
 
                             send(content || filePath, 31536000, mimeType, content? false : true)
                             return
-                        } else {
-                            return error(43)
-                        }
+                        })()
                         return;
                     break;
 
