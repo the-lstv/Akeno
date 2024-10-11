@@ -644,25 +644,26 @@ function build(){
                     res.cork(() => {
                         // Try writing the chunk
                         const [ok, done] = res.tryEnd(buffer, totalSize);
+
+                        if (!done && !ok) {
+                            // Backpressure handling
+                            stream.pause();
+        
+                            // Resume once the client is ready
+                            res.onWritable((offset) => {
+                                const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
+        
+                                if (done) {
+                                    stream.close();
+                                } else if (ok) {
+                                    stream.resume();
+                                }
+        
+                                return ok;
+                            });
+                        } else if (done) stream.close();
                     })
                     
-                    if (!done && !ok) {
-                        // Backpressure handling
-                        stream.pause();
-    
-                        // Resume once the client is ready
-                        res.onWritable((offset) => {
-                            const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
-    
-                            if (done) {
-                                stream.close();
-                            } else if (ok) {
-                                stream.resume();
-                            }
-    
-                            return ok;
-                        });
-                    } else if (done) stream.close();
                 });
     
                 stream.on('error', (err) => {

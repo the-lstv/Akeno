@@ -2,7 +2,8 @@
 
 etc/hits
 etc/generated
-/addons/data/
+/addons/data/*
+/addons/data/currencyCache.json
 
 cdn/metadata.cache.json
 cdn/ls

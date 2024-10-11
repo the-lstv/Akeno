@@ -117,7 +117,7 @@ function saveMetadata(){
 
 // CDN API:
 
-var STREAM_CHUNK_SIZE = 4_500000; // When streaming videos, how many bytes should a chunk have
+var STREAM_CHUNK_SIZE = 8_000000; // When streaming videos, how many bytes should a chunk have
 
 api = {
     Initialize(backend_){
