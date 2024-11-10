@@ -10,6 +10,7 @@ let
 
     app,
     SSLApp,
+    H3App,
 
     bcrypt = require("bcrypt"),     // Secure hashing
     crypto = require('crypto'),     // Cryptographic utils
@@ -224,7 +225,7 @@ let noCorsHeaders = {
 };
 
 
-function shouldProxy(req, res, secured = false, ws = false, wsContext){
+function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 
     if(!req.domain) req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
 
@@ -243,7 +244,7 @@ function shouldProxy(req, res, secured = false, ws = false, wsContext){
 
         // Handle special cases
         if(subdomain.startsWith("gateway_")){
-            reportedUrl = `http${secured? "s": ""}://${subdomain.replace("gateway_", "").replaceAll("_", ".")}/${reportedUrl}`
+            reportedUrl = `http${(flags && flags.secured)? "s": ""}://${subdomain.replace("gateway_", "").replaceAll("_", ".")}/${reportedUrl}`
         } else if(subdomain === "discord"){
             reportedUrl = `https://discord.com/${reportedUrl}`
         }
@@ -422,24 +423,34 @@ function build(){
 
     let ffmpegStreamReceivers = [], ffmpegStreamReceiverID = 0;
 
-    function resolve(res, req, secured, virtual) {
+    // Constants
+    const ssl_enabled = Backend.config.block("server").properties.enableSSL;
+    const h3_enabled = Backend.config.block("server").properties.enableH3;
+    const SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
+    const H3Port = (+ Backend.config.block("server").properties.h3Port) || 52003;
+
+    function resolve(res, req, flags, virtual) {
         total_hits++
         // if((total_hits - saved_hits) > 500) save_hits();
 
-        // Helper variables
+        // console.log(req)
+        if(flags && flags.h3){
+            return res.end("Hi")
+        }
 
+        // Helper variables
         if(virtual){
             if(virtual.method) req.getMethod = () => virtual.method
             if(virtual.path) req.getUrl = () => virtual.path
             if(virtual.domain) req.getHeader = header => header === "host"? virtual.domain: req.getHeader(header)
         }
 
-        req.method = req.getMethod().toUpperCase(); // Lowercase would be pretty but harder to adapt
+        req.method = req.getMethod && req.getMethod().toUpperCase(); // Lowercase would be pretty but harder to adapt
         req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
         // req.port = +req.getHeader("host").match(/:([0-9]+)/)[1];
 
         req.path = req.getUrl();
-        req.secured = secured; // If the communication is done over HTTP or HTTPS
+        req.secured = flags && !!flags.secured; // If the communication is done over HTTP or HTTPS
 
         if(!req.wasResolved){
 
@@ -463,9 +474,11 @@ function build(){
                 req.abort = true;
             })
 
+            
+
 
             // Handle proxied requests
-            if(shouldProxy(req, res, secured)) return;
+            if(shouldProxy(req, res, flags)) return;
 
             // if(req.domain.startsWith("ffmpeg-proxy.")){
             //     res.onData((chunk, isLast) => {
@@ -499,14 +512,23 @@ function build(){
                 res.onAborted(() => {
                     delete ffmpegStreamReceivers[id]
                 });
+
                 return
             }
-
+            
 
             res.corsHeaders = () => {
                 res .writeHeader('X-Powered-By', 'Akeno Server/' + version)
                     .writeHeaders(noCorsHeaders)
                     .writeHeader("Origin", req.domain)
+
+                if(h3_enabled){
+                    // EXPERIMENTAL: alt-svc header for HTTP3
+                    res.cork(() => {
+                        res.writeHeader("alt-svc", `h3=":${H3Port}"`)
+                    })
+                }
+
                 return res
             }
 
@@ -561,6 +583,19 @@ function build(){
                             }
 
                             if(req.hasFullBody) done(); else req.onFullData = done;
+
+                        },
+
+                        parts(){
+    
+                            function done(){
+                                let parts = uws.getParts(req.fullBody, req.contentType);
+    
+                                callback(parts)
+                            }
+
+                            if(req.hasFullBody) done(); else req.onFullData = done;
+
                         },
         
                         data(){
@@ -771,15 +806,31 @@ function build(){
             console.log(`[system] [ time:${Date.now()} ] > The Akeno server has started and is listening on port ${port}! Total hits so far: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${Date.now() - since_startup}ms`)
 
             // Configure SSL
-            if(Backend.config.block("server").properties.enableSSL) {
+            if(ssl_enabled) {
+
+
                 SSLApp = uws.SSLApp();
                 Backend.exposeToDebugger("uws_ssl", SSLApp)
 
-                let SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
+
+                if(h3_enabled){
+                    H3App = uws.H3App({
+                        key_file_name: '/etc/letsencrypt/live/lstv.space/privkey.pem',
+                        cert_file_name: '/etc/letsencrypt/live/lstv.space/fullchain.pem',
+                        passphrase: '1234'
+                    });
+    
+                    // HTTP3 doesn't have WebSockets, do not setup ws listeners.
+    
+                    H3App.any('/*', (res, req) => resolve(res, req, {secured: true, h3: true}))
+    
+                    Backend.exposeToDebugger("uws_h3", H3App)
+                }
+
 
                 SSLApp.ws('/*', wss)
-
-                SSLApp.any('/*', (res, req) => resolve(res, req, true))
+                SSLApp.any('/*', (res, req) => resolve(res, req, {secured: true}))
+                
 
                 // If sslRouter is defined
                 if(Backend.config.block("sslRouter")){
@@ -804,7 +855,7 @@ function build(){
                             })
     
                             // For some reason we still have to include a separate router like so:
-                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, true)).ws("/*", wss)
+                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, {secured: true})).ws("/*", wss)
                             // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
                             // A bit wasteful right? For every domain..
                         }
@@ -831,6 +882,14 @@ function build(){
                         console.log(`[system] Listening with SSL on ${SSLPort}!`)
                     } else Backend.log.error("[error] Could not start the SSL server! If you do not need SSL, you can ignore this, but it is recommended to remove it from the config. If you do need SSL, make sure nothing is taking the port you configured (" +SSLPort+ ")")
                 });
+
+                if(h3_enabled){
+                    H3App.listen(H3Port, (listenSocket) => {
+                        if (listenSocket) {
+                            console.log(`[system] HTTP3 Listening with SSL on ${H3Port}!`)
+                        } else Backend.log.error("[error] Could not start the HTTP3 server! If you do not need HTTP3, you can ignore this, but it is recommended to remove it from the config. Make sure nothing is taking the port you configured for H3 (" +H3Port+ ")")
+                    });
+                }
             }
         } else Backend.log.error("[error] Could not start the server!")
     });

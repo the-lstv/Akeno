@@ -12,8 +12,13 @@ server {
     # The port to use for listening
     port: 80;
 
+    # Enable SSL
     # enableSSL;
-    # sslPort: 443;
+    sslPort: 443;
+
+    # Enable HTTP3 - EXPERIMENTAL
+    # enableH3;
+    h3Port: 443;
 
     # Enable server; Enable sub-host
     enableBuild;
