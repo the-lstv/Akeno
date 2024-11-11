@@ -332,6 +332,8 @@ function replaceObjects(code, replacements) {
 }
 
 function parse(code, direct, sourcePath){
+    // WARNING: This is about to be deprecated soon
+
     code = code.trim();
 
     let tokens = [],
