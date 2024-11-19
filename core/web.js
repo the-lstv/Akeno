@@ -126,6 +126,641 @@ function checkSupportedBrowser(userAgent, properties) {
 }
 
 
+
+
+let latest_ls_version = fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8").trim(),
+    ls_url = null // Is set in initialization
+;
+
+const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- This is automatically generated code -->\n<html lang="en">`);
+
+const parser_regex = {
+    keyword: /[\w-]/,
+    plain_value: /[\w-</>.*]/,
+    stringChar: /["'`]/,
+    whitespace: /[\s\n\r\t]/,
+    singleton: ["area", "base", "br", "col", "command", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"]
+}
+
+function map_resource(link, local_path){
+    if(local_path && !link.startsWith("http")){
+        const assetPath = local_path + "/" + link;
+
+        if(!fs.existsSync(assetPath)){
+            server.log.warn(`Application ${app.basename} has an invalid (not found) resource ("${assetPath}")`);
+            return null
+        }
+
+        link += `${link.includes("?")? "&": "?"}mtime=${(fs.statSync(assetPath).mtimeMs).toString(36)}`
+    }
+
+    return link
+}
+
+function parse_html_content(options){
+    const htmlContent = options.content? options.content: options.file? fs.readFileSync(options.file, "utf8"): "";
+
+    const output = [ null ]; // null for the header
+
+    let head_string_index = null, head = "";
+
+    let now = performance.now();
+
+    let currentTag = null;
+
+    if(!options.app) options.app = {};
+
+    const misc = {
+        default_attributes: options.default_attributes || {
+            body: {}
+        }
+    }
+
+    function push(data){
+        if(!data) return;
+
+        if(typeof data === "string"){
+            if(options.compress){
+                data = (data.startsWith(" ")? " " : "") + data.trim() + (data.endsWith(" ")? " " : "");
+                if(data.length === 0) return;
+            }
+            data = Buffer.from(data)
+        }
+
+        if(data instanceof Buffer){
+
+            const last = output.at(-1);
+            if(Array.isArray(last)) {
+                last.push(data)
+            } else {
+                output.push([data])
+            }
+
+        } else output.push(data);
+    }
+
+    // This gets called once a block finishes parsing, with the block in question.
+    function process_block(block){
+        console.log(block);
+
+        switch(block.name) {
+            case "no-init": case "plain":
+                options.plain = true
+                break;
+
+            case "dynamic":
+                options.dynamic = true
+                break;
+
+            case "import":
+                if(!options.app.path) break;
+
+                for(let item of block.attributes){
+                    try {
+                        push(parse_html_content({file: options.app.path + "/" + item, plain: true, app: options.app, compress: !!options.compress, url: options.url || null}))
+                    } catch (error) {
+                        console.warn("Failed to import: importing " + item, error.toString())
+                    }
+                }
+                break;
+
+            case "importRaw":
+                if(!options.app.path) break;
+
+                for(let item of block.attributes){
+                    try {
+                        let content = fs.readFileSync(options.app.path + "/" + item, "utf8");
+
+                        push(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
+                    } catch (error) {
+                        console.warn("Failed to import (raw): importing " + item, error.toString())
+                    }
+                }
+                break;
+
+            case "manifest":
+                if(block.properties.title) {
+                    push(`<title>${block.properties.title[0]}</title>`)
+                }
+
+                if(block.properties.favicon) {
+                    const baseName = nodePath.basename(block.properties.favicon[0]);
+                    let extension = baseName, lastIndex = baseName.lastIndexOf('.');
+
+                    if (lastIndex !== -1) {
+                        extension = baseName.slice(lastIndex + 1);
+                    }
+
+                    let mimeType = (mime && mime.getType && mime.getType(extension)) || "image/x-icon";
+
+                    push(`<link rel="shortcut icon" href="${block.properties.favicon[0]}" type="${mimeType}">`)
+                }
+
+                if(block.properties.theme) {
+                    misc.default_attributes.body["ls-theme"] = block.properties.theme[0]
+                }
+
+                if(block.properties.style) {
+                    misc.default_attributes.body["ls-style"] = block.properties.style[0]
+                }
+
+                if(block.properties.accent) {
+                    misc.default_attributes.body["ls-accent"] = block.properties.accent[0]
+                }
+                break;
+
+            case "resources":
+                if(block.properties["ls-js"]){
+                    misc.default_attributes.body.ls = "";
+            
+                    let url = `${ls_url}${Backend.isDev? "js" : "js.min"}/${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}`;
+                    
+                    head += `<script src="${url}"></script>`;
+                }
+            
+                if(block.properties["ls-css"]){
+                    misc.default_attributes.body.ls = "";
+
+                    let url = `${ls_url}css/${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}`;
+                    
+                    head += `<link rel=stylesheet href="${url}">`
+                }
+
+                if(block.properties.js) {
+                    for(let resource of block.properties.js) {
+                        const link = map_resource(resource, options.app.path);
+                        if(link) head += `<script src="${link}"></script>`
+                    }
+                }
+
+                if(block.properties.css) {
+                    for(let resource of block.properties.css) {
+                        const link = map_resource(resource, options.app.path);
+                        if(link) head += `<link rel=stylesheet href="${link}"></link>`
+                    }
+                }
+
+                if(block.properties["bootstrap-icons"] || (block.properties.icons && block.properties.icons.includes("bootstrap"))) {
+                    head += `<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"></link>`
+                }
+
+                if(block.properties["fa-icons"] || (block.properties.icons && block.properties.icons.includes("fa"))) {
+                    head += `<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.0/css/all.min.css"></link>`
+                }
+
+                if(block.properties.fonts) {
+                    head += `<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin><link rel=stylesheet href="${`https://fonts.googleapis.com/css2?${block.properties.fonts.map(font => {
+                        return "family=" + font.replaceAll(" ", "+") + ":wght@100;200;300;400;500;600;700;800;900"
+                    }).join("&")}&display=swap`}">`
+                }
+
+                break;
+
+            default:
+                if(options.dynamic) push(block)
+        }
+
+    }
+
+    const parser = new Parser({
+        onopentag(name, attribs) {
+            let result = "<";
+
+            if(name === "page") name = "body"; // Backwards-compatibility with old, outdated parser
+
+            currentTag = name;
+
+            if(attribs.class) attribs.class; else attribs.class = "";
+
+            if (name.includes('%')) [name, attribs.id] = name.split('%'); else if (name.includes('#')) [name, attribs.id] = name.split('#');
+
+            if (name.includes('.')) {
+                const parts = name.split('.');
+                name = parts[0];
+                attribs.class += " " + parts.slice(1).join(' ');
+            }
+
+            result += name;
+
+            // Assign default attributes
+            if(misc.default_attributes[name]){
+                Object.assign(attribs, misc.default_attributes[name])
+            }
+
+            for(let attr in attribs) {
+                if (attr === "class" || attr === "id") continue;
+
+                if (attr.startsWith('.')) {
+                    attribs.class += " " + attr.slice(1).split(".").join(" ")
+                    continue
+                }
+
+                if (attr.startsWith('%') || attr.startsWith('#')) {
+                    attribs.id = attr.slice(1)
+                    continue
+                }
+
+                let value = attribs[attr];
+
+                if(value){
+                    if (value.includes(`"`) && value.includes(`'`)) {
+                        value = `"${value.replace(/"/g, '&quot;')}"`;
+                    } else if (value.includes('"')) {
+                        value = `'${value}'`;
+                    } else if (value.includes(" ") || value.includes("'")) {
+                        value = `"${value}"`;
+                    }
+
+                    result += ` ${attr}=${value}`;
+                    continue
+                }
+
+                result += " " + attr;
+            }
+
+            if (attribs.class) result += ` class="${attribs.class.trim()}"`;
+            if (attribs.id) result += ` id=${attribs.id.replaceAll(" ", "")}`;
+
+            push(result + ">");
+
+            if(name === "head" && head_string_index === null) {
+                head_string_index = output.push(null) -1
+            }
+        },
+
+        ontext(text) {
+
+            // Inline script/style compression
+            switch (currentTag){
+                case "script":
+                    if(text) push(options.compress? UglifyJS.minify(text).code || text: text)
+                    return;
+
+                case "style":
+                    if(text) push(options.compress? CleanCSS.minify(text).styles || text: text)
+                    return;
+            }
+
+
+            // gee this parser sucks ass
+            // still sucks much less than the one in parser.js
+
+
+            let blockPosition = text.indexOf("@");
+
+            // Nothing to do, so just skip parsing
+            if(blockPosition === -1) return push(text);
+
+            function parseAt(initialBlockStart){
+                let currentPosition = initialBlockStart;
+
+                // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value)
+                let stage = 0, next_stage = 0, parsedString = null, type = 1, confirmed = false, stringChar = null, block = {
+                    name: "",
+                    attributes: [],
+                    properties: {}
+                }
+
+                let parsingValueStart = currentPosition, parsingValueLength = 0, parsingValueSequenceBroken = false;
+
+                function exit(cancel){
+                    blockPosition = text.indexOf("@", currentPosition);
+                    
+                    if(cancel) currentPosition = initialBlockStart; else { currentPosition ++; process_block(block) };
+
+                    push(text.slice(currentPosition, blockPosition !== -1? blockPosition: text.length));
+
+                    if(blockPosition !== -1) parseAt(blockPosition); else {
+                        return
+                    }
+                }
+
+                function value_start(length = 0, positionOffset = 0){
+                    parsingValueStart = currentPosition + positionOffset;
+                    parsingValueLength = length;
+                    parsingValueSequenceBroken = false;
+                    parsedString = null;
+                }
+
+                function get_value(){
+                    return text.slice(parsingValueStart, parsingValueStart + parsingValueLength)
+                }
+
+                let last_key;
+    
+                while(currentPosition < text.length){
+                    currentPosition ++;
+    
+                    const char = text[currentPosition];
+
+                    // console.log("parsing at", currentPosition, "stage:", stage, "type:", type, char);
+
+                    if(type === 2) {
+                        // currentPosition += (text.indexOf(stringChar, currentPosition) - currentPosition) -1;
+
+                        if(char === stringChar && text[currentPosition -1] !== "\\"){
+                            type = 0
+
+                            // if(stage !== next_stage) currentPosition--;
+
+                            stage = next_stage
+
+                            parsedString = get_value()
+                        } else parsingValueLength ++
+                    } else
+
+                    if(type === 3) {
+                        if(!parser_regex.plain_value.test(char)){
+                            type = 0
+                            stage = next_stage
+                            currentPosition--
+
+                            parsedString = get_value()
+                        } else parsingValueLength ++
+                    } else
+
+                    // Also skip whitespace when possible.
+                    if(type !== 0 || !parser_regex.whitespace.test(char)) switch(stage){
+
+                        case 0:
+                            if(!/[\s\n\r\t\w({-]/.test(char)) return exit(true);
+
+                            parsingValueLength ++;
+
+                            if(!parser_regex.keyword.test(char)){
+                                type = 0;
+                                stage = 0.5;
+                                currentPosition --
+                            }
+                            break;
+
+
+
+                        case 0.5:
+                            if(!/[({]/.test(char)) return exit(true);
+
+                            stage = char === "("? 1: 4;
+                            block.name = get_value().replace("@", "")
+
+                            break;
+
+
+                        // Attribute
+                        case 1:
+                            if(char === ")" || char === ","){
+                                type = 0
+                                if(parsedString) block.attributes.push(parsedString.trim())
+                                if(char === ")") stage = 3;
+                                break;
+                            }
+
+                            if(parser_regex.stringChar.test(char)){
+                                stringChar = char
+                                type = 2
+
+                                value_start(0, 1)
+
+                                next_stage = 1
+                            } else if (parser_regex.plain_value.test(char)){
+                                type = 3
+
+                                value_start(1)
+
+                                next_stage = 1
+                            } else return exit(true)
+
+                            break
+
+
+                        // Before a block
+                        case 3:
+                            if(!/[;{]/.test(char)) return exit(true);
+
+                            if(char === ";"){
+                                return exit()
+                            }
+
+                            stage = 4
+
+                            break
+
+
+                        // Looking for a keyword
+                        case 4:
+                            if(char === "}"){
+                                return exit()
+                            }
+
+                            if(!parser_regex.keyword.test(char)) return exit(true);
+
+                            stage = 5
+                            type = 1
+
+                            value_start(1)
+                            break
+
+
+                        // Keyword
+                        case 5:
+                            if(!parser_regex.keyword.test(char)){
+                                if(parser_regex.whitespace.test(char)) {
+                                    parsingValueSequenceBroken = true
+                                    break
+                                }
+
+                                const key = get_value().trim()
+
+                                type = 0
+
+                                if(char === ";" || char === "}") {
+
+                                    block.properties[key] = [true]
+                                    stage = 4
+
+                                    if(char === "}"){
+                                        return exit()
+                                    }
+
+                                } else if (char === ":") {
+
+                                    last_key = key
+                                    parsedString = null
+                                    stage = 6
+
+                                } else return exit(true);
+                            } else {
+                                if(parsingValueSequenceBroken) {
+                                    return exit(true)
+                                }
+
+                                parsingValueLength ++
+                            }
+
+                            break;
+
+
+                        // Start of a value
+                        case 6:
+
+                            // Push values
+                            if(parsedString){
+                                // if(Array.isArray(block.properties[last_key])) {
+                                //     block.properties[last_key].push(parsedString)
+                                // } else if(block.properties[last_key]) {
+                                //     block.properties[last_key] = [block.properties[last_key], parsedString]
+                                // } else {
+                                //     block.properties[last_key] = parsedString
+                                // }
+
+                                if(block.properties[last_key]) {
+                                    block.properties[last_key].push(parsedString)
+                                } else {
+                                    block.properties[last_key] = [parsedString]
+                                }
+
+                                parsedString = null
+                            }
+
+                            if(char === ","){
+
+                                type = 0
+                                stage = 6;
+                                
+                            } else if(char === ";"){
+
+                                type = 0
+                                stage = 4;
+
+                            } else if(char === "}"){
+
+                                return exit()
+
+                            } else {
+                                if(parser_regex.stringChar.test(char)){
+                                    stringChar = char
+                                    type = 2
+    
+                                    value_start(0, 1)
+    
+                                    next_stage = 6
+                                } else if (parser_regex.plain_value.test(char)){
+                                    type = 3
+    
+                                    value_start(1)
+    
+                                    next_stage = 6
+                                } else return exit(true)
+                            };
+
+                            break;
+                    }
+                }
+
+                if(!confirmed) return exit(true);
+
+                exit()
+            }
+
+            parseAt(blockPosition)
+        },
+
+        onclosetag(name) {
+            if(parser_regex.singleton.indexOf(name) !== -1) return;
+
+            push(`</${name}>`);
+        }
+    }, {
+        lowerCaseAttributeNames: false
+    });
+
+    parser.write(htmlContent);
+    parser.end();
+
+    if(!options.plain) {
+        output[0] = options.header || html_header;
+
+        if(head){
+            if(head_string_index !== null) output[head_string_index] = Buffer.from(head); else output[0] = Buffer.concat([output[0], Buffer.from(`<head>${head}</head>`)]);
+        }
+    
+        push("</html>");
+    }
+
+    console.log(performance.now() - now);
+
+    // Finally, condense buffers and return.
+    return condense_parsed_output(output, options.dynamic);
+}
+
+function condense_parsed_output(data, allow_dynamic_content) {
+    let bufferGroup = [];
+
+    if(!allow_dynamic_content){
+        let length = 0;
+
+        for(let item of data){
+            if (item instanceof Buffer) {
+                bufferGroup.push(item);
+                length += item.length
+            } else if (Array.isArray(item)) {
+                for(let _item of item){
+                    if (_item instanceof Buffer) {
+                        bufferGroup.push(_item);
+                        length += _item.length
+                    }
+                }
+            }
+        }
+
+        data = null;
+
+        return Buffer.concat(bufferGroup)
+    }
+
+    let flattenedData = [];
+    
+    for (const item of data) {
+        if (!item) continue;
+
+        if (Array.isArray(item)) {
+            for (const subItem of item) {
+                if (subItem instanceof Buffer) {
+                    bufferGroup.push(subItem);
+                } else {
+                    if (bufferGroup.length > 0) {
+                        flattenedData.push(Buffer.concat(bufferGroup));
+                        bufferGroup = [];
+                    }
+
+                    flattenedData.push(subItem);
+                }
+            }
+
+        } else if (item instanceof Buffer) {
+
+            bufferGroup.push(item);
+
+        } else {
+
+            if (bufferGroup.length > 0) {
+                flattenedData.push(Buffer.concat(bufferGroup));
+                bufferGroup = [];
+            }
+
+            flattenedData.push(item);
+
+        }
+    }
+
+    if (bufferGroup.length > 0) {
+        flattenedData.push(Buffer.concat(bufferGroup));
+    }
+
+    return flattenedData;
+}
+
+
+
 // Section: request handling
 server = {
     Initialize(Backend_){
@@ -133,6 +768,8 @@ server = {
         server.Reload(true)
 
         mime = Backend.mime;
+
+        ls_url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/`
     },
     
     async Reload(firstTime){
@@ -244,12 +881,15 @@ server = {
                         // TODO: Extend this functionality
                         if(fs.statSync(file).isDirectory()){
 
-                            res.send("You have landed in " + url + " - which is a directory - and there is no support for browsing this yet.", headers);
+                            res.send("You have landed in " + url + " - which is a directory.", headers);
 
                         } else {
 
+                            // Temporary caching system, until uWS suppports low-level optimised cache on the C++ layer.
+                            // Once that support is done, I will implement that
+
                             // Check if the file exists in cache and has not been changed since
-                            let cache = Backend.isDev ? 1 : cachedFile(file);
+                            let cache = !Backend.isDev ? 1 : cachedFile(file);
 
                             const baseName = nodePath.basename(file);
                             let extension = baseName, lastIndex = baseName.lastIndexOf('.');
@@ -258,15 +898,13 @@ server = {
                                 extension = baseName.slice(lastIndex + 1);
                             }
 
-                            // Why the extra mime checks? Because the libarary is total unpredictable crap that sometimes exists and sometimes doesnt. Why? No clue.
-                            // Yes, it could be that I am using an older version, but that is because the @4 and up switched to MJS, which I really do not understand the reason for, and thus I can not use it, since I refuse MJS.
                             let mimeType = (mime && mime.getType && mime.getType(extension)) || "text/plain";
 
                             headers['content-type'] = `${mimeType}; charset=UTF-8`;
                             headers['cache-control'] = `public, max-age=${cacheByFile[extension] || cacheByFile.default}`;
                             headers['x-content-type-options'] = "nosniff";
                             
-                            if(cache instanceof Buffer) {
+                            if(cache instanceof Buffer || typeof cache === "string") {
                                 // Great, content is cached and up to date, lets send the cache:
 
                                 res.send(cache, headers)
@@ -274,46 +912,32 @@ server = {
                             }
 
                             if(cache !== 1) server.log.warn("Cached data were wrong or empty (serving \""+file+"\"), did you update them correctly? Note: forcing cache reload!");
-                            
+
                             let content;
-                            if(["html", "js", "css"].includes(extension)){
 
-                                // FIXME: Temporary
+                            switch(extension){
+                                case "html":
+                                    content = parse_html_content({ url, file, app, compress: true })
+                                break;
 
-                                switch(extension){
-                                    case "html":
-                                        content = parse_html_content({url, file, app})
-                                    break;
+                                case "css":
+                                    content = fs.readFileSync(file, "utf8");
+                                    content = Buffer.from(CleanCSS.minify(content).styles || content)
+                                break;
 
-                                    case "css":
-                                        content = fs.readFileSync(file, "utf8");
-                                        content = Buffer.from(CleanCSS.minify(content).styles || content)
-                                    break;
+                                case "js":
+                                    content = fs.readFileSync(file, "utf8");
+                                    content = Buffer.from(UglifyJS.minify(content).code || content)
+                                break;
 
-                                    case "js":
-                                        content = fs.readFileSync(file, "utf8");
-
-                                        // I dont know, should this be deprecated?
-                                        content = content.replace(`Akeno.randomSet`, `["${Array.from({length: 4}, () => require('crypto').randomBytes(16).toString('base64').replaceAll("=", "")).join('","')}"]`)
-
-                                        content = Buffer.from(UglifyJS.minify(content).code || content) // Try to compres the file and fallback to the original content
-                                    break;
-                                }
-
-                                res.send(content, headers)
-                                updateCache(file, content)
-                                return
-
-                            } else {
-
-                                // res.stream(fs.createReadStream(file));
-                                content = fs.readFileSync(file);
-
-                                res.send(content, headers)
-                                if(content.length < max_cache_size) updateCache(file, content)
-                                return
-
+                                default:
+                                    // res.stream(fs.createReadStream(file));
+                                    content = fs.readFileSync(file);
                             }
+
+                            res.send(content, headers)
+                            if(content.length < max_cache_size) updateCache(file, content)
+                            return
                         }
 
                     } catch(error) {
@@ -540,475 +1164,5 @@ server = {
     },
 }
 
-
-// Section: functions
-
-let latest_ls_version = fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8").trim();
-
-
-
-const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- This is automatically generated code -->\n<html lang="en">`);
-
-const parser_regex = {
-    keyword: /[\w-]/,
-    plain_value: /[\w-</>.]/,
-    stringChar: /["'`]/,
-    whitespace: /[\s\n\r\t]/
-}
-
-function parse_html_content(options){
-    const htmlContent = options.content? options.content: options.file? fs.readFileSync(options.file, "utf8"): "";
-
-    const output = [ null ]; // null for the header
-
-    let head_string_index = null, head = "";
-
-    let now = performance.now();
-
-    let currentTag = null;
-
-    function push(data){
-        if(!data) return;
-
-        if(typeof data === "string"){
-            data = data.trim();
-            if(data.length === 0) return;
-            data = Buffer.from(data)
-        }
-
-        if(data instanceof Buffer){
-
-            const last = output.at(-1);
-            if(Array.isArray(last)) {
-                last.push(data)
-            } else {
-                output.push([data])
-            }
-
-        } else output.push(data);
-    }
-
-    // This gets called once a block finishes parsing, with the block in question.
-    function process_block(block){
-        console.log(block);
-
-        if(options.dynamic) push(block)
-    }
-
-    const parser = new Parser({
-        onopentag(name, attribs) {
-            let result = "<";
-
-            currentTag = name;
-
-            if(attribs.class) attribs.class; else attribs.class = "";
-
-            if (name.includes('%')) [name, attribs.id] = name.split('%'); else if (name.includes('#')) [name, attribs.id] = name.split('#');
-
-            if (name.includes('.')) {
-                const parts = name.split('.');
-                name = parts[0];
-                attribs.class += " " + parts.slice(1).join(' ');
-            }
-
-            result += name;
-
-            for(let attr in attribs) {
-                if (attr === "class" || attr === "id") continue;
-
-                if (attr.startsWith('.')) {
-                    attribs.class += " " + attr.slice(1).split(".").join(" ")
-                    continue
-                }
-
-                if (attr.startsWith('%') || attr.startsWith('#')) {
-                    attribs.id = attr.slice(1)
-                    continue
-                }
-
-                let value = attribs[attr];
-
-                if(value){
-                    if (value.includes(`"`) && value.includes(`'`)) {
-                        value = `"${value.replace(/"/g, '&quot;')}"`;
-                    } else if (value.includes(" ")) {
-                        value = `"${value}"`;
-                    }
-
-                    result += ` ${attr}=${value}`;
-                    continue
-                }
-
-                result += " " + attr;
-            }
-
-            if (attribs.class) result += ` class="${attribs.class.trim()}"`;
-            if (attribs.id) result += ` id="${attribs.id}"`;
-
-            push(result + ">");
-
-            if(name === "head" && head_string_index === null) {
-                head_string_index = output.push(null) -1
-            }
-        },
-
-        ontext(text) {
-
-            // Inline script/style compression
-            switch (currentTag){
-                case "script":
-                    if(text) push(options.compresss? UglifyJS.minify(text).code || text: text)
-                    return;
-
-                case "style":
-                    if(text) push(options.compresss? CleanCSS.minify(text).styles || text: text)
-                    return;
-            }
-
-
-            // gee this parser sucks ass
-            // still sucks much less than the one in parser.js
-
-
-            let blockPosition = text.indexOf("@");
-
-            // Nothing to do, so just skip parsing
-            if(blockPosition === -1) return push(text);
-
-            function parseAt(initialBlockStart){
-                let currentPosition = initialBlockStart;
-
-                // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value)
-                let stage = 0, next_stage = 0, parsedString = null, type = 1, confirmed = false, stringChar = null, block = {
-                    name: "",
-                    attributes: [],
-                    properties: {}
-                }
-
-                let parsingValueStart = currentPosition, parsingValueLength = 0, parsingValueSequenceBroken = false;
-
-                function exit(cancel){
-                    blockPosition = text.indexOf("@", currentPosition);
-                    
-                    if(cancel) currentPosition = initialBlockStart; else { currentPosition ++; process_block(block) };
-
-                    push(text.slice(currentPosition, blockPosition !== -1? blockPosition: text.length));
-
-                    if(blockPosition !== -1) parseAt(blockPosition); else {
-                        return
-                    }
-                }
-
-                function value_start(length = 0, positionOffset = 0){
-                    parsingValueStart = currentPosition + positionOffset;
-                    parsingValueLength = length;
-                    parsingValueSequenceBroken = false;
-                    parsedString = null;
-                }
-
-                function get_value(){
-                    return text.slice(parsingValueStart, parsingValueStart + parsingValueLength)
-                }
-
-                let last_key;
-    
-                while(currentPosition < text.length){
-                    currentPosition ++;
-    
-                    const char = text[currentPosition];
-
-                    // console.log("parsing at", currentPosition, "stage:", stage, "type:", type, char);
-
-                    if(type === 2) {
-                        // currentPosition += (text.indexOf(stringChar, currentPosition) - currentPosition) -1;
-
-                        if(char === stringChar && text[currentPosition -1] !== "\\"){
-                            type = 0
-
-                            // if(stage !== next_stage) currentPosition--;
-
-                            stage = next_stage
-
-                            parsedString = get_value()
-                        } else parsingValueLength ++
-                    } else
-
-                    if(type === 3) {
-                        if(!parser_regex.plain_value.test(char)){
-                            type = 0
-                            stage = next_stage
-                            currentPosition--
-
-                            parsedString = get_value()
-                        } else parsingValueLength ++
-                    } else
-
-                    // Also skip whitespace when possible.
-                    if(type !== 0 || !parser_regex.whitespace.test(char)) switch(stage){
-
-                        case 0:
-                            if(!/[\s\n\r\t\w({]/.test(char)) return exit(true);
-
-                            parsingValueLength ++;
-
-                            if(!parser_regex.keyword.test(char)){
-                                type = 0;
-                                stage = 0.5;
-                                currentPosition --
-                            }
-                            break;
-
-
-
-                        case 0.5:
-                            if(!/[({]/.test(char)) return exit(true);
-
-                            stage = char === "("? 1: 4;
-                            block.name = get_value().replace("@", "")
-
-                            break;
-
-
-                        // Attribute
-                        case 1:
-                            if(char === ")" || char === ","){
-                                type = 0
-                                block.attributes.push(parsedString.trim())
-                                if(char === ")") stage = 3;
-                                break;
-                            }
-
-                            if(parser_regex.stringChar.test(char)){
-                                stringChar = char
-                                type = 2
-
-                                value_start(0, 1)
-
-                                next_stage = 1
-                            } else if (parser_regex.plain_value.test(char)){
-                                type = 3
-
-                                value_start(1)
-
-                                next_stage = 1
-                            } else return exit(true)
-
-                            break
-
-
-                        // Before a block
-                        case 3:
-                            if(!/[;{]/.test(char)) return exit(true);
-
-                            if(char === ";"){
-                                return exit()
-                            }
-
-                            stage = 4
-
-                            break
-
-
-                        // Looking for a keyword
-                        case 4:
-                            if(char === "}"){
-                                return exit()
-                            }
-
-                            if(!parser_regex.keyword.test(char)) return exit(true);
-
-                            stage = 5
-                            type = 1
-
-                            value_start(1)
-                            break
-
-
-                        // Keyword
-                        case 5:
-                            if(!parser_regex.keyword.test(char)){
-                                if(parser_regex.whitespace.test(char)) {
-                                    parsingValueSequenceBroken = true
-                                    break
-                                }
-
-                                const key = get_value().trim()
-
-                                type = 0
-
-                                if(char === ";" || char === "}") {
-
-                                    block.properties[key] = true
-                                    stage = 4
-
-                                    if(char === "}"){
-                                        return exit()
-                                    }
-
-                                } else if (char === ":") {
-
-                                    last_key = key
-                                    parsedString = null
-                                    stage = 6
-
-                                } else return exit(true);
-                            } else {
-                                if(parsingValueSequenceBroken) {
-                                    return exit(true)
-                                }
-
-                                parsingValueLength ++
-                            }
-
-                            break;
-
-
-                        // Start of a value
-                        case 6:
-
-                            // Push values
-                            if(parsedString){
-                                if(Array.isArray(block.properties[last_key])) {
-                                    block.properties[last_key].push(parsedString)
-                                } else if(block.properties[last_key]) {
-                                    block.properties[last_key] = [block.properties[last_key], parsedString]
-                                } else {
-                                    block.properties[last_key] = parsedString
-                                }
-
-                                parsedString = null
-                            }
-
-                            if(char === ","){
-
-                                type = 0
-                                stage = 6;
-                                
-                            } else if(char === ";"){
-
-                                type = 0
-                                stage = 4;
-
-                            } else if(char === "}"){
-
-                                return exit()
-
-                            } else {
-                                if(parser_regex.stringChar.test(char)){
-                                    stringChar = char
-                                    type = 2
-    
-                                    value_start(0, 1)
-    
-                                    next_stage = 6
-                                } else if (parser_regex.plain_value.test(char)){
-                                    type = 3
-    
-                                    value_start(1)
-    
-                                    next_stage = 6
-                                } else return exit(true)
-                            };
-
-                            break;
-                    }
-                }
-
-                if(!confirmed) return exit(true);
-
-                exit()
-            }
-
-            parseAt(blockPosition)
-        },
-
-        onclosetag(name) {
-            push(`</${name}>`);
-        }
-    });
-
-    parser.write(htmlContent);
-    parser.end();
-
-    output[0] = html_header;
-
-    if(head){
-        if(head_string_index !== null) output[head_string_index] = head; else output[0] += `<head>${head}</head>`;
-    }
-
-    push("</html>");
-
-    console.log(performance.now() - now);
-
-    // Finally, condense buffers and return.
-    return condense_parsed_output(output, options.dynamic);
-}
-
-function condense_parsed_output(data, allow_dynamic_content) {
-    let bufferGroup = [];
-
-    if(!allow_dynamic_content){
-        let length = 0;
-
-        for(let item of data){
-            if (item instanceof Buffer) {
-                bufferGroup.push(item);
-                length += item.length
-            } else if (Array.isArray(item)) {
-                for(let _item of item){
-                    if (_item instanceof Buffer) {
-                        bufferGroup.push(_item);
-                        length += _item.length
-                    }
-                }
-            }
-        }
-
-        data = null;
-
-        return Buffer.concat(bufferGroup)
-    }
-
-    let flattenedData = [];
-    
-    for (const item of data) {
-        if (!item) continue;
-
-        if (Array.isArray(item)) {
-            for (const subItem of item) {
-                if (subItem instanceof Buffer) {
-                    bufferGroup.push(subItem);
-                } else {
-                    if (bufferGroup.length > 0) {
-                        flattenedData.push(Buffer.concat(bufferGroup));
-                        bufferGroup = [];
-                    }
-
-                    flattenedData.push(subItem);
-                }
-            }
-
-        } else if (item instanceof Buffer) {
-
-            bufferGroup.push(item);
-
-        } else {
-
-            if (bufferGroup.length > 0) {
-                flattenedData.push(Buffer.concat(bufferGroup));
-                bufferGroup = [];
-            }
-
-            flattenedData.push(item);
-
-        }
-    }
-
-    if (bufferGroup.length > 0) {
-        flattenedData.push(Buffer.concat(bufferGroup));
-    }
-
-    return flattenedData;
-}
 
 module.exports = server
