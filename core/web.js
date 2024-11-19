@@ -1,37 +1,12 @@
 
 
-
-
-
 /*
 
     Welcome to the Akeno web backend!
-    This is an extension to Akeno/ExtraGon API that acts as a webserver handler.
-    It features automation, neat application structure.. if you know, you know.
-    Read more at https://lstv.space/akeno for information about its APIs.
+    This is an extension to Akeno created for static/dynamic web application handling,
+    optimized for performance, with on-the-fly code compression, smart caching etc.
 
-    Now more to the actual library.
-    It is spliced into a few sections; global variables, the API handler and content parser.
-
-    It automatically handles file changes and caching in a (hopefuly) simple way.
-    
-
-
-    Did you just get this API standalone and have no clue on how to set it up?
-
-    Don't worry.
-    Simply run the API (app.js file in the root directory), it will run at :7007 by default.
-    To make a webserver, you can proxy the port 7007 to :80 and :433 using Nginx for example. (Or dont and test on the default port, it will work anyway)
-
-    Then, you will need to set up hostnames for your IP (domains). If using a proxy, proxy all hosts in the proxy.
-    If you dont know what this means - don't worry. If your domain is pointed to your server's IP, you are all set. For testing you can edit /etc/hosts (on Linux) and add custom hostnames, point it to localhost if you want to just test locally.
-    Any subdomain starting with cdn. or api. will be forwarded to a different ExtraGon API extension, but any other domain will be forwarded here!
-
-    Now all you need to do is to edit the locations variable below to include folders with your web apps.
-    Create an app.manifest file in the root of your project folder and put "server {domains: example.com}" in that file (replacing example.com with your domain or hostname).
-    Done! If setup correctly, Akeno should now handle example.com or example.com:7007!
-
-    (Note: you will need to reload the API every time you make/change/remove a new app or change locations. If you only added a new app, you can send a check signal to do this more efficiently.)
+    It also features a dynamic HTML processor.
 
 */
 
@@ -44,20 +19,23 @@ let
     mime,
     CleanCSS = new (require('clean-css')),
     UglifyJS = require("uglify-js"),
+    { Parser } = require('htmlparser2'),
 
     // Local libraries
     { parse, configTools } = require("./parser"),
 
     // Globals
     server,
-    applications = [], applicationCache = [],
 
-    // Backend
+    applications = new Map,
+    applicationCache = [], // debug purposes
+
+    // Backend object
     Backend,
 
     // Cache && optimisation helpers
-    assignedDomains = {},
-    cache = {},
+    assignedDomains = new Map,
+    cache = new Map,
 
     // Maximal cache size for binary files per-file.
     // If a file is bigger than this, it is not saved and served from RAM.
@@ -71,14 +49,11 @@ let
     }
 ;
 
-// Section: Initialize variables
-// Warning: The following variables are set in the Initialize handle.
+
 
 let version, locations;
 
-
 // Section: utils
-
 function files_try(...files){
     for(let file of files){
         if(fs.existsSync(file)){
@@ -94,22 +69,27 @@ function cachedFile(file){
         return 0
     }
 
-    if(cache[file]
+    let cachedFile = cache.get(file);
+
+    if(cachedFile
         && (
-            ((Date.now() - cache[file].updateTimer) < 1000) ||
-            (fs.statSync(file).mtimeMs <= cache[file].lastModifyTime)
+            ((Date.now() - cachedFile.updateTimer) < 1000) ||
+            (fs.statSync(file).mtimeMs <= cachedFile.lastModifyTime)
         )
     ) {
-        cache[file].updateTimer = Date.now()
-        return cache[file].content
+        cachedFile.updateTimer = Date.now()
+        return cachedFile.content
     }
 
     server.log.debug("File '" + file + "' has been updated; refreshing cache!");
 
-    if(!cache[file]) cache[file] = {}
+    if(!cachedFile) {
+        cachedFile = {}
+        cache.set(file, cachedFile)
+    }
 
-    cache[file].lastModifyTime = fs.statSync(file).mtimeMs,
-    cache[file].updateTimer = Date.now()
+    cachedFile.lastModifyTime = fs.statSync(file).mtimeMs,
+    cachedFile.updateTimer = Date.now()
 
     return 1
 }
@@ -117,10 +97,10 @@ function cachedFile(file){
 function updateCache(file, content){
     file = nodePath.normalize(file);
 
-    if(!cache[file]) cachedFile(file);
+    if(!cache.has(file)) cachedFile(file);
 
-    cache[file].content = content;
-    // cache[file].headers = headers;
+    cache.get(file).content = content;
+    // cache.get(file).headers = headers;
 }
 
 
@@ -145,23 +125,12 @@ function checkSupportedBrowser(userAgent, properties) {
     return true; // Allow by default if the browser could not be determined
 }
 
-// Section: API
+
+// Section: request handling
 server = {
     Initialize(Backend_){
         Backend = Backend_;
         server.Reload(true)
-
-        try {
-            // Reserve API error codes from 1000 to 1200
-
-            server.errorRange = Backend.claimErrorCodeRange(1000, 1200)
-
-            // server.errorRange.errors({
-            //     1000: "Hi (Reserved for future use)"
-            // })
-        } catch (e) {
-            server.log.warn("Could not reserve errors (", e.toString(), ")")
-        }
 
         mime = Backend.mime;
     },
@@ -176,15 +145,17 @@ server = {
     
         let webConfig = Backend.config.block("web");
     
+        // Directories with web apps
         locations = webConfig && webConfig.properties.locations? webConfig.properties.locations : []
     
         await server.LoadAppliactions();
+
     },
 
     async LoadAppliactions(){
         function load(path){
-            if(applications.find(app => app.path == path)){
-                server.log.debug("Loading of web application (at " + path + ") was skipped (already loaded)");
+            if(applications.has(path)){
+                server.log.debug("Loading of web application (at " + path + ") was skipped (already seems to be loaded)");
                 return
             }
 
@@ -311,12 +282,14 @@ server = {
 
                                 switch(extension){
                                     case "html":
-                                        content = get_content(app, url, file)
+                                        content = parse_html_content({url, file, app})
                                     break;
+
                                     case "css":
                                         content = fs.readFileSync(file, "utf8");
                                         content = Buffer.from(CleanCSS.minify(content).styles || content)
                                     break;
+
                                     case "js":
                                         content = fs.readFileSync(file, "utf8");
 
@@ -330,13 +303,16 @@ server = {
                                 res.send(content, headers)
                                 updateCache(file, content)
                                 return
+
                             } else {
+
                                 // res.stream(fs.createReadStream(file));
                                 content = fs.readFileSync(file);
 
                                 res.send(content, headers)
                                 if(content.length < max_cache_size) updateCache(file, content)
                                 return
+
                             }
                         }
 
@@ -378,7 +354,7 @@ server = {
                 app.manifest = manifest
             }
 
-            applications.push(app)
+            applications.set(app.path, app)
 
             applicationCache.push({
                 basename,
@@ -410,12 +386,12 @@ server = {
             }
         }
 
-        for(let app of applications){
+        for(let app of applications.values()){
             if(!app.manifest || !app.manifest.server) continue;
 
             if(app.manifest.server.properties.domains) {
                 for(let domain of app.manifest.server.properties.domains){
-                    assignedDomains[domain] = app.path;
+                    assignedDomains.set(domain, app.path);
                 }
             }
 
@@ -433,10 +409,10 @@ server = {
 
         if(req.domain.startsWith("www.")) req.domain = req.domain.replace("www.", "");
 
-        let appPath = assignedDomains[req.domain] ?? assignedDomains[":default"], app;
+        let appPath = assignedDomains.get(req.domain) ?? assignedDomains.get(":default");
 
         if(typeof appPath !== "undefined") {
-            app = applications.find(app => app.path == appPath)
+            const app = applications.get(appPath)
 
             if(app.manifest.server.properties.redirect_https && !Backend.isDev && !req.secured){
                 res.redirect(301, `https://${req.getHeader("host")}${req.path}`);
@@ -489,6 +465,10 @@ server = {
         }
     },
 
+
+    parse_html_content,
+
+    // Debugging purposes and temporarily pretty messy, will be reworked later
     async HandleInternal({segments, req, res}){
         let application;
 
@@ -496,7 +476,7 @@ server = {
             case "list":
 
                 for(let app of applicationCache){
-                    app.domains = Object.keys(assignedDomains).filter(domain => assignedDomains[domain] === app.path)
+                    app.domains = assignedDomains.keys().filter(domain => assignedDomains.get(domain) === app.path)
                 }
 
                 res.send(applicationCache)
@@ -506,7 +486,7 @@ server = {
 
                 if(!req.getQuery("app") || !req.getQuery("path")) return res.writeStatus("500").end();
                 
-                application = applications.find(app => app.path == req.getQuery("app"));
+                application = applications.get(req.getQuery("app"));
                 if(!application) return res.writeStatus("500").end();
 
                 application.serve({ domain: "internal", method: "GET", segments: req.getQuery("path").replace(/\?.*$/, '').split("/").filter(g => g), req, res })
@@ -516,7 +496,7 @@ server = {
 
                 if(!req.getQuery("app")) return res.writeStatus("500").end();
                 
-                for(let application of applications) {
+                for(let application of applications.values()) {
                     if(application.path === req.getQuery("app")) {
                         application.enabled = segments[1] === "enable"
                         res.end()
@@ -528,16 +508,16 @@ server = {
                 break
 
             case "domain":
-                for(asd in assignedDomains){
-                    if(assignedDomains[asd] == req.getQuery("app")) return res.send(asd);
+                for(domain in assignedDomains.keys()){
+                    if(assignedDomains.get(domain) == req.getQuery("app")) return res.send(asd);
                 }
                 return res.send("");
 
             case "domains":
                 let list = [];
 
-                for(domain in assignedDomains){
-                    if(assignedDomains[domain] == req.getQuery("app")) list.push(domain);
+                for(domain in assignedDomains.keys()){
+                    if(assignedDomains.get(domain) == req.getQuery("app")) list.push(domain);
                 }
 
                 return res.send(list);
@@ -545,7 +525,7 @@ server = {
             case "temporaryDomain":
 
                 let random = Backend.uuid();
-                assignedDomains[random] = req.getQuery("app");
+                assignedDomains.set(random) = req.getQuery("app");
 
                 return res.send(random);
 
@@ -563,429 +543,472 @@ server = {
 
 // Section: functions
 
-let lsVersion = fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8").trim();
+let latest_ls_version = fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8").trim();
 
-function get_content(app, url, file){
-    server.log.debug("Server is parsing dynamic file '" + file + "'!");
 
-    let stack = [],
 
-        variables = {
-            url, file
+const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- This is automatically generated code -->\n<html lang="en">`);
+
+const parser_regex = {
+    keyword: /[\w-]/,
+    plain_value: /[\w-</>.]/,
+    stringChar: /["'`]/,
+    whitespace: /[\s\n\r\t]/
+}
+
+function parse_html_content(options){
+    const htmlContent = options.content? options.content: options.file? fs.readFileSync(options.file, "utf8"): "";
+
+    const output = [ null ]; // null for the header
+
+    let head_string_index = null, head = "";
+
+    let now = performance.now();
+
+    let currentTag = null;
+
+    function push(data){
+        if(!data) return;
+
+        if(typeof data === "string"){
+            data = data.trim();
+            if(data.length === 0) return;
+            data = Buffer.from(data)
+        }
+
+        if(data instanceof Buffer){
+
+            const last = output.at(-1);
+            if(Array.isArray(last)) {
+                last.push(data)
+            } else {
+                output.push([data])
+            }
+
+        } else output.push(data);
+    }
+
+    // This gets called once a block finishes parsing, with the block in question.
+    function process_block(block){
+        console.log(block);
+
+        if(options.dynamic) push(block)
+    }
+
+    const parser = new Parser({
+        onopentag(name, attribs) {
+            let result = "<";
+
+            currentTag = name;
+
+            if(attribs.class) attribs.class; else attribs.class = "";
+
+            if (name.includes('%')) [name, attribs.id] = name.split('%'); else if (name.includes('#')) [name, attribs.id] = name.split('#');
+
+            if (name.includes('.')) {
+                const parts = name.split('.');
+                name = parts[0];
+                attribs.class += " " + parts.slice(1).join(' ');
+            }
+
+            result += name;
+
+            for(let attr in attribs) {
+                if (attr === "class" || attr === "id") continue;
+
+                if (attr.startsWith('.')) {
+                    attribs.class += " " + attr.slice(1).split(".").join(" ")
+                    continue
+                }
+
+                if (attr.startsWith('%') || attr.startsWith('#')) {
+                    attribs.id = attr.slice(1)
+                    continue
+                }
+
+                let value = attribs[attr];
+
+                if(value){
+                    if (value.includes(`"`) && value.includes(`'`)) {
+                        value = `"${value.replace(/"/g, '&quot;')}"`;
+                    } else if (value.includes(" ")) {
+                        value = `"${value}"`;
+                    }
+
+                    result += ` ${attr}=${value}`;
+                    continue
+                }
+
+                result += " " + attr;
+            }
+
+            if (attribs.class) result += ` class="${attribs.class.trim()}"`;
+            if (attribs.id) result += ` id="${attribs.id}"`;
+
+            push(result + ">");
+
+            if(name === "head" && head_string_index === null) {
+                head_string_index = output.push(null) -1
+            }
         },
 
-        prevTitle = "",
+        ontext(text) {
 
-        parts = [],
+            // Inline script/style compression
+            switch (currentTag){
+                case "script":
+                    if(text) push(options.compresss? UglifyJS.minify(text).code || text: text)
+                    return;
 
-        hasLS = false,
+                case "style":
+                    if(text) push(options.compresss? CleanCSS.minify(text).styles || text: text)
+                    return;
+            }
 
-        doNotInit = false
-    ;
 
-    if(app.stacks && app.stacks.length > 0){
-        for(const stackBlock of app.stacks){
-            if(stackBlock.values.find(path => url.startsWith(path))){
-                if(stackBlock.properties.not && stackBlock.properties.not.find(path => url.startsWith(path))){
-                    continue
+            // gee this parser sucks ass
+            // still sucks much less than the one in parser.js
+
+
+            let blockPosition = text.indexOf("@");
+
+            // Nothing to do, so just skip parsing
+            if(blockPosition === -1) return push(text);
+
+            function parseAt(initialBlockStart){
+                let currentPosition = initialBlockStart;
+
+                // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value)
+                let stage = 0, next_stage = 0, parsedString = null, type = 1, confirmed = false, stringChar = null, block = {
+                    name: "",
+                    attributes: [],
+                    properties: {}
                 }
 
-                stack.push(...stackBlock.properties.chain[0].split(">").map(value => {
-                    return value == "."? file : app.path + "/" + value
-                }))
+                let parsingValueStart = currentPosition, parsingValueLength = 0, parsingValueSequenceBroken = false;
 
-                break
-            }
-        }
-    }
+                function exit(cancel){
+                    blockPosition = text.indexOf("@", currentPosition);
+                    
+                    if(cancel) currentPosition = initialBlockStart; else { currentPosition ++; process_block(block) };
+
+                    push(text.slice(currentPosition, blockPosition !== -1? blockPosition: text.length));
+
+                    if(blockPosition !== -1) parseAt(blockPosition); else {
+                        return
+                    }
+                }
+
+                function value_start(length = 0, positionOffset = 0){
+                    parsingValueStart = currentPosition + positionOffset;
+                    parsingValueLength = length;
+                    parsingValueSequenceBroken = false;
+                    parsedString = null;
+                }
+
+                function get_value(){
+                    return text.slice(parsingValueStart, parsingValueStart + parsingValueLength)
+                }
+
+                let last_key;
     
-    if(stack.length < 1) {
-        stack.push(file)
-    }
+                while(currentPosition < text.length){
+                    currentPosition ++;
+    
+                    const char = text[currentPosition];
 
-    let waterfall = {
-        head: "",
-        body: "",
+                    // console.log("parsing at", currentPosition, "stage:", stage, "type:", type, char);
 
-        merged: [],
-        resources: [],
-        bodyAttributes: {},
-        exposed: [],
+                    if(type === 2) {
+                        // currentPosition += (text.indexOf(stringChar, currentPosition) - currentPosition) -1;
 
-        htmlLang: "en",
+                        if(char === stringChar && text[currentPosition -1] !== "\\"){
+                            type = 0
 
-        deferResources: []
-    }
+                            // if(stage !== next_stage) currentPosition--;
 
-    // NOTE: The following code merges the documents from the stack in order, to a single document
-    function merge(array, target) {
-        let content = [];
+                            stage = next_stage
 
-        
-        for(let token of array){
-            if(token.type == "element"){
+                            parsedString = get_value()
+                        } else parsingValueLength ++
+                    } else
 
-                if(["body", "page"].includes(token.tag)){
+                    if(type === 3) {
+                        if(!parser_regex.plain_value.test(char)){
+                            type = 0
+                            stage = next_stage
+                            currentPosition--
 
-                    if(token.tag == "page") token.tag = "body";
+                            parsedString = get_value()
+                        } else parsingValueLength ++
+                    } else
 
-                    if(token.tag == "body") {
-                        Object.assign(waterfall.bodyAttributes, token.attributes)
+                    // Also skip whitespace when possible.
+                    if(type !== 0 || !parser_regex.whitespace.test(char)) switch(stage){
+
+                        case 0:
+                            if(!/[\s\n\r\t\w({]/.test(char)) return exit(true);
+
+                            parsingValueLength ++;
+
+                            if(!parser_regex.keyword.test(char)){
+                                type = 0;
+                                stage = 0.5;
+                                currentPosition --
+                            }
+                            break;
+
+
+
+                        case 0.5:
+                            if(!/[({]/.test(char)) return exit(true);
+
+                            stage = char === "("? 1: 4;
+                            block.name = get_value().replace("@", "")
+
+                            break;
+
+
+                        // Attribute
+                        case 1:
+                            if(char === ")" || char === ","){
+                                type = 0
+                                block.attributes.push(parsedString.trim())
+                                if(char === ")") stage = 3;
+                                break;
+                            }
+
+                            if(parser_regex.stringChar.test(char)){
+                                stringChar = char
+                                type = 2
+
+                                value_start(0, 1)
+
+                                next_stage = 1
+                            } else if (parser_regex.plain_value.test(char)){
+                                type = 3
+
+                                value_start(1)
+
+                                next_stage = 1
+                            } else return exit(true)
+
+                            break
+
+
+                        // Before a block
+                        case 3:
+                            if(!/[;{]/.test(char)) return exit(true);
+
+                            if(char === ";"){
+                                return exit()
+                            }
+
+                            stage = 4
+
+                            break
+
+
+                        // Looking for a keyword
+                        case 4:
+                            if(char === "}"){
+                                return exit()
+                            }
+
+                            if(!parser_regex.keyword.test(char)) return exit(true);
+
+                            stage = 5
+                            type = 1
+
+                            value_start(1)
+                            break
+
+
+                        // Keyword
+                        case 5:
+                            if(!parser_regex.keyword.test(char)){
+                                if(parser_regex.whitespace.test(char)) {
+                                    parsingValueSequenceBroken = true
+                                    break
+                                }
+
+                                const key = get_value().trim()
+
+                                type = 0
+
+                                if(char === ";" || char === "}") {
+
+                                    block.properties[key] = true
+                                    stage = 4
+
+                                    if(char === "}"){
+                                        return exit()
+                                    }
+
+                                } else if (char === ":") {
+
+                                    last_key = key
+                                    parsedString = null
+                                    stage = 6
+
+                                } else return exit(true);
+                            } else {
+                                if(parsingValueSequenceBroken) {
+                                    return exit(true)
+                                }
+
+                                parsingValueLength ++
+                            }
+
+                            break;
+
+
+                        // Start of a value
+                        case 6:
+
+                            // Push values
+                            if(parsedString){
+                                if(Array.isArray(block.properties[last_key])) {
+                                    block.properties[last_key].push(parsedString)
+                                } else if(block.properties[last_key]) {
+                                    block.properties[last_key] = [block.properties[last_key], parsedString]
+                                } else {
+                                    block.properties[last_key] = parsedString
+                                }
+
+                                parsedString = null
+                            }
+
+                            if(char === ","){
+
+                                type = 0
+                                stage = 6;
+                                
+                            } else if(char === ";"){
+
+                                type = 0
+                                stage = 4;
+
+                            } else if(char === "}"){
+
+                                return exit()
+
+                            } else {
+                                if(parser_regex.stringChar.test(char)){
+                                    stringChar = char
+                                    type = 2
+    
+                                    value_start(0, 1)
+    
+                                    next_stage = 6
+                                } else if (parser_regex.plain_value.test(char)){
+                                    type = 3
+    
+                                    value_start(1)
+    
+                                    next_stage = 6
+                                } else return exit(true)
+                            };
+
+                            break;
                     }
                 }
 
-                if(token.content && token.content.length > 0) {
-                    let mergedContent = merge(token.content, target);
-                    token.content = mergedContent
-                }
+                if(!confirmed) return exit(true);
 
-                content.push(token);
-
-            } else {
-                if(typeof token == "string"){
-                    content.push(token);
-                    continue
-                }
-
-                switch (token.type) {
-                    case "block":
-                        switch (token.key) {
-                            case "no-init":
-                                doNotInit = true;
-                            break
-
-                            case "variables":
-                                for(const variable in token.properties){
-                                    if(!token.properties.hasOwnProperty(variable)) continue;
-                                    variables[variable] = token.properties[variable].join("")
-                                }
-                            break
-
-                            case "print":
-                                content.push(stringVar(token.values.join(" ")))
-                            break
-
-                            case "preload":
-                                for(let value of token.values){
-                                    value = value.join("");
-
-                                    let file = resourceMapper("preload", value)
-                                    content.push(`<script src="${file}"></script>`)
-                                    waterfall.head += `<link rel=preload href="${file}" as=script>`
-                                }
-                            break
-
-                            case "resources":
-                                for(const key in token.properties){
-                                    if(!token.properties.hasOwnProperty(key)) continue;
-
-                                    if(!Array.isArray(token.properties[key])) token.properties[key] = [token.properties[key]];
-
-                                    let properties = [];
-                                    for(let property of token.properties[key]){
-                                        if(property == "+"){
-                                            properties.push(...waterfall.resources[key])
-                                        } else {
-                                            properties.push(property)
-                                        }
-                                    }
-
-                                    waterfall.resources[key] = properties
-                                }
-                            break
-
-                            case "manifest": case "mainfest": // Youd be surprised how many times i made that typo
-                                if(token.properties.title){
-                                    prevTitle = token.properties.title.map(item => item == "+"? prevTitle : item).join("");
-                                }
-
-                                if(token.properties.favicon){
-                                    const baseName = nodePath.basename(token.properties.favicon[0]);
-                                    let extension = baseName, lastIndex = baseName.lastIndexOf('.');
-        
-                                    if (lastIndex !== -1) {
-                                        extension = baseName.slice(lastIndex + 1);
-                                    }
-        
-                                    let mimeType = (mime && mime.getType && mime.getType(extension)) || "image/x-icon";
-                                    waterfall.head += `<link rel="shortcut icon" href="${token.properties.favicon[0]}" type="${mimeType}">`
-                                }
-
-
-                                if(token.properties.lang){
-                                    waterfall.htmlLang = token.properties.lang[0]
-                                }
-
-                                if(token.properties.accent){
-                                    waterfall.bodyAttributes["ls-accent"] = token.properties.accent[0]
-                                    waterfall.bodyAttributes["ls"] = ""
-                                }
-
-                                if(token.properties.theme){
-                                    waterfall.bodyAttributes["ls-theme"] = token.properties.theme[0]
-                                    waterfall.bodyAttributes["ls"] = ""
-                                }
-
-                                if(token.properties.style){
-                                    waterfall.bodyAttributes["ls-style"] = token.properties.style[0]
-                                    waterfall.bodyAttributes["ls"] = ""
-                                }
-                            break
-
-                            case "part":
-                                if(Array.isArray(token.values[0])) token.values[0] = token.values[0][0];
-                                parts[token.values[0]] = token.content
-                            break
-
-                            case "get":
-                                for(let part of token.values){
-                                    if(Array.isArray(part)) part = part[0];
-
-                                    const data = parts[part];
-
-                                    if(!data){
-                                        server.log.warn(data, "Trying to get a part that does not exist/has not been defined yet. (Getting '" + part + "')");
-                                        continue
-                                    }
-
-                                    content.push(...data)
-                                }
-                            break
-                        }
-                    break;
-                }
-            }
-        }
-
-        return content
-    }
-
-    for(const file of stack){
-        let parsed = parse(fs.readFileSync(file, "utf8"), false, app.path);
-        waterfall.merged.push(...merge(parsed, "body"))
-    }
-
-    function resourceMapper(type, value){
-        if(!value.startsWith("http")){
-            const assetPath = app.path + "/" + value;
-
-            if(!fs.existsSync(assetPath)){
-                server.log.warn(`Application ${app.basename} has an invalid (not found) resource ("${assetPath}")`);
-                return ""
+                exit()
             }
 
-            value += `${value.includes("?")? "&": "?"}mtime=${(fs.statSync(assetPath).mtimeMs).toString(36)}`
-        }
+            parseAt(blockPosition)
+        },
 
-        if(type == "css" && waterfall.resources["defer-css"]){
-            waterfall.deferResources.push("css:" + value)
-            return ""
+        onclosetag(name) {
+            push(`</${name}>`);
         }
+    });
 
-        if(type == "js" && waterfall.resources["defer-js"]){
-            waterfall.deferResources.push("js:" + value)
-            return ""
-        }
-        
-        return type == "css"? `<link rel=stylesheet href="${value}">`: type == "preload"? value: `<script src="${value}"></script>`
+    parser.write(htmlContent);
+    parser.end();
+
+    output[0] = html_header;
+
+    if(head){
+        if(head_string_index !== null) output[head_string_index] = head; else output[0] += `<head>${head}</head>`;
     }
 
-    function attributesString(attributeObject){
+    push("</html>");
 
-        let result = [], attributes = {};
+    console.log(performance.now() - now);
 
-        for(let attribute in attributeObject){
-            let value = attributeObject[attribute] || "";
+    // Finally, condense buffers and return.
+    return condense_parsed_output(output, options.dynamic);
+}
 
-            if(attribute == "style") value = value.replaceAll("   ", " ").replaceAll("  ", " ").replaceAll(", ", ",").replaceAll(": ", ":").replaceAll("; ", ";");
+function condense_parsed_output(data, allow_dynamic_content) {
+    let bufferGroup = [];
 
-            if(attribute.startsWith("%") && value == "") {
-                attributes.id = attribute.replace("%", "");
-                continue
-            }
+    if(!allow_dynamic_content){
+        let length = 0;
 
-            if(attribute.startsWith(".") && value == "") {
-                attribute = attribute.replace(".", "");
-
-                if(attributeObject.hasOwnProperty("class")){
-                    if(!attributes.hasOwnProperty("class")){
-                        attributes.class = ""
+        for(let item of data){
+            if (item instanceof Buffer) {
+                bufferGroup.push(item);
+                length += item.length
+            } else if (Array.isArray(item)) {
+                for(let _item of item){
+                    if (_item instanceof Buffer) {
+                        bufferGroup.push(_item);
+                        length += _item.length
                     }
-                    
-                    attributeObject.class += " " + attribute
-                    continue
                 }
-
-                if(attributes.hasOwnProperty("class")){
-                    attributes.class += " " + attribute
-                    continue
-                }
-
-                attributes.class = attribute;
-
-                continue
             }
-
-            if(attributes.hasOwnProperty(attribute)){
-                attributes[attribute] += " " + value
-                continue
-            }
-
-            attributes[attribute] = value;
         }
 
-        for(let attribute in attributes){
-            let quote = "", value = attributes[attribute] || "";
-            
-            // TODO: Add a case for escaped quotes
+        data = null;
 
-            if(value.includes(' ')) quote = '"';
-
-            if(value.includes('"')) {
-                quote = "'";
-                if(value.includes("'")){
-                    value = value.replace("'", "\\'")
-                }
-            } else {
-                if(value.includes("'")) quote = '"';
-            }
-
-            result.push(`${attribute}` + (value? `=${quote}${value.trim()}${quote}` : ""))
-        }
-
-        return " " + result.join(" ");
+        return Buffer.concat(bufferGroup)
     }
 
-    function stringVar(str){
-        if(typeof str !== "string") return "";
+    let flattenedData = [];
+    
+    for (const item of data) {
+        if (!item) continue;
 
-        return str.replace(/\$[\w\-\_]+/g, (match) => {
-            return stringVar(variables[match.replace("$", "").trim()])
-        })
-    }
-
-    // NOTE: This finally constructs the final form HTML from the merged parsed documents.
-    function build(array, target) {
-        let content = "";
-        for(let token of array){
-            if(typeof token === "undefined") continue;
-
-            if(typeof token == "string" || token.type == "element"){
-
-                if(typeof token == "string"){
-                    content += token;
-                    continue
-                }
-
-                if(token.tag == "head"){
-                    build(token.content, "head")
-                    continue
-                }
-
-                let elementTag = "";
-                if(token.tag !== "body") {
-                    elementTag = `<${token.tag}${attributesString(token.attributes)}>`
+        if (Array.isArray(item)) {
+            for (const subItem of item) {
+                if (subItem instanceof Buffer) {
+                    bufferGroup.push(subItem);
                 } else {
-                    Object.assign(waterfall.bodyAttributes, token.attributes)
-                }
-
-                if(!token.singleton){
-                    let rawContent = token.content && token.content.length > 0 ? build(token.content, target) : "";
-                    
-                    if(token.tag == "style"){
-                        rawContent = CleanCSS.minify(rawContent).styles || rawContent
+                    if (bufferGroup.length > 0) {
+                        flattenedData.push(Buffer.concat(bufferGroup));
+                        bufferGroup = [];
                     }
 
-                    if(token.tag == "script"){
-                        rawContent = UglifyJS.minify(rawContent).code || rawContent
-                    }
-
-                    elementTag += token.tag == "body"? rawContent : `${rawContent}</${token.tag}>`
+                    flattenedData.push(subItem);
                 }
-
-                if(target == "body") {content += elementTag} else waterfall.head += elementTag;
-
             }
-        }
 
-        return content
-    }
+        } else if (item instanceof Buffer) {
 
-    waterfall.body = build(waterfall.merged, "body")
+            bufferGroup.push(item);
 
-    if(prevTitle) waterfall.head += `<title>${prevTitle}</title>`;
-
-
-    // Please excuse this IF ladder.
-    // But it is for a good reason - it's faster (10%) than a fancy for-in solution, and we need to check for the keys somehow.. It's definetly not clean, but it works.
-
-    if(waterfall.resources["ls-js"]){
-        hasLS = true
-
-        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/${Backend.isDev? "js" : "js.min"}/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: lsVersion}/${waterfall.resources["ls-js"].join(",")}`;
-
-        if(waterfall.resources["defer-js"]){
-            waterfall.deferResources.push("js:" + url)
         } else {
-            waterfall.head += `<script src="${url}"></script>`;
-        }
-        // for(const component of waterfall.resources["ls-js"]){
-        //     if(component === "tiny")
-        //     waterfall.head += `<script src="http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/js/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: "3.0"}/${component}"></script>`
-        // }
-    }
 
-    if(waterfall.resources["ls-css"]){
-        let url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/css/${waterfall.resources["ls-version"]? waterfall.resources["ls-version"][0]: lsVersion}/${waterfall.resources["ls-css"].join(",")}`;
-        
-        if(waterfall.resources["defer-css"]){
-            waterfall.deferResources.push("css:" + url)
-        } else {
-            waterfall.head += `<link rel=stylesheet href="${url}">`
+            if (bufferGroup.length > 0) {
+                flattenedData.push(Buffer.concat(bufferGroup));
+                bufferGroup = [];
+            }
+
+            flattenedData.push(item);
+
         }
     }
 
-    if(waterfall.resources["bootstrap-icons"]){
-        let url = "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css";
-        
-        if(waterfall.resources["defer-css"]){
-            waterfall.deferResources.push("css:" + url)
-        } else {
-            waterfall.head += `<link rel=stylesheet href="${url}">`
-        }
+    if (bufferGroup.length > 0) {
+        flattenedData.push(Buffer.concat(bufferGroup));
     }
 
-    if(waterfall.resources.fonts){
-        waterfall.head += `<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>`
-        let url = `https://fonts.googleapis.com/css2?${waterfall.resources.fonts.map(font => {
-            return "family=" + font.replaceAll(" ", "+") + ":wght@100;200;300;400;500;600;700;800;900"
-        }).join("&")}&display=swap`;
-
-        if(waterfall.resources["defer-css"]){
-            waterfall.deferResources.push("css:" + url)
-        } else {
-            waterfall.head += `<link rel=stylesheet href="${url}">`
-        }
-    }
-
-    if(waterfall.resources.css || waterfall.resources.js){
-        if(waterfall.resources.css) waterfall.head += waterfall.resources.css.map(css => resourceMapper("css", css)).join("");
-        if(waterfall.resources.js) waterfall.head += waterfall.resources.js.map(js => resourceMapper("js", js)).join("")
-    }
-
-    if(waterfall.deferResources.length > 0){
-        // This is OBVIOUSLY not a great practice, especially given that we have an actual HTML parser. But it does currently work the best.
-        waterfall.head = waterfall.head.replace(`Akeno.get("resources")`, `["${waterfall.deferResources.join('","').replaceAll("\n", "")}"]`)
-    }
-
-    if(doNotInit){
-        return `${waterfall.body}`
-    }
-
-    return Buffer.from(`<!DOCTYPE html>\n<!-- WARNING:\n\tThis is automatically generated and compressed code. It may not represent the source.\n-->\n<html lang=${waterfall.htmlLang}><head><meta charset=UTF-8><meta name=viewport content="width=device-width, initial-scale=1.0">${waterfall.head}</head><body${attributesString(waterfall.bodyAttributes)}>${waterfall.body}${waterfall.exposed.length > 0? `<script>let ${waterfall.exposed.map(element => element + "=" + ((hasLS && !waterfall.resources["defer-js"])? "O('#" : "document.querySelector('#") + element + "')").join(",")}</script>`: ""}</body></html>`)
+    return flattenedData;
 }
 
 module.exports = server
-
-
-// Friendly reminder: Do **NOT** USE DOCUMENT.WRITE() !!!!!!!!!!!!!!!!!!!!!!!!! <=== E V E R

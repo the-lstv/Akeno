@@ -58,7 +58,6 @@ let
 
     host,
 
-    port,
     PATH = __dirname + "/",
 
     total_hits,
@@ -225,65 +224,6 @@ let noCorsHeaders = {
 };
 
 
-function shouldProxy(req, res, flags = {}, ws = false, wsContext){
-
-    if(!req.domain) req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
-
-    if(req.domain == "upedie.online"){
-        // Redirect to a diferent server on a specific port
-
-        if(!ws) return proxyReq(req, res, {port: 42069}), true;
-    }
-
-    if(req.domain.startsWith("proxy.") || req.domain.startsWith("gateway_") || req.domain.startsWith("gateway.") || req.domain.startsWith("discord.")){
-        let url,
-            subdomain = req.domain.split(".")[0],
-            query = req.getQuery(),
-            reportedUrl = decodeURIComponent(req.getUrl()).substring(1) + (query? `?${query}`: "")
-        ;
-
-        // Handle special cases
-        if(subdomain.startsWith("gateway_")){
-            reportedUrl = `http${(flags && flags.secured)? "s": ""}://${subdomain.replace("gateway_", "").replaceAll("_", ".")}/${reportedUrl}`
-        } else if(subdomain === "discord"){
-            reportedUrl = `https://discord.com/${reportedUrl}`
-        }
-
-        try {
-            url = new URL(decodeURIComponent(reportedUrl));
-        } catch {
-            return res.writeStatus("400 Bad Request").end("Proxy error: Invalid URL")
-        }
-
-        if(ws){
-            let headers = {};
-
-            req.forEach((key, value) => {
-                if(key.toLowerCase() === "host") return;
-
-                headers[key] = key.toLowerCase() === "origin"? "https://remote-auth-gateway.discord.gg" : value;
-            });
-
-            return proxyWebSocket(req, res, wsContext, {
-                url: decodeURIComponent(reportedUrl), parsedUrl: url, headers
-            }), true
-        }
-
-        return proxyReq(req, res, {
-            overwriteHeaders: noCorsHeaders,
-            hostname: url.hostname,
-            protocol: url.protocol,
-            path: url.pathname + url.search
-        }, {
-            mode: subdomain === "proxy"? "normal": "web",
-            subdomainMode: subdomain !== "proxy" && subdomain !== "gateway"
-        }), true
-    }
-
-    return false
-}
-
-
 // The init fucntion that initializes and starts the server.
 function build(){
     if(initialized) return;
@@ -297,6 +237,7 @@ function build(){
         if(version.Initialize) version.Initialize(Backend)
     }
 
+    // TODO:
     db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', Backend.config.block("database").properties.password[0])
 
     // Set up multer for file uploads
@@ -412,7 +353,7 @@ function build(){
         }
     };
 
-    let types = {
+    const types = {
         json: "application/json; charset=utf-8",
         js: "text/javascript; charset=utf-8",
         css: "text/css; charset=utf-8",
@@ -426,28 +367,28 @@ function build(){
     // Constants
     const ssl_enabled = Backend.config.block("server").properties.enableSSL;
     const h3_enabled = Backend.config.block("server").properties.enableH3;
+
+    const HTTPort = (+ Backend.config.block("server").properties.port) || 80;
     const SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
     const H3Port = (+ Backend.config.block("server").properties.h3Port) || 52003;
 
     function resolve(res, req, flags, virtual) {
         total_hits++
-        // if((total_hits - saved_hits) > 500) save_hits();
 
-        // console.log(req)
-        if(flags && flags.h3){
-            return res.end("Hi")
-        }
+        // if(flags && flags.h3){
+        //     return res.end("Hi")
+        // }
 
-        // Helper variables
+        // Virtual requests
         if(virtual){
             if(virtual.method) req.getMethod = () => virtual.method
             if(virtual.path) req.getUrl = () => virtual.path
             if(virtual.domain) req.getHeader = header => header === "host"? virtual.domain: req.getHeader(header)
         }
 
-        req.method = req.getMethod && req.getMethod().toUpperCase(); // Lowercase would be pretty but harder to adapt
+        // Lowercase is pretty but most code already uses uppercase
+        req.method = req.getMethod && req.getMethod().toUpperCase();
         req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
-        // req.port = +req.getHeader("host").match(/:([0-9]+)/)[1];
 
         req.path = req.getUrl();
         req.secured = flags && !!flags.secured; // If the communication is done over HTTP or HTTPS
@@ -474,77 +415,41 @@ function build(){
                 req.abort = true;
             })
 
-            
-
-
             // Handle proxied requests
             if(shouldProxy(req, res, flags)) return;
 
-            // if(req.domain.startsWith("ffmpeg-proxy.")){
-            //     res.onData((chunk, isLast) => {
-            //         console.log("Received chunk", chunk);
-                    
-            //         for(let receiverID in ffmpegStreamReceivers) {if(typeof ffmpegStreamReceivers[receiverID] === "function") ffmpegStreamReceivers[receiverID](chunk, isLast)}
-            //     });
-
-            //     res.onAborted(() => {
-            //         console.log('Stream aborted.');
-            //     });
-            //     return
-            // }
-
-            if(req.domain.startsWith("ffmpeg-receiver.")){
-                let id = ffmpegStreamReceiverID++;
-
-                res.writeHeaders({
-                    // 'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                    // 'Accept-Ranges': 'bytes',
-                    // 'Content-Length': chunk.,
-                    'Content-Type': 'audio/mpeg',
-                })
-
-                ffmpegStreamReceivers[id] = function(chunk, isLast){
-                    res.cork(() => {
-                        res.write(chunk)
-                    })
-                }
-
-                res.onAborted(() => {
-                    delete ffmpegStreamReceivers[id]
-                });
-
-                return
-            }
-            
-
             res.corsHeaders = () => {
-                res .writeHeader('X-Powered-By', 'Akeno Server/' + version)
-                    .writeHeaders(noCorsHeaders)
-                    .writeHeader("Origin", req.domain)
+                res.cork(() => {
+                    res .writeHeader('X-Powered-By', 'Akeno Server/' + version)
+                        .writeHeaders(noCorsHeaders)
+                        .writeHeader("Origin", req.domain)
 
-                if(h3_enabled){
-                    // EXPERIMENTAL: alt-svc header for HTTP3
-                    res.cork(() => {
+                    if(h3_enabled){
+                        // EXPERIMENTAL: add alt-svc header for HTTP3
                         res.writeHeader("alt-svc", `h3=":${H3Port}"`)
-                    })
-                }
-
+                    }
+                })
+                    
                 return res
             }
 
             // Handle preflights:
             if(req.method == "OPTIONS"){
                 // Prevent preflights for 16 days... which chrome totally ignores anyway
-                res.corsHeaders().writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").writeHeader("CORS-is", "a piece of crap").end()
+                res.corsHeaders().writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
                 return
             }
 
             if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
                 req.fullBody = Buffer.from('');
 
-                // In my opinion; Body on GET requests SHOULD be allowed. There are many legitimate uses for it (eg. when I need to provide extra data, like a query, for the information i want to fetch).
-                // But since current browser implementations usually block the body for GET requests, I am also skipping their body proccessing.
-                // Weirdly enough, the spec itself does not prohibit body on GET requests, and yet it is still not widely available.
+                /*
+                    [Lukas]: In my opinion, body on GET requests SHOULD be allowed by browsers.
+                             There are many legitimate uses (eg. when needed to provide data, like a query, to the server so it knows what I want to fetch).
+                             But since current browser implementations usually block the body for GET requests, I am also currently skipping their body proccessing here.
+                             Weirdly enough, the spec itself does not prohibit body on GET requests, and yet it is still not available.
+                             In case that this gets sorted out in browsers, Ill happily add handling here
+                */
 
                 req.hasFullBody = false
                 req.contentType = req.getHeader('content-type');
@@ -801,9 +706,9 @@ function build(){
     // Initialize WebServer
     app.any('/*', (res, req) => resolve(res, req, Backend.isDev))
     
-    app.listen(port, (listenSocket) => {
+    app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
-            console.log(`[system] [ time:${Date.now()} ] > The Akeno server has started and is listening on port ${port}! Total hits so far: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${Date.now() - since_startup}ms`)
+            console.log(`[system] [ time:${Date.now()} ] > The Akeno server has started and is listening on port ${HTTPort}! Total hits so far: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${Date.now() - since_startup}ms`)
 
             // Configure SSL
             if(ssl_enabled) {
@@ -891,12 +796,72 @@ function build(){
                     });
                 }
             }
-        } else Backend.log.error("[error] Could not start the server!")
+        } else Backend.log.error("[error] Could not start the server on port " + HTTPort + "!")
     });
 
     Backend.resolve = resolve;
 
     if(Backend.config.block("server").properties.preloadWeb) Backend.addon("core/web");
+}
+
+
+// TODO:
+function shouldProxy(req, res, flags = {}, ws = false, wsContext){
+
+    if(!req.domain) req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
+
+    if(req.domain == "upedie.online"){
+        // Redirect to a diferent server on a specific port
+
+        if(!ws) return proxyReq(req, res, {port: 42069}), true;
+    }
+
+    if(req.domain.startsWith("proxy.") || req.domain.startsWith("gateway_") || req.domain.startsWith("gateway.") || req.domain.startsWith("discord.")){
+        let url,
+            subdomain = req.domain.split(".")[0],
+            query = req.getQuery(),
+            reportedUrl = decodeURIComponent(req.getUrl()).substring(1) + (query? `?${query}`: "")
+        ;
+
+        // Handle special cases
+        if(subdomain.startsWith("gateway_")){
+            reportedUrl = `http${(flags && flags.secured)? "s": ""}://${subdomain.replace("gateway_", "").replaceAll("_", ".")}/${reportedUrl}`
+        } else if(subdomain === "discord"){
+            reportedUrl = `https://discord.com/${reportedUrl}`
+        }
+
+        try {
+            url = new URL(decodeURIComponent(reportedUrl));
+        } catch {
+            return res.writeStatus("400 Bad Request").end("Proxy error: Invalid URL")
+        }
+
+        if(ws){
+            let headers = {};
+
+            req.forEach((key, value) => {
+                if(key.toLowerCase() === "host") return;
+
+                headers[key] = key.toLowerCase() === "origin"? "https://remote-auth-gateway.discord.gg" : value;
+            });
+
+            return proxyWebSocket(req, res, wsContext, {
+                url: decodeURIComponent(reportedUrl), parsedUrl: url, headers
+            }), true
+        }
+
+        return proxyReq(req, res, {
+            overwriteHeaders: noCorsHeaders,
+            hostname: url.hostname,
+            protocol: url.protocol,
+            path: url.pathname + url.search
+        }, {
+            mode: subdomain === "proxy"? "normal": "web",
+            subdomainMode: subdomain !== "proxy" && subdomain !== "gateway"
+        }), true
+    }
+
+    return false
 }
 
 
@@ -980,6 +945,7 @@ function build(){
             verify(something, options){
                 return jwt.verify(something, testKey, options)
             },
+
             sign(something, options){
                 return jwt.sign(something, testKey, options)
             }
@@ -1564,7 +1530,6 @@ Backend.exposeToDebugger("backend", Backend)
 Backend.exposeToDebugger("addons", AddonCache)
 Backend.exposeToDebugger("api", API)
 
-port = (+Backend.config.block("server").properties.port) || 7007;
 doHost = Backend.config.block("server").properties.enableHost == "prod"? !isDev: Backend.config.block("server").properties.enableHost;
 doBuild = Backend.config.block("server").properties.enableBuild;
 
