@@ -407,15 +407,12 @@ function parse_html_content(options){
                     return;
             }
 
-
-            // gee this parser sucks ass
-            // still sucks much less than the one in parser.js
-
-
             let blockPosition = text.indexOf("@");
 
             // Nothing to do, so just skip parsing entirely
             if(blockPosition === -1) return push(text);
+
+            push(text.substring(0, blockPosition));
 
             // Parse block
             function parseAt(initialBlockStart){
@@ -446,8 +443,6 @@ function parse_html_content(options){
                         // No error, send block for processing
                         process_block(block)
                         currentPosition ++;
-
-                        console.log(block);
 
                     }
 
