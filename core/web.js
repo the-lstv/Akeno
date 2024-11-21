@@ -136,10 +136,11 @@ const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- This is automatically gen
 
 const parser_regex = {
     keyword: /[\w-]/,
-    plain_value: /[\w-</>.*]/,
+    plain_value: /[\w-</>.*:]/,
     stringChar: /["'`]/,
     whitespace: /[\s\n\r\t]/,
-    singleton: ["area", "base", "br", "col", "command", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"]
+    singleton: ["area", "base", "br", "col", "command", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"],
+    plaintext_blocks: ["part"]
 }
 
 function map_resource(link, local_path){
@@ -201,8 +202,6 @@ function parse_html_content(options){
 
     // This gets called once a block finishes parsing, with the block in question.
     function process_block(block){
-        console.log(block);
-
         switch(block.name) {
             case "no-init": case "plain":
                 options.plain = true
@@ -210,6 +209,12 @@ function parse_html_content(options){
 
             case "dynamic":
                 options.dynamic = true
+                break;
+
+            case "print":
+                for(let attrib of block.attributes){
+                    push(attrib.replace(/\$\w+/, () => { return "" }))
+                }
                 break;
 
             case "import":
@@ -408,13 +413,14 @@ function parse_html_content(options){
 
             let blockPosition = text.indexOf("@");
 
-            // Nothing to do, so just skip parsing
+            // Nothing to do, so just skip parsing entirely
             if(blockPosition === -1) return push(text);
 
+            // Parse block
             function parseAt(initialBlockStart){
                 let currentPosition = initialBlockStart;
 
-                // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value)
+                // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value, 4 = plaintext until block end)
                 let stage = 0, next_stage = 0, parsedString = null, type = 1, confirmed = false, stringChar = null, block = {
                     name: "",
                     attributes: [],
@@ -423,19 +429,21 @@ function parse_html_content(options){
 
                 let parsingValueStart = currentPosition, parsingValueLength = 0, parsingValueSequenceBroken = false;
 
+                // Exit block
                 function exit(cancel){
                     blockPosition = text.indexOf("@", currentPosition);
                     
-                    if(cancel) currentPosition = initialBlockStart; else { currentPosition ++; process_block(block) };
+                    if(cancel) currentPosition = initialBlockStart; else {
+                        currentPosition ++; process_block(block)
+                    }
 
                     push(text.slice(currentPosition, blockPosition !== -1? blockPosition: text.length));
 
-                    if(blockPosition !== -1) parseAt(blockPosition); else {
-                        return
-                    }
+                    if(blockPosition !== -1) parseAt(blockPosition); else return;
                 }
 
-                function value_start(length = 0, positionOffset = 0){
+                function value_start(length = 0, positionOffset = 0, _type = null){
+                    if(_type !== null) type = _type;
                     parsingValueStart = currentPosition + positionOffset;
                     parsingValueLength = length;
                     parsingValueSequenceBroken = false;
@@ -469,6 +477,18 @@ function parse_html_content(options){
                         } else parsingValueLength ++
                     } else
 
+                    if(type === 4) {
+                        currentPosition += (text.indexOf("}", currentPosition) - currentPosition) -1;
+
+                        if(char === "}"){
+                            type = 0
+
+                            stage = next_stage
+
+                            parsedString = get_value()
+                        } else parsingValueLength ++
+                    } else
+
                     if(type === 3) {
                         if(!parser_regex.plain_value.test(char)){
                             type = 0
@@ -482,6 +502,7 @@ function parse_html_content(options){
                     // Also skip whitespace when possible.
                     if(type !== 0 || !parser_regex.whitespace.test(char)) switch(stage){
 
+                        // Beginning of a block name
                         case 0:
                             if(!/[\s\n\r\t\w({-]/.test(char)) return exit(true);
 
@@ -489,24 +510,31 @@ function parse_html_content(options){
 
                             if(!parser_regex.keyword.test(char)){
                                 type = 0;
-                                stage = 0.5;
+                                stage = 1;
                                 currentPosition --
                             }
                             break;
 
 
-
-                        case 0.5:
-                            if(!/[({]/.test(char)) return exit(true);
-
-                            stage = char === "("? 1: 4;
+                        // End of a block name
+                        case 1:
                             block.name = get_value().replace("@", "")
+
+                            if(char === "("){
+                                stage = 2;
+                            } else if (char === "{") {
+                                stage = 4;
+
+                                if(parser_regex.plaintext_blocks.indexOf(block.name) !== -1){
+                                    value_start(0, 1, 4)
+                                }
+                            } else return exit(true);
 
                             break;
 
 
                         // Attribute
-                        case 1:
+                        case 2:
                             if(char === ")" || char === ","){
                                 type = 0
                                 if(parsedString) block.attributes.push(parsedString.trim())
@@ -516,17 +544,16 @@ function parse_html_content(options){
 
                             if(parser_regex.stringChar.test(char)){
                                 stringChar = char
-                                type = 2
 
-                                value_start(0, 1)
+                                value_start(0, 1, 2)
 
-                                next_stage = 1
+                                next_stage = 2
                             } else if (parser_regex.plain_value.test(char)){
                                 type = 3
 
                                 value_start(1)
 
-                                next_stage = 1
+                                next_stage = 2
                             } else return exit(true)
 
                             break
@@ -554,9 +581,8 @@ function parse_html_content(options){
                             if(!parser_regex.keyword.test(char)) return exit(true);
 
                             stage = 5
-                            type = 1
 
-                            value_start(1)
+                            value_start(1, 0, 1)
                             break
 
 
@@ -602,16 +628,8 @@ function parse_html_content(options){
                         // Start of a value
                         case 6:
 
-                            // Push values
+                            // Push values - this *was* supposed to write in an array only if there are multiple values, but this made working with data harder - property values are now always an array
                             if(parsedString){
-                                // if(Array.isArray(block.properties[last_key])) {
-                                //     block.properties[last_key].push(parsedString)
-                                // } else if(block.properties[last_key]) {
-                                //     block.properties[last_key] = [block.properties[last_key], parsedString]
-                                // } else {
-                                //     block.properties[last_key] = parsedString
-                                // }
-
                                 if(block.properties[last_key]) {
                                     block.properties[last_key].push(parsedString)
                                 } else {
@@ -638,15 +656,13 @@ function parse_html_content(options){
                             } else {
                                 if(parser_regex.stringChar.test(char)){
                                     stringChar = char
-                                    type = 2
     
-                                    value_start(0, 1)
+                                    value_start(0, 1, 2)
     
                                     next_stage = 6
                                 } else if (parser_regex.plain_value.test(char)){
-                                    type = 3
     
-                                    value_start(1)
+                                    value_start(1, 0, 3)
     
                                     next_stage = 6
                                 } else return exit(true)
