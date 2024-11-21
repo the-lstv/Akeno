@@ -132,13 +132,14 @@ let latest_ls_version = fs.readFileSync("/www/content/akeno/cdn/ls/source/versio
     ls_url = null // Is set in initialization
 ;
 
-const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- This is automatically generated code -->\n<html lang="en">`);
+const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- This is auto-generated code! (Powered by LSTV Akeno 1.5.0) -->\n<html lang="en">`);
 
 const parser_regex = {
-    keyword: /[\w-]/,
+    keyword: /[\w-.]/,
     plain_value: /[\w-</>.*:]/,
     stringChar: /["'`]/,
     whitespace: /[\s\n\r\t]/,
+    digit: /^\d+(\.\d+)?$/,
     singleton: ["area", "base", "br", "col", "command", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"],
     plaintext_blocks: ["part"]
 }
@@ -420,21 +421,34 @@ function parse_html_content(options){
             function parseAt(initialBlockStart){
                 let currentPosition = initialBlockStart;
 
-                // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value, 4 = plaintext until block end)
-                let stage = 0, next_stage = 0, parsedString = null, type = 1, confirmed = false, stringChar = null, block = {
+                // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value, 4 = plaintext until block end, 5 = comment (single-line))
+                let stage = 0, next_stage = 0, parsedString = null, type = 1, revert_type = null, confirmed = false, stringChar = null, current_value_isString, block = {
                     name: "",
                     attributes: [],
                     properties: {}
                 }
 
-                let parsingValueStart = currentPosition, parsingValueLength = 0, parsingValueSequenceBroken = false;
+                let parsingValueStart = currentPosition, parsingValueLength = 1, parsingValueSequenceBroken = false;
 
                 // Exit block
-                function exit(cancel){
+                function exit(cancel, message = null){
+                    // Find next block
                     blockPosition = text.indexOf("@", currentPosition);
                     
-                    if(cancel) currentPosition = initialBlockStart; else {
-                        currentPosition ++; process_block(block)
+                    if(cancel) {
+
+                        // TODO: Throw/broadcast error on cancelled exit when strict mode
+                        // console.warn("[Parser Syntax Error] " + message + "\n  (at character " + currentPosition + ")");
+                        currentPosition = initialBlockStart;
+
+                    } else {
+
+                        // No error, send block for processing
+                        process_block(block)
+                        currentPosition ++;
+
+                        console.log(block);
+
                     }
 
                     push(text.slice(currentPosition, blockPosition !== -1? blockPosition: text.length));
@@ -489,6 +503,15 @@ function parse_html_content(options){
                         } else parsingValueLength ++
                     } else
 
+                    if(type === 5) {
+                        currentPosition += (text.indexOf("\n", currentPosition) - currentPosition) -1;
+
+                        if(char === "\n"){
+                            type = revert_type
+                            currentPosition--
+                        }
+                    } else
+
                     if(type === 3) {
                         if(!parser_regex.plain_value.test(char)){
                             type = 0
@@ -500,175 +523,196 @@ function parse_html_content(options){
                     } else
 
                     // Also skip whitespace when possible.
-                    if(type !== 0 || !parser_regex.whitespace.test(char)) switch(stage){
+                    if(type !== 0 || !parser_regex.whitespace.test(char)) {
 
-                        // Beginning of a block name
-                        case 0:
-                            if(!/[\s\n\r\t\w({-]/.test(char)) return exit(true);
+                        if(char === "#") { revert_type = type; type = 5; continue }
 
-                            parsingValueLength ++;
+                        switch(stage){
+    
+                            // Beginning of a block name
+                            case 0:
+                                if(!parser_regex.keyword.test(char)){
 
-                            if(!parser_regex.keyword.test(char)){
-                                type = 0;
-                                stage = 1;
-                                currentPosition --
-                            }
-                            break;
-
-
-                        // End of a block name
-                        case 1:
-                            block.name = get_value().replace("@", "")
-
-                            if(char === "("){
-                                stage = 2;
-                            } else if (char === "{") {
-                                stage = 4;
-
-                                if(parser_regex.plaintext_blocks.indexOf(block.name) !== -1){
-                                    value_start(0, 1, 4)
-                                }
-                            } else return exit(true);
-
-                            break;
-
-
-                        // Attribute
-                        case 2:
-                            if(char === ")" || char === ","){
-                                type = 0
-                                if(parsedString) block.attributes.push(parsedString.trim())
-                                if(char === ")") stage = 3;
-                                break;
-                            }
-
-                            if(parser_regex.stringChar.test(char)){
-                                stringChar = char
-
-                                value_start(0, 1, 2)
-
-                                next_stage = 2
-                            } else if (parser_regex.plain_value.test(char)){
-                                type = 3
-
-                                value_start(1)
-
-                                next_stage = 2
-                            } else return exit(true)
-
-                            break
-
-
-                        // Before a block
-                        case 3:
-                            if(!/[;{]/.test(char)) return exit(true);
-
-                            if(char === ";"){
-                                return exit()
-                            }
-
-                            stage = 4
-
-                            break
-
-
-                        // Looking for a keyword
-                        case 4:
-                            if(char === "}"){
-                                return exit()
-                            }
-
-                            if(!parser_regex.keyword.test(char)) return exit(true);
-
-                            stage = 5
-
-                            value_start(1, 0, 1)
-                            break
-
-
-                        // Keyword
-                        case 5:
-                            if(!parser_regex.keyword.test(char)){
-                                if(parser_regex.whitespace.test(char)) {
-                                    parsingValueSequenceBroken = true
-                                    break
-                                }
-
-                                const key = get_value().trim()
-
-                                type = 0
-
-                                if(char === ";" || char === "}") {
-
-                                    block.properties[key] = [true]
-                                    stage = 4
-
-                                    if(char === "}"){
-                                        return exit()
+                                    if(parser_regex.whitespace.test(char)) {
+                                        parsingValueSequenceBroken = true
+                                        break
                                     }
 
-                                } else if (char === ":") {
+                                    if(char !== "(" && char !== "{") return exit(true, "Unexpected character " + char);
 
-                                    last_key = key
-                                    parsedString = null
-                                    stage = 6
+                                    type = 0;
+                                    stage = 1;
+                                    currentPosition --
 
+                                } else if (parsingValueSequenceBroken) return exit(true, "Space in keyword names is not allowed"); else parsingValueLength ++;
+                                break;
+    
+    
+                            // End of a block name
+                            case 1:
+                                block.name = get_value().replace("@", "")
+    
+                                if(char === "("){
+                                    stage = 2;
+                                } else if (char === "{") {
+                                    stage = 4;
+    
+                                    if(parser_regex.plaintext_blocks.indexOf(block.name) !== -1){
+                                        value_start(0, 1, 4)
+                                    }
                                 } else return exit(true);
-                            } else {
-                                if(parsingValueSequenceBroken) {
-                                    return exit(true)
+    
+                                break;
+    
+    
+                            // Attribute
+                            case 2:
+                                if(char === ")" || char === ","){
+                                    type = 0
+                                    if(parsedString) block.attributes.push(parsedString.trim())
+                                    if(char === ")") stage = 3;
+                                    break;
                                 }
-
-                                parsingValueLength ++
-                            }
-
-                            break;
-
-
-                        // Start of a value
-                        case 6:
-
-                            // Push values - this *was* supposed to write in an array only if there are multiple values, but this made working with data harder - property values are now always an array
-                            if(parsedString){
-                                if(block.properties[last_key]) {
-                                    block.properties[last_key].push(parsedString)
-                                } else {
-                                    block.properties[last_key] = [parsedString]
-                                }
-
-                                parsedString = null
-                            }
-
-                            if(char === ","){
-
-                                type = 0
-                                stage = 6;
-                                
-                            } else if(char === ";"){
-
-                                type = 0
-                                stage = 4;
-
-                            } else if(char === "}"){
-
-                                return exit()
-
-                            } else {
+    
                                 if(parser_regex.stringChar.test(char)){
                                     stringChar = char
     
                                     value_start(0, 1, 2)
     
-                                    next_stage = 6
+                                    next_stage = 2
                                 } else if (parser_regex.plain_value.test(char)){
+                                    type = 3
     
-                                    value_start(1, 0, 3)
+                                    value_start(1)
     
-                                    next_stage = 6
+                                    next_stage = 2
                                 } else return exit(true)
-                            };
+    
+                                break
+    
+    
+                            // Before a block
+                            case 3:
+                                if(!/[;{]/.test(char)) return exit(true);
+    
+                                if(char === ";"){
+                                    return exit()
+                                }
+    
+                                stage = 4
+    
+                                break
+    
+    
+                            // Looking for a keyword
+                            case 4:
+                                if(char === "}"){
+                                    return exit()
+                                }
+    
+                                if(!parser_regex.keyword.test(char)) return exit(true);
+    
+                                stage = 5
+    
+                                value_start(1, 0, 1)
+                                break
+    
+    
+                            // Keyword
+                            case 5:
+                                if(!parser_regex.keyword.test(char)){
+                                    if(parser_regex.whitespace.test(char)) {
+                                        parsingValueSequenceBroken = true
+                                        break
+                                    }
+    
+                                    const key = get_value().trim()
+    
+                                    type = 0
+    
+                                    if(char === ";" || char === "}") {
+    
+                                        block.properties[key] = [true]
+                                        stage = 4
+    
+                                        if(char === "}"){
+                                            return exit()
+                                        }
+    
+                                    } else if (char === ":") {
+    
+                                        last_key = key
+                                        parsedString = null
+                                        stage = 6
+    
+                                    } else return exit(true);
+                                } else {
+                                    if(parsingValueSequenceBroken) {
+                                        return exit(true)
+                                    }
+    
+                                    parsingValueLength ++
+                                }
+    
+                                break;
+    
+    
+                            // Start of a value
+                            case 6:
+    
+                                // Push values - this *was* supposed to write in an array only if there are multiple values, but this made working with data harder - property values are now always an array
+                                if(parsedString){
 
-                            break;
+                                    if(!current_value_isString){
+                                        if(parsedString === "true") parsedString = true;
+                                        else if(parsedString === "false") parsedString = false;
+                                        else if(parser_regex.digit.test(parsedString)) parsedString = Number(parsedString);
+                                    }
+
+                                    if(block.properties[last_key]) {
+                                        block.properties[last_key].push(parsedString)
+                                    } else {
+                                        block.properties[last_key] = [parsedString]
+                                    }
+    
+                                    parsedString = null
+                                }
+
+                                current_value_isString = false;
+    
+                                if(char === ","){
+    
+                                    type = 0
+                                    stage = 6;
+                                    
+                                } else if(char === ";"){
+    
+                                    type = 0
+                                    stage = 4;
+    
+                                } else if(char === "}"){
+    
+                                    return exit()
+    
+                                } else {
+                                    if(parser_regex.stringChar.test(char)){
+                                        current_value_isString = true;
+                                        stringChar = char
+        
+                                        value_start(0, 1, 2)
+        
+                                        next_stage = 6
+                                    } else if (parser_regex.plain_value.test(char)){
+                                        current_value_isString = false;
+        
+                                        value_start(1, 0, 3)
+        
+                                        next_stage = 6
+                                    } else return exit(true)
+                                };
+    
+                                break;
+                        }
                     }
                 }
 
@@ -905,7 +949,7 @@ server = {
                             // Once that support is done, I will implement that
 
                             // Check if the file exists in cache and has not been changed since
-                            let cache = !Backend.isDev ? 1 : cachedFile(file);
+                            let cache = Backend.isDev ? 1 : cachedFile(file);
 
                             const baseName = nodePath.basename(file);
                             let extension = baseName, lastIndex = baseName.lastIndexOf('.');
