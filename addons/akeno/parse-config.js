@@ -1,1 +1,0 @@
-/www/content/akeno/core/parser.js

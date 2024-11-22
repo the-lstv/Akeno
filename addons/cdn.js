@@ -2,48 +2,21 @@ let backend,
     api,
 
     fs = require("fs"),
-    mime,
     sharp = require('sharp'),
+    mime,
 
-    CleanCSS = new (require('clean-css'))({
-        keepSpecialComments: '*'
-    }),
-
-    UglifyJS = require("uglify-js"),
-
-    lsCache = {},
     fileMetadataCache = {},
-
 
     // Libraries
     libLocations
 ;
 
-var Path = "/www/content/akeno/cdn",
-    CompiledPath = Path + "/ls/compiled/",
-    SourcePath = Path + "/ls/source/"
-;
+const cdn_path = "/www/content/akeno/cdn";
+const ls_api = require(cdn_path + "/ls/source/backend/api");
 
-fs.writeFileSync(SourcePath + "ls.min.css", CleanCSS.minify(fs.readFileSync(SourcePath + "ls.css", "utf8").replaceAll("/*]", "/*! ]")).styles.replaceAll("/*! ]", "/*]"))
-fs.writeFileSync(SourcePath + "ls.min.js", UglifyJS.minify(fs.readFileSync(SourcePath + "ls.js", "utf8"), {
-    output: {
-        comments: /\]/
-    }
-}).code)
+var STREAM_CHUNK_SIZE = 8_000_000;
 
-fileMetadataCache = JSON.parse(fs.readFileSync(Path + "/metadata.cache.json", "utf8"))
-
-// app.use(compression)
-
-// Set up multer for file uploads
-// const storage = multer.diskStorage({
-//     destination: Path + '/temp/',
-//     filename: (req, file, callback) => {
-//         callback(null, backend.uuid());
-//     }
-// });
-
-// const upload = multer({ storage });
+fileMetadataCache = JSON.parse(fs.readFileSync(cdn_path + "/metadata.cache.json", "utf8"))
 
 function mostCommonItem(arr) {
     const frequency = arr.reduce((acc, item) => {
@@ -112,12 +85,54 @@ function updateMetadataOf(hash, patch){
 }
 
 function saveMetadata(){
-    fs.writeFileSync(Path + "/metadata.cache.json", JSON.stringify(fileMetadataCache))
+    fs.writeFileSync(cdn_path + "/metadata.cache.json", JSON.stringify(fileMetadataCache))
 }
 
-// CDN API:
+function send(req, res, data = {}, cache = false, type = null, isFilePath){
+    let mime = type || (typeof data == "object"? "application/json" : typeof data == "string" ? "text/plain" : "application/octet-stream");
 
-var STREAM_CHUNK_SIZE = 8_000000; // When streaming videos, how many bytes should a chunk have
+    let headers = {
+        'cache-control': (cache === false? "no-cache" : (typeof cache == "number" ? `public, max-age=${cache}` : cache)) || "max-age=60",
+        'content-type': `${mime}; charset=UTF-8`
+    }
+
+    if(isFilePath){
+        const range = req.getHeader("range");
+
+        if (range) {
+            const fileSize = fs.statSync(data).size;
+
+            // const parts = range.replace(/bytes=/, '').split('-');
+            // const start = parseInt(parts[0], 10);
+            // const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 1000000, fileSize - 1);
+
+            const start = Number(range.replace(/\D/g, ""));
+            const end = Math.min(start + STREAM_CHUNK_SIZE, fileSize - 1);
+
+            const chunkSize = end - start;
+            const file = fs.createReadStream(data, { start, end });
+
+            res.cork(() => {
+                // Begin stream with the proper headers
+                res.writeStatus('206').corsHeaders().writeHeaders({
+                    ...headers,
+                    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                    'Accept-Ranges': 'bytes'
+                });
+            })
+
+            res.stream(file, chunkSize);
+        } else {
+            res.writeHeaders(headers).stream(fs.createReadStream(data), fs.statSync(data).size);
+            // fs.createReadStream(data).pipe(res);
+        }
+        return
+    }
+
+    // res[(!type && (Array.isArray(data) || (typeof data == "object" && Object.prototype.toString.call(data) === '[object Object]'))? "json" : "send")](data);
+    res.send(data, headers);
+}
+
 
 api = {
     Initialize(backend_){
@@ -125,32 +140,18 @@ api = {
 
         mime = backend.mime;
 
-        try {
-            // Reserve API error codes from 1201 to 1300
-
-            api.errorRange = backend.claimErrorCodeRange(1201, 1300)
-
-            // api.errorRange.errors({
-            //     1201: "Hi (Reserved for future use)"
-            // })
-        } catch (e) {
-            api.log.warn("Could not reserve errors (", e.toString(), ")")
-        }
-
         api.Reload(true)
     },
 
-        
-    async Reload(firstTime){
-        if(!firstTime){
+
+    async Reload(server_initiated){
+        if(!server_initiated){
             backend.refreshConfig()
         }
-
-        version = backend.config.valueOf("version") || "unknown";
     
         let libConfig = backend.config.block("cdn.libraries");
     
-        libLocations = libConfig && libConfig.properties.locations? libConfig.properties.locations : [Path + "/lib/*"]
+        libLocations = libConfig && libConfig.properties.locations? libConfig.properties.locations : [cdn_path + "/lib/*"]
 
         await api.LoadLibraries();
     },
@@ -185,51 +186,6 @@ api = {
 
 
     async HandleRequest({segments, shift, error, req, res}){
-        function send(data = {}, cache = false, type = null, isFilePath){
-            let mime = type || (typeof data == "object"? "application/json" : typeof data == "string" ? "text/plain" : "application/octet-stream");
-
-            let headers = {
-                'cache-control': (cache === false? "no-cache" : (typeof cache == "number" ? `public, max-age=${cache}` : cache)) || "max-age=60",
-                'content-type': `${mime}; charset=UTF-8`
-            }
-
-            if(isFilePath){
-                const range = req.getHeader("range");
-
-                if (range) {
-                    const fileSize = fs.statSync(data).size;
-
-                    // const parts = range.replace(/bytes=/, '').split('-');
-                    // const start = parseInt(parts[0], 10);
-                    // const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 1000000, fileSize - 1);
-
-                    const start = Number(range.replace(/\D/g, ""));
-                    const end = Math.min(start + STREAM_CHUNK_SIZE, fileSize - 1);
-
-                    const chunkSize = end - start;
-                    const file = fs.createReadStream(data, { start, end });
-
-                    res.cork(() => {
-                        // Begin stream with the proper headers
-                        res.writeStatus('206').corsHeaders().writeHeaders({
-                            ...headers,
-                            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                            'Accept-Ranges': 'bytes'
-                        });
-                    })
-
-                    res.stream(file, chunkSize);
-                } else {
-                    res.writeHeaders(headers).stream(fs.createReadStream(data), fs.statSync(data).size);
-                    // fs.createReadStream(data).pipe(res);
-                }
-                return
-            }
-
-            // res[(!type && (Array.isArray(data) || (typeof data == "object" && Object.prototype.toString.call(data) === '[object Object]'))? "json" : "send")](data);
-            res.send(data, headers);
-        }
-
         let file;
 
         let first = segments.shift();
@@ -237,13 +193,12 @@ api = {
         switch(req.method){
             case "GET":
                 switch(first){
-                    case"lib":
+                    case "lib":
                         // Library
-
                         req.end("a")
                     break;
 
-                    case"file":
+                    case "file":
 
                         // FIXME: This needs changes
 
@@ -255,7 +210,7 @@ api = {
 
                         file = [(fileName.split(".").slice(0,-1)[0]) || fileName, fileName.split(".").length > 1 ? fileName.split(".").slice(-1)[0].replace(/\?.*/, ""): ""]
 
-                        let filePath = Path + "/file/" + file[0],
+                        let filePath = cdn_path + "/file/" + file[0],
                             mimeType = mime.getType(file[1]) || "text/plain",
                             exists = fs.existsSync(filePath),
                             content
@@ -288,12 +243,12 @@ api = {
                         }
 
                         if(fs.lstatSync(filePath).isDirectory()){
-                            send(fs.readdirSync(filePath))
+                            send(req, res, fs.readdirSync(filePath))
                             return
                         }
 
                         if(segments[1] && segments[1].toLowerCase() == "checknsfw"){
-                            send(await imageCheckNSFW(file[0]))
+                            send(req, res, await imageCheckNSFW(file[0]))
                             return 
                         }
 
@@ -316,15 +271,14 @@ api = {
                             }).toBuffer()
                         }
 
-                        send(content || filePath, 31536000, mimeType, content? false : true)
+                        send(req, res, content || filePath, 31536000, mimeType, content? false : true)
                         return;
-                    break;
 
-                    case"archive":
+                    case "archive":
                         (() => {
                             let file = segments.join("/"),
                                 extension = file.split(".").at(-1).toLowerCase(),
-                                filePath = Path + "/archive/" + segments.join("/"),
+                                filePath = cdn_path + "/archive/" + segments.join("/"),
                                 mimeType = mime.getType(extension) || "text/plain",
                                 exists = fs.existsSync(filePath),
                                 content
@@ -335,18 +289,17 @@ api = {
                             }
     
                             if(fs.lstatSync(filePath).isDirectory()){
-                                send(fs.readdirSync(filePath))
+                                send(req, res, fs.readdirSync(filePath))
                                 return
                             }
 
-                            send(content || filePath, 31536000, mimeType, content? false : true)
+                            send(req, res, content || filePath, 31536000, mimeType, content? false : true)
                             return
                         })()
                         return;
-                    break;
 
                     case "docs": case "docs.html": case "docs.htm":
-                        send(Path + "/docs.html", false, "text/html", true)
+                        send(req, res, cdn_path + "/docs.html", false, "text/html", true)
                     break
 
                     case "ls":
@@ -354,76 +307,28 @@ api = {
                             This code handles transfer of the framework.
                         */
 
-                        segments = segments.map(segment => segment.toLowerCase());
-
-                        let version = segments[2]? segments[1] : null;
-
-                        if (!segments[2]) {
-                            //If no version string is passed
-                            segments[2] = segments[1] || ""
-                        }
-
-                        let code,
-                            defaultsList = ["eventresolver", "default", "events"],
-                            list = segments[2] ? segments[2].split(",") : ["*"]
-                        ;
-
-                        file = segments[0].split(".").reverse().join(".")
-                        
-                        if (backend.isDev || !fs.existsSync(CompiledPath + "ls." + file + ".json")) {
-                            if (backend.isDev || fs.existsSync(SourcePath + "ls." + file)){
-                                code = lsParse(fs.readFileSync(SourcePath + "ls." + file, "utf8"), file.endsWith("min.js"))
-                                fs.writeFileSync(CompiledPath + "ls." + file + ".json", JSON.stringify(code, ...(backend.isDev? [null, 4]: [])))
-                            }else{
-                                return error(43)
-                            }
-                        }
-                    
-                        // We parse the code.
-                        if(!code){
-                            if(lsCache[file]){
-                                code = lsCache[file]
-                            }else{
-                                code = fs.readFileSync(CompiledPath + "ls." + file + ".json", "utf8");
-                                code = JSON.parse(code)
-                                lsCache[file] = code
-                            }
-                        }
-                    
-                        if(list.includes("@bare")){
-                            defaultsList = []
-                        }
-                    
-                        list.push(...defaultsList);
-                    
-                        // Now we perform a tree-shake, where we only include needed components, recruisively.
-                        code = lsShake(code.content, list).replace(/\/\*\*\/|\/\*\//g, "").trim();
-
-                        // Bugs with minification
-                        if(code.endsWith(",;")) code = code.replace(",;", ";")
-                        code = code.replace(",,LS", ",LS")
-
-                        send(code, backend.isDev? "no-cache": 31536000, file.endsWith("js")? "text/javascript": file.endsWith("css")? "text/css": "text/plain")
+                        ls_api.HandleRequest({ req, res, segments, error })
                     break;
+
                     default:
-                        file = Path + "/" + first + "/" + req.path;
+                        file = cdn_path + "/" + first + "/" + req.path;
 
                         if(fs.existsSync(file)){
                             if(fs.lstatSync(file).isDirectory()){
-                                send(fs.readdirSync(file))
+                                send(req, res, fs.readdirSync(file))
                                 return
                             }
 
-                            send(file, (args.includes("@version") || args.includes("@refresh"))? false : 345600, first == "flags"? "image/svg+xml": "application/octet-stream", true)
+                            send(req, res, file, (args.includes("@version") || args.includes("@refresh"))? false : 345600, first == "flags"? "image/svg+xml": "application/octet-stream", true)
                         } else {
                             error(43)
                         }
                 }
             break;
 
-            case"POST":
+            case "POST":
                 switch(first){
-                    case"upload": case"file":
+                    case "upload": case "file":
                         req.parseBody(async (data, fail) => {
                             if(fail){
                                 return error(fail)
@@ -474,7 +379,7 @@ api = {
                                     })
                                 }
 
-                                let newPath = Path + '/file/' + file.md5,
+                                let newPath = cdn_path + '/file/' + file.md5,
                                     result = {
                                         success: true,
                                         mimeType,
@@ -508,299 +413,18 @@ api = {
                                 finalResult.push(result)
                             }
 
-                            send(finalResult);
+                            send(req, res, finalResult);
                         }).upload("file", true)
                     break;
                     default:
                         error(1)
                 }
             break;
+
             default:
                 error(39)
         }
     }
 };
-
-
-function lsShake(tree, list) {
-    let result = "",
-        all = list.includes("*")
-    ;
-    function recruisive(array) {
-        for(let o of array){
-            if(typeof o == "string"){
-                result += o
-            }else{
-                if(!o.hasOwnProperty("segment") || list.includes(o.segment.toLowerCase()) || all){
-                    recruisive(o.content)
-                }
-            }
-        }
-    }
-    recruisive(tree)
-    return result
-}
-
-
-function lsParse(code, compression){
-    let tokens = [],
-        cs = "",
-        matching = false,
-        matchStart = ["/*]", "//]"],
-        matchEnd = ["*/"]
-        matchType = "",
-        skip = 0,
-        matchingName = false,
-        name = "",
-        nameList = [],
-        matchingKeyword = false,
-        keywordMatch = /[[a-zA-Z#{}_]/,
-        keyword = "",
-        i = -1,
-        variables = {}
-    ;
-
-    function stringVar(str){
-        return (str||"").replace(/\$[\w\-\_]+/g, (a)=>{
-            return stringVar(variables[a.replace("$", "").toLowerCase().trim()])
-        })
-    }
-
-    function push(){
-        if(cs){
-            if(typeof tokens[tokens.length-1] == "string"){
-                tokens[tokens.length-1] += cs
-            }else{
-                tokens.push(cs)
-            }
-        }
-        cs = ""
-    }
-
-    //.split() is necessary since we need to split multi-symbol characters like emojis to not cause total chaos
-    for(let s of code.split("")){
-
-        // Parses the raw code (makes tokens)
-
-        i++;
-
-        if(skip > 0){
-            skip--
-            continue
-        }
-        if(matchingKeyword){
-            if(s=="*" ||s=="(" || !keywordMatch.test(s)){
-                matchingKeyword = false
-                push()
-                if(
-                    //If a keyword should start matching an attribute
-                    s == "("
-                ){
-                    name = ""
-                    matchingName = true
-                } else {
-                    if( s=="*" && code[i+1] == "/" ){
-                        skip++
-                        matching = false
-                    }
-                    tokens.push({keyword})
-                }
-                continue
-            }
-            keyword += s
-            continue
-        }
-        if(matchingName){
-            if(s==")"){
-                matchingName = false
-                tokens.push({keyword,value: name})
-                continue
-            }
-            name += s;
-            continue
-        }
-        if(matching){
-            if(s == "{"){
-                continue
-            }
-            let _end = matchEnd.find((v)=>{
-                return code.substring(i, i+v.length) == v
-            });
-            if(
-                //Conditions to stop parsing attriutes
-                _end ||
-                (matchType == "//" && s == "\n")
-            ){
-                push()
-                if(matchType != "//"){skip += _end.length-1}
-                matching = false
-                matchType = ""
-                continue
-            }
-            if(
-                //Conditions to start parsing an attribute
-                keywordMatch.test(s)
-            ){
-                keyword = s
-                matchingKeyword = true
-                continue
-            }
-            continue
-        }
-        let _start = matchStart.find((v)=>{
-            return code.substring(i, i+v.length) == v
-        })
-        if(
-            //Conditions to start parsing attriutes
-            _start
-        ){
-            matchType = _start
-            push()
-            skip += _start.length-1
-            matching = true
-            continue
-        }
-
-        cs+=s
-    }
-
-    push()
-    tokens.push(cs)
-    tokens = tokens.filter(g => g)
-    let level = 0;
-
-    function parse(start) {
-        let result = [],
-            processed = 0,
-            skip = 0,
-            part = ""
-        ;
-        function quit(){
-            return [processed,  result]
-        }
-        for (let i=0;i<tokens.length-start;i++){
-            let globalI = start+i,
-                token = tokens[globalI]
-
-            processed++;
-            if(skip>0){
-                skip--
-                if(globalI + skip >= (tokens.length -1)){
-                    return quit()
-                }
-                continue
-            }
-
-            if (typeof token == "object") {
-                switch(token.keyword){
-                    case"print":
-                        result.push(stringVar(token.value.replaceAll("$name", part)))
-                    break;
-
-                    case"switch_dev":
-                        let values = stringVar(token.value).split(",").map(asd => asd.trim());
-                        result.push(backend.isDev? values[0] : values[1])
-                    break;
-
-                    case"mark":
-                        //...
-                    break;
-
-                    case"set":
-                        token.value = token.value.split(":")
-                        variables[token.value.shift().toLowerCase().trim()] = token.value.join(":")
-                    break;
-
-                    case"get":
-                        result.push(variables[token.value.toLowerCase().trim()])
-                    break;
-
-                    case"import": case"include":
-                        if(!compression){
-                            result.push("\n")
-                        }
-
-                        if(!Array.isArray(token.value))token.value = stringVar(token.value).split(",").map(e=>
-                            e.split(":").map(t=>t.trim()).filter(g=>g)
-                        );
-
-                        for(imp of token.value){
-                            let isComponent = !!imp[1],
-                                file = imp[0],
-                                name = imp[1].replace("-", ""),
-                                _result = {},
-                                text = fs.readFileSync(SourcePath + file, "utf8")
-                            ;
-
-                            if(imp[2] == "-f") text = text.replace("function ", "");
-
-                            text = (imp[2]=="js"? name + "(gl)": "") + text
-                            
-                            if(text && compression) {
-                                text = UglifyJS.minify((imp[2]=="js"? "function ": "") + text, {
-                                    output: {
-                                        comments: /\]/
-                                    }
-                                }).code || "";
-                                if(imp[2]=="js") text = text.replace("function ", "")
-                            }
-
-                            text = text +(imp[2]=="js"?",":"");
-
-                            if(imp[2] == "escape.template") text=text.replaceAll("`", "\\`").replaceAll("${", "$\\{");
-
-                            let parsed = 
-                                    imp[2]=="plain" ? {content:[text]} :
-                                    lsParse(
-                                        text
-                                    )
-                            ;
-
-                            if(parsed.components) nameList.push(...parsed.components)
-                            
-                            if(isComponent){
-                                _result.segment = name.toLowerCase()
-                                nameList.push(name)
-                            }
-
-                            _result.content = parsed.content
-                            _result.from = file
-
-                            result.push(_result)
-                        }
-
-                    break;
-
-                    case"part": case"default":
-                        token.values = stringVar(token.value)
-                        level++;
-                        nameList.push(token.value)
-                        let scope = parse(globalI + 1);
-                        skip = scope[0]
-                        part = token.value
-                        result.push({segment: (token.value || "default").toLowerCase(), content: scope[1]})
-                    break;
-
-                    case"end": case"}":
-                        level--;
-                    return quit()
-                    
-                    case"#":
-
-                    break;
-
-                    default:
-                        // console.warn("Unknown keyword: " + token.keyword)
-                    break;
-                }
-            } else {
-                result.push(compression? token.trim() : token)
-            }
-        }
-        return quit()
-    }
-    let content = parse(0)[1];
-    return {components: [...new Set(nameList)].filter(g=>g).map(t=>t.toLowerCase()), content: content}
-}
 
 module.exports = api;
