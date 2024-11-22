@@ -22,7 +22,7 @@ let
     { Parser } = require('htmlparser2'),
 
     // Local libraries
-    { parse, configTools } = require("./parser"),
+    { parse, parser_regex, configTools } = require("./parser"),
 
     // Globals
     server,
@@ -30,8 +30,8 @@ let
     applications = new Map,
     applicationCache = [], // debug purposes
 
-    // Backend object
-    Backend,
+    // backend object
+    backend,
 
     // Cache && optimisation helpers
     assignedDomains = new Map,
@@ -126,23 +126,12 @@ function checkSupportedBrowser(userAgent, properties) {
 }
 
 
-
-
 let latest_ls_version = fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8").trim(),
-    ls_url = null // Is set in initialization
+
+    // Is set in initialization
+    ls_url = null,
+    html_header = null
 ;
-
-const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- This is auto-generated code! (Powered by LSTV Akeno 1.5.0) -->\n<html lang="en">`);
-
-const parser_regex = {
-    keyword: /[\w-.]/,
-    plain_value: /[\w-</>.*:]/,
-    stringChar: /["'`]/,
-    whitespace: /[\s\n\r\t]/,
-    digit: /^\d+(\.\d+)?$/,
-    singleton: ["area", "base", "br", "col", "command", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"],
-    plaintext_blocks: ["part"]
-}
 
 function map_resource(link, local_path){
     if(local_path && !link.startsWith("http")){
@@ -164,7 +153,7 @@ function parse_html_content(options){
 
     const output = [ null ]; // null for the header
 
-    let head_string_index = null, head = "";
+    let head_string_index = null, head = options.head || '<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
 
     let now = performance.now();
 
@@ -279,7 +268,7 @@ function parse_html_content(options){
                 if(block.properties["ls-js"]){
                     misc.default_attributes.body.ls = "";
             
-                    let url = `${ls_url}${Backend.isDev? "js" : "js.min"}/${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}`;
+                    let url = `${ls_url}${backend.isDev? "js" : "js.min"}/${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}`;
                     
                     head += `<script src="${url}"></script>`;
                 }
@@ -395,7 +384,6 @@ function parse_html_content(options){
         },
 
         ontext(text) {
-
             // Inline script/style compression
             switch (currentTag){
                 case "script":
@@ -407,316 +395,7 @@ function parse_html_content(options){
                     return;
             }
 
-            let blockPosition = text.indexOf("@");
-
-            // Nothing to do, so just skip parsing entirely
-            if(blockPosition === -1) return push(text);
-
-            push(text.substring(0, blockPosition));
-
-            // Parse block
-            function parseAt(initialBlockStart){
-                let currentPosition = initialBlockStart;
-
-                // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value, 4 = plaintext until block end, 5 = comment (single-line))
-                let stage = 0, next_stage = 0, parsedString = null, type = 1, revert_type = null, confirmed = false, stringChar = null, current_value_isString, block = {
-                    name: "",
-                    attributes: [],
-                    properties: {}
-                }
-
-                let parsingValueStart = currentPosition, parsingValueLength = 1, parsingValueSequenceBroken = false;
-
-                // Exit block
-                function exit(cancel, message = null){
-                    // Find next block
-                    blockPosition = text.indexOf("@", currentPosition);
-                    
-                    if(cancel) {
-
-                        // TODO: Throw/broadcast error on cancelled exit when strict mode
-                        // console.warn("[Parser Syntax Error] " + message + "\n  (at character " + currentPosition + ")");
-                        currentPosition = initialBlockStart;
-
-                    } else {
-
-                        // No error, send block for processing
-                        process_block(block)
-                        currentPosition ++;
-
-                    }
-
-                    push(text.slice(currentPosition, blockPosition !== -1? blockPosition: text.length));
-
-                    if(blockPosition !== -1) parseAt(blockPosition); else return;
-                }
-
-                function value_start(length = 0, positionOffset = 0, _type = null){
-                    if(_type !== null) type = _type;
-                    parsingValueStart = currentPosition + positionOffset;
-                    parsingValueLength = length;
-                    parsingValueSequenceBroken = false;
-                    parsedString = null;
-                }
-
-                function get_value(){
-                    return text.slice(parsingValueStart, parsingValueStart + parsingValueLength)
-                }
-
-                let last_key;
-    
-                while(currentPosition < text.length){
-                    currentPosition ++;
-    
-                    const char = text[currentPosition];
-
-                    // console.log("parsing at", currentPosition, "stage:", stage, "type:", type, char);
-
-                    if(type === 2) {
-                        // currentPosition += (text.indexOf(stringChar, currentPosition) - currentPosition) -1;
-
-                        if(char === stringChar && text[currentPosition -1] !== "\\"){
-                            type = 0
-
-                            // if(stage !== next_stage) currentPosition--;
-
-                            stage = next_stage
-
-                            parsedString = get_value()
-                        } else parsingValueLength ++
-                    } else
-
-                    if(type === 4) {
-                        currentPosition += (text.indexOf("}", currentPosition) - currentPosition) -1;
-
-                        if(char === "}"){
-                            type = 0
-
-                            stage = next_stage
-
-                            parsedString = get_value()
-                        } else parsingValueLength ++
-                    } else
-
-                    if(type === 5) {
-                        currentPosition += (text.indexOf("\n", currentPosition) - currentPosition) -1;
-
-                        if(char === "\n"){
-                            type = revert_type
-                            currentPosition--
-                        }
-                    } else
-
-                    if(type === 3) {
-                        if(!parser_regex.plain_value.test(char)){
-                            type = 0
-                            stage = next_stage
-                            currentPosition--
-
-                            parsedString = get_value()
-                        } else parsingValueLength ++
-                    } else
-
-                    // Also skip whitespace when possible.
-                    if(type !== 0 || !parser_regex.whitespace.test(char)) {
-
-                        if(char === "#") { revert_type = type; type = 5; continue }
-
-                        switch(stage){
-    
-                            // Beginning of a block name
-                            case 0:
-                                if(!parser_regex.keyword.test(char)){
-
-                                    if(parser_regex.whitespace.test(char)) {
-                                        parsingValueSequenceBroken = true
-                                        break
-                                    }
-
-                                    if(char !== "(" && char !== "{") return exit(true, "Unexpected character " + char);
-
-                                    type = 0;
-                                    stage = 1;
-                                    currentPosition --
-
-                                } else if (parsingValueSequenceBroken) return exit(true, "Space in keyword names is not allowed"); else parsingValueLength ++;
-                                break;
-    
-    
-                            // End of a block name
-                            case 1:
-                                block.name = get_value().replace("@", "")
-    
-                                if(char === "("){
-                                    stage = 2;
-                                } else if (char === "{") {
-                                    stage = 4;
-    
-                                    if(parser_regex.plaintext_blocks.indexOf(block.name) !== -1){
-                                        value_start(0, 1, 4)
-                                    }
-                                } else return exit(true);
-    
-                                break;
-    
-    
-                            // Attribute
-                            case 2:
-                                if(char === ")" || char === ","){
-                                    type = 0
-                                    if(parsedString) block.attributes.push(parsedString.trim())
-                                    if(char === ")") stage = 3;
-                                    break;
-                                }
-    
-                                if(parser_regex.stringChar.test(char)){
-                                    stringChar = char
-    
-                                    value_start(0, 1, 2)
-    
-                                    next_stage = 2
-                                } else if (parser_regex.plain_value.test(char)){
-                                    type = 3
-    
-                                    value_start(1)
-    
-                                    next_stage = 2
-                                } else return exit(true)
-    
-                                break
-    
-    
-                            // Before a block
-                            case 3:
-                                if(!/[;{]/.test(char)) return exit(true);
-    
-                                if(char === ";"){
-                                    return exit()
-                                }
-    
-                                stage = 4
-    
-                                break
-    
-    
-                            // Looking for a keyword
-                            case 4:
-                                if(char === "}"){
-                                    return exit()
-                                }
-    
-                                if(!parser_regex.keyword.test(char)) return exit(true);
-    
-                                stage = 5
-    
-                                value_start(1, 0, 1)
-                                break
-    
-    
-                            // Keyword
-                            case 5:
-                                if(!parser_regex.keyword.test(char)){
-                                    if(parser_regex.whitespace.test(char)) {
-                                        parsingValueSequenceBroken = true
-                                        break
-                                    }
-    
-                                    const key = get_value().trim()
-    
-                                    type = 0
-    
-                                    if(char === ";" || char === "}") {
-    
-                                        block.properties[key] = [true]
-                                        stage = 4
-    
-                                        if(char === "}"){
-                                            return exit()
-                                        }
-    
-                                    } else if (char === ":") {
-    
-                                        last_key = key
-                                        parsedString = null
-                                        stage = 6
-    
-                                    } else return exit(true);
-                                } else {
-                                    if(parsingValueSequenceBroken) {
-                                        return exit(true)
-                                    }
-    
-                                    parsingValueLength ++
-                                }
-    
-                                break;
-    
-    
-                            // Start of a value
-                            case 6:
-    
-                                // Push values - this *was* supposed to write in an array only if there are multiple values, but this made working with data harder - property values are now always an array
-                                if(parsedString){
-
-                                    if(!current_value_isString){
-                                        if(parsedString === "true") parsedString = true;
-                                        else if(parsedString === "false") parsedString = false;
-                                        else if(parser_regex.digit.test(parsedString)) parsedString = Number(parsedString);
-                                    }
-
-                                    if(block.properties[last_key]) {
-                                        block.properties[last_key].push(parsedString)
-                                    } else {
-                                        block.properties[last_key] = [parsedString]
-                                    }
-    
-                                    parsedString = null
-                                }
-
-                                current_value_isString = false;
-    
-                                if(char === ","){
-    
-                                    type = 0
-                                    stage = 6;
-                                    
-                                } else if(char === ";"){
-    
-                                    type = 0
-                                    stage = 4;
-    
-                                } else if(char === "}"){
-    
-                                    return exit()
-    
-                                } else {
-                                    if(parser_regex.stringChar.test(char)){
-                                        current_value_isString = true;
-                                        stringChar = char
-        
-                                        value_start(0, 1, 2)
-        
-                                        next_stage = 6
-                                    } else if (parser_regex.plain_value.test(char)){
-                                        current_value_isString = false;
-        
-                                        value_start(1, 0, 3)
-        
-                                        next_stage = 6
-                                    } else return exit(true)
-                                };
-    
-                                break;
-                        }
-                    }
-                }
-
-                if(!confirmed) return exit(true);
-
-                exit()
-            }
-
-            parseAt(blockPosition)
+            parse({ content: text, onText: push, onBlock: process_block, embedded: true, strict: false })
         },
 
         onclosetag(name) {
@@ -818,24 +497,26 @@ function condense_parsed_output(data, allow_dynamic_content) {
 
 // Section: request handling
 server = {
-    Initialize(Backend_){
-        Backend = Backend_;
+    Initialize(_backend){
+        backend = _backend;
+
         server.Reload(true)
 
-        mime = Backend.mime;
+        mime = backend.mime;
 
-        ls_url = `http${Backend.isDev? "" : "s"}://cdn.extragon.${Backend.isDev? "test" : "cloud"}/ls/`
+        ls_url = `http${backend.isDev? "" : "s"}://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
+        html_header = Buffer.from(`<!DOCTYPE html>\n<!-- This is auto-generated code! (Powered by LSTV Akeno ${backend.version}) -->\n<html lang="en">`)
     },
     
     async Reload(firstTime){
 
         if(!firstTime){
-            Backend.refreshConfig()
+            backend.refreshConfig()
         }
 
-        version = Backend.config.valueOf("version") || "unknown";
+        version = backend.config.valueOf("version") || "unknown";
     
-        let webConfig = Backend.config.block("web");
+        let webConfig = backend.config.block("web");
     
         // Directories with web apps
         locations = webConfig && webConfig.properties.locations? webConfig.properties.locations : []
@@ -944,7 +625,7 @@ server = {
                             // Once that support is done, I will implement that
 
                             // Check if the file exists in cache and has not been changed since
-                            let cache = Backend.isDev ? 1 : cachedFile(file);
+                            let cache = backend.isDev ? 1 : cachedFile(file);
 
                             const baseName = nodePath.basename(file);
                             let extension = baseName, lastIndex = baseName.lastIndexOf('.');
@@ -1077,7 +758,7 @@ server = {
             if(app.manifest.server.properties.api) {
                 for(let api of app.manifest.server.properties.api){
                     api = api.split(">");
-                    Backend.apiExtensions[api[0]] = app.path + "/" + api[1]
+                    backend.apiExtensions[api[0]] = app.path + "/" + api[1]
                 }
             }
         }
@@ -1093,7 +774,7 @@ server = {
         if(typeof appPath !== "undefined") {
             const app = applications.get(appPath)
 
-            if(app.manifest.server.properties.redirect_https && !Backend.isDev && !req.secured){
+            if(app.manifest.server.properties.redirect_https && !backend.isDev && !req.secured){
                 res.redirect(301, `https://${req.getHeader("host")}${req.path}`);
                 return
             }
@@ -1126,7 +807,7 @@ server = {
                 for(const handle of app.handles){
                     if(handle.values.find(route => url.startsWith(route))){
                         if(handle.properties.target) {
-                            return Backend.resolve(res, req, req.secured, {
+                            return backend.resolve(res, req, req.secured, {
                                 domain: "api.extragon.cloud",
                                 path: "/" + handle.properties.target.join("/") + (handle.properties.appendPath? "/" + segments.join("/"): ""),
                                 virtual: true
@@ -1203,7 +884,7 @@ server = {
 
             case "temporaryDomain":
 
-                let random = Backend.uuid();
+                let random = backend.uuid();
                 assignedDomains.set(random) = req.getQuery("app");
 
                 return res.send(random);

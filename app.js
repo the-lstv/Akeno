@@ -1,5 +1,5 @@
 let
-    version = "1.5.0:arch=3", // TODO: arch=3 can soon be removed
+    version = "1.5.1:arch=3", // TODO: arch=3 can soon be removed
 
     // Modules
     uws = require('uWebSockets.js'),
@@ -17,15 +17,9 @@ let
     uuid = (require("uuid")).v4,    // UUID
     jwt = require('jsonwebtoken'),  // Web tokens
 
-
-    ipc,
     { exec, spawn } = require('child_process'),
 
-    // wscp = cookieParser(),
-    // multer = require('multer-md5'),
-    // formidable = require('formidable'),
-
-    lsdb = require("./addons/lsdb_mysql.js"),   // SQL Wrapperr (temporary)
+    lsdb = require("./addons/lsdb_mysql.js"),   // SQL Wrapper (temporary)
 
     // Config parser
     { parse, stringify, merge, configTools } = require("./core/parser.js"),
@@ -53,10 +47,7 @@ let
     API,
     apiVersions,
 
-    doHost,
     doBuild,
-
-    host,
 
     PATH = __dirname + "/",
 
@@ -730,8 +721,6 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
             return PATH
         },
 
-        // configTools,
-
         refreshConfig(){
             Backend.log("Refreshing configuration")
 
@@ -804,14 +793,11 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
         uuid,
         bcrypt,
         fastJson,
-        fs,
-        exec,
-        spawn,
-        host,
+
         app,
         SSLApp,
+
         API,
-        CreationCache: {},
 
         broadcast(topic, data, isBinary, compress){
             if(Backend.config.block("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
@@ -851,10 +837,12 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
                 )
             },
 
-            login(username, password, callback, expiresIn = 5184000000, createToken = true){
+            login(identification, password, callback, expiresIn = 5184000000, createToken = true){
                 db.database("extragon").query(
                     'SELECT hash, id, username FROM `users` WHERE `username` = ? OR `email` = ?',
-                    [username, username],
+
+                    [identification, identification],
+
                     async function(err, results) {
                         if(err){
                             return callback(err)
@@ -884,21 +872,22 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
                                     id: user.id,
                                     legacy: user.hash.includes("$2y$")
                                 })
-                            }else{
-                                callback(err ? 12 : 11)
-                            }
+
+                            } else callback(err ? 12 : 11);
                         })
                     }
                 )
             },
 
             async createAccount(user, callback, ip){
-                let discord, generateToken = !!user.generateToken;
+                let discord = user.discord? await Backend.getDiscordUserInfo(user.discord): {};
 
-                delete user.generateToken;
+                if (!user.username || !user.email || !user.password) {
+                    return callback("Missing required fields: username, email, or password.");
+                }
 
-                if(user.discord){
-                    discord = await Backend.getDiscordUserInfo(user.discord)
+                if (discord && !discord.id) {
+                    return callback("Invalid Discord information.");
                 }
 
                 db.database("extragon").query(`SELECT username, email, discord_id FROM users WHERE username = ? OR email = ? OR discord_id = ?`,
@@ -921,24 +910,23 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 
                             // User
                             username: user.username,
-                            hash: await bcrypt.hash(user.password, 12),
+                            hash: await bcrypt.hash(user.password, 8),
                             email: user.email,
-                            ip: ip || ""
+                            ip: ip || "",
 
+                            ...(discord && {
+                                discord_link: user.discord,
+                                discord_id: +discord.id,
+                                discord_raw: JSON.stringify(discord),
+                            })
                         };
-
-                        if(discord) {
-                            finalUser.discord_link = user.discord
-                            finalUser.discord_id = discord? + discord.id : 0
-                            finalUser.discord_raw = JSON.stringify(discord)
-                        }
 
                         db.database("extragon").table("users").insert(finalUser, (err, result) => {
                             if(err){
                                 return callback(err)
                             }
 
-                            if(generateToken){
+                            if (user.generateToken) {
                                 Backend.user.login(user.username, user.password, (err, data)=>{
                                     if(err){
                                         return callback(null, {id: result.insertId, token: null, err})
