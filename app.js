@@ -1,5 +1,5 @@
 let
-    version = "1.4.1",
+    version = "1.5.0:arch=3", // TODO: arch=3 can soon be removed
 
     // Modules
     uws = require('uWebSockets.js'),
@@ -76,128 +76,22 @@ async function save_hits(){
     // saved_hits = total_hits
 }
 
-// Initialize is the first thing that runs after the config is loaded and basics (like the backend object) initialized.
+
+// This is the first thing that runs after the config is loaded.
 function initialize(){
-    // saved_hits = total_hits = fs.existsSync(PATH + "/etc/hits") ? fs.readFileSync(PATH + "./etc/hits").readUInt32LE(0) : 0;
     
-    // Hit counter
-    
-    process.on('uncaughtException', (err) => {
-        // Why does this even happen in the first place
-        console.debug("[system] [ERROR] It's probably fine, most likely some poorly written module can't throw a proper error instead of crashing the whole thread.\nNot this might also be an actual fatal error and you shouldn't continue (reload might be required).\nThe error: ", err);
-    });
+    process.on('uncaughtException', (error) => {
+        // Some modules just cant learn to do error handling properly...
+        console.debug("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
+    })
 
     process.on('exit', () => {
         save_hits()
         console.log(`[system] API is stopping.`);
     })
 
-    // Initialize the host communication module (optional)
-    if(doHost){
-        let
-            HostSocketID = 'eg_persistentHost',
-            HostSocket,
-            HostConnected = false,
-            HostQueue,
-            HostReplyListeners = [],
-            HostReplies = {}
-        ;
+    if (doBuild) build();
 
-        host = {
-            dispatch(evt, data, force, prefix = 'app.'){
-                if(force || (HostConnected && HostSocket)){
-                    return HostSocket.emit(prefix + evt, data)
-                }
-                if(HostQueue){
-                    HostQueue.push(evt, ...data)
-                }
-            },
-            
-            handleListener(evt){
-                if(HostReplyListeners.includes(evt))return;
-                HostReplyListeners.push(evt)
-                HostSocket.on("app." + evt + ".reply",
-                    function(data){
-                        HostReplies[data.id] = data.reply;
-                    }
-                )
-            },
-
-            ask(evt, data){
-                host.handleListener(evt)
-                if(HostConnected && HostSocket){
-                    let ID = uuid();
-                    HostSocket.emit('app.' + evt, {id :ID, data: data})
-                    return new Promise(resolve => {
-                        let i, interval = setInterval(()=>{
-                            if(HostReplies[ID]){
-                                resolve(HostReplies[ID])
-                            }
-            
-                            i++
-            
-                            if(i > 300){
-                                clearInterval(interval)
-                                resolve(null)
-                            }
-                        }, 10)
-                    })
-                }
-                return null
-            }
-        }
-
-        ipc = require('@node-ipc/node-ipc').default;
-    
-        ipc.config.id = 'eg_API';
-        ipc.config.retry = 1000;
-        ipc.config.logLevel = 'WARN';
-    
-        let prefix = "[akeno] [persistentHost]";
-        
-        console.log(prefix + ' CONNECTING TO HOST...');
-    
-        ipc.connectTo(
-            HostSocketID,
-            function(){
-                HostSocket = ipc.of[HostSocketID];
-    
-                HostSocket.handle = function(evt, fn){
-                    HostSocket.on(evt, async(data, _socket) => {
-                        if(!data.id){
-                            return fn(data.data, _socket)
-                        }
-                        host.dispatch(evt + ".reply", {id: data.id, reply: await fn(data.data, _socket)}, false, "")
-                    });
-                }
-    
-                HostSocket.on(
-                    'connect',
-                    function(){
-                        console.log(prefix + ' INFORMING HOST OF OUR EXISTENCE...');
-                        host.dispatch("hi", "hello", true)
-                    }
-                );
-    
-                HostSocket.on(
-                    'disconnect',
-                    function(){
-                        HostConnected = false
-                        console.log(prefix + ' DISCONNECTED FROM HOST');
-                    }
-                );
-    
-                HostSocket.on(
-                    'app.hi',
-                    function(){
-                        HostConnected = true
-                        console.log(prefix + ' CONNECTED TO HOST');
-                        if(doBuild) build()
-                    }
-                );
-            }
-        );
-    } else if (doBuild) build();
 }
 
 //Add API handlers or addons here.
@@ -237,19 +131,10 @@ function build(){
         if(version.Initialize) version.Initialize(Backend)
     }
 
-    // TODO:
+    // TODO: uh, no. away with this
     db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', Backend.config.block("database").properties.password[0])
 
-    // Set up multer for file uploads
-    // const storage = multer.diskStorage({
-    //     destination: '/www/ram/',
-    //     filename: (req, file, callback) => {
-    //         callback(null, Backend.uuid());
-    //     }
-    // });
-
-    // const upload = multer({ storage })
-
+    // Websocket handler
     let wss = {
 
         // idleTimeout: 32,
@@ -274,6 +159,7 @@ function build(){
             if(shouldProxy(req, res, true, true, context)) return;
 
 
+            // FIXME: This should not be in the main branch
             if(req.domain.startsWith("ssh.")) {
                 return proxySFTP(req, res, context, "will-provide")
             }
@@ -281,43 +167,6 @@ function build(){
             if(req.domain.startsWith("node.")) {
                 return remoteNodeShell(req, res, context)
             }
-
-            if(req.domain.startsWith("ffmpeg-proxy.")){
-                // let ws;
-
-                res.upgrade({
-                    handler: {
-                        open(_ws){
-                            // ws = _ws
-                        },
-
-                        message(ws, chunk, isBinary){
-                            // For WebSocket receivers
-                            // Backend.broadcast("akeno.ffmpeg.stream", chunk, isBinary, true)
-
-                            // For HTTP receivers
-                            for(let receiverID in ffmpegStreamReceivers) {if(typeof ffmpegStreamReceivers[receiverID] === "function") ffmpegStreamReceivers[receiverID](chunk)}
-                        },
-
-                        close(){
-
-                        }
-                    }
-                }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
-                return
-            }
-
-            // if(req.domain.startsWith("ffmpeg-receiver.")){
-            //     res.upgrade({
-            //         handler: {
-            //             open(ws){
-            //                 ws.subscribe("akeno.ffmpeg.stream")
-            //             },
-            //         }
-            //     }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
-            //     return
-            // }
-
 
             let segments = req.getUrl().split("/").filter(garbage => garbage), continueUpgrade = true;
             
@@ -359,10 +208,6 @@ function build(){
         css: "text/css; charset=utf-8",
         html: "text/html; charset=utf-8",
     }
-
-    let version = Backend.config.valueOf("version") || "unknown";
-
-    let ffmpegStreamReceivers = [], ffmpegStreamReceiverID = 0;
 
     // Constants
     const ssl_enabled = Backend.config.block("server").properties.enableSSL;
@@ -549,14 +394,13 @@ function build(){
 
             res.send = (message, headers = {}, status) => {
                 if(req.abort) return;
-                // OUTDATED!
-                // Should be avoided for performance reasons
-            
+
+                // FIXME: This is OUTDATED!
+                // Should be avoided (but I decided not to spam the console with warnings)
+
                 if(Array.isArray(message) || (typeof message !== "string" && !(message instanceof ArrayBuffer) && !(message instanceof Uint8Array) && !(message instanceof DataView) && !(message instanceof Buffer))) {
-                    headers["content-type"] = types["json"];
-    
+                    headers["content-type"] = types["json"];    
                     message = JSON.stringify(message);
-                    Backend.log.warn("[performance] Warning: You are not properly encoding your data before sending. The data were automatically stringified using JSON.stringify, but this has a bad impact on performance. If possible, either send a string, binary data or stringify using fast-json-stringify.")
                 }
     
                 if(res.setType){
@@ -871,7 +715,9 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 
     Backend = {
         isDev,
-        logLevel: isDev? 5 : 3,
+        logLevel: isDev? 5 : 3, // TODO: This should be in config
+
+        version,
 
         config,
         configRaw,
@@ -1530,7 +1376,6 @@ Backend.exposeToDebugger("backend", Backend)
 Backend.exposeToDebugger("addons", AddonCache)
 Backend.exposeToDebugger("api", API)
 
-doHost = Backend.config.block("server").properties.enableHost == "prod"? !isDev: Backend.config.block("server").properties.enableHost;
 doBuild = Backend.config.block("server").properties.enableBuild;
 
 Backend.mime.load()
