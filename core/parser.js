@@ -1,5 +1,5 @@
-let fs;
-
+const fs = require("fs");
+const { xxh32 } = require("@node-rs/xxhash");
 
 // This file contains a collection of parsers made for Akeno.
 // That includes parsing configs, client code, and so on.
@@ -15,6 +15,334 @@ const parser_regex = {
     initiator: "@"
 }
 
+function parser_flush(chunks, options){
+    if(chunks.length < 1) return;
+
+    let chunk_index = 0, blockPosition = chunks[chunk_index].indexOf(parser_regex.initiator);
+
+    // Nothing to do, so just skip parsing entirely
+    if(blockPosition === -1) return options.onText(chunks[chunk_index]);
+
+    options.onText(chunks[chunk_index].substring(0, blockPosition));
+
+    // Parse block
+    function parseAt(initialBlockStart){
+        let currentPosition = initialBlockStart;
+
+        // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value, 4 = plaintext until block end, 5 = comment (single-line))
+        let stage = 0, next_stage = 0, parsedString = null, type = 1, revert_type = null, confirmed = false, stringChar = null, current_value_isString, block = {
+            name: "",
+            attributes: [],
+            properties: {}
+        }
+
+        let parsingValueStart = currentPosition, parsingValueLength = 1, parsingValueSequenceBroken = false;
+
+        // Exit block
+        function exit(cancel, message = null){
+            // Find next block
+            blockPosition = chunks[chunk_index].indexOf(parser_regex.initiator, currentPosition);
+
+            if(cancel) {
+
+                // TODO: Throw/broadcast error on cancelled exit when strict mode
+                const error = new Error("[Parser Syntax Error] " + (message || "") + "\n  (at character " + currentPosition + ")");
+
+                if(options.strict) throw error;
+                if(typeof options.onError === "function") options.onError(error);
+
+                currentPosition = initialBlockStart;
+
+            } else {
+
+                // No error, send block for processing
+                if(options.onBlock) options.onBlock(block)
+                currentPosition ++;
+
+            }
+
+            options.onText(chunks[chunk_index].slice(currentPosition, blockPosition !== -1? blockPosition: chunks[chunk_index].length));
+
+            if(blockPosition !== -1) parseAt(blockPosition); else return;
+        }
+
+        function value_start(length = 0, positionOffset = 0, _type = null){
+            if(_type !== null) type = _type;
+            parsingValueStart = currentPosition + positionOffset;
+            parsingValueLength = length;
+            parsingValueSequenceBroken = false;
+            parsedString = null;
+        }
+
+        function get_value(){
+            return chunks[chunk_index].slice(parsingValueStart, parsingValueStart + parsingValueLength)
+        }
+
+        let last_key;
+
+        while(chunk_index < chunks.length && currentPosition < chunks[chunk_index].length){
+            currentPosition ++;
+
+            if(currentPosition === chunks[chunk_index].length) {
+                chunk_index ++
+                currentPosition = 0
+
+                if (chunk_index >= chunks.length) {
+                    break;
+                }
+            }
+
+            const char = chunks[chunk_index][currentPosition];
+
+            // console.log("parsing at", currentPosition, "stage:", stage, "type:", type, char);
+
+            if(type === 2) {
+                // currentPosition += (chunks[chunk_index].indexOf(stringChar, currentPosition) - currentPosition) -1;
+
+                if(char === stringChar && chunks[chunk_index][currentPosition -1] !== "\\"){
+                    type = 0
+
+                    // if(stage !== next_stage) currentPosition--;
+
+                    stage = next_stage
+
+                    parsedString = get_value()
+                } else parsingValueLength ++
+            } else
+
+            if(type === 4) {
+                currentPosition += (chunks[chunk_index].indexOf("}", currentPosition) - currentPosition) -1;
+
+                if(char === "}"){
+                    type = 0
+
+                    stage = next_stage
+
+                    parsedString = get_value()
+                } else parsingValueLength ++
+            } else
+
+            if(type === 5) {
+                currentPosition += (chunks[chunk_index].indexOf("\n", currentPosition) - currentPosition) -1;
+
+                if(char === "\n"){
+                    type = revert_type
+                    currentPosition--
+                }
+            } else
+
+            if(type === 3) {
+                if(!parser_regex.plain_value.test(char)){
+                    type = 0
+                    stage = next_stage
+                    currentPosition--
+
+                    parsedString = get_value()
+                } else parsingValueLength ++
+            } else
+
+            // Also skip whitespace when possible.
+            if(type !== 0 || !parser_regex.whitespace.test(char)) {
+
+                if(char === "#") { revert_type = type; type = 5; continue }
+
+                switch(stage){
+
+                    // Beginning of a block name
+                    case 0:
+                        if(!parser_regex.keyword.test(char)){
+
+                            if(parser_regex.whitespace.test(char)) {
+                                parsingValueSequenceBroken = true
+                                break
+                            }
+
+                            if(char !== "(" && char !== "{") return exit(true, "Unexpected character " + char);
+
+                            type = 0;
+                            stage = 1;
+                            currentPosition --
+
+                        } else if (parsingValueSequenceBroken) return exit(true, "Space in keyword names is not allowed"); else parsingValueLength ++;
+                        break;
+
+
+                    // End of a block name
+                    case 1:
+                        block.name = get_value().replace(parser_regex.initiator, "")
+
+                        if(char === "("){
+                            stage = 2;
+                        } else if (char === "{") {
+                            stage = 4;
+
+                            if(parser_regex.plaintext_blocks.indexOf(block.name) !== -1){
+                                value_start(0, 1, 4)
+                            }
+                        } else return exit(true);
+
+                        break;
+
+
+                    // Attribute
+                    case 2:
+                        if(char === ")" || char === ","){
+                            type = 0
+                            if(parsedString) block.attributes.push(parsedString.trim())
+                            if(char === ")") stage = 3;
+                            break;
+                        }
+
+                        if(parser_regex.stringChar.test(char)){
+                            stringChar = char
+
+                            value_start(0, 1, 2)
+
+                            next_stage = 2
+                        } else if (parser_regex.plain_value.test(char)){
+                            type = 3
+
+                            value_start(1)
+
+                            next_stage = 2
+                        } else return exit(true)
+
+                        break
+
+
+                    // Before a block
+                    case 3:
+                        if(!/[;{]/.test(char)) return exit(true);
+
+                        if(char === ";"){
+                            return exit()
+                        }
+
+                        stage = 4
+
+                        break
+
+
+                    // Looking for a keyword
+                    case 4:
+                        if(char === "}"){
+                            return exit()
+                        }
+
+                        if(!parser_regex.keyword.test(char)) return exit(true);
+
+                        stage = 5
+
+                        value_start(1, 0, 1)
+                        break
+
+
+                    // Keyword
+                    case 5:
+                        if(!parser_regex.keyword.test(char)){
+                            if(parser_regex.whitespace.test(char)) {
+                                parsingValueSequenceBroken = true
+                                break
+                            }
+
+                            const key = get_value().trim()
+
+                            type = 0
+
+                            if(char === ";" || char === "}") {
+
+                                block.properties[key] = [true]
+                                stage = 4
+
+                                if(char === "}"){
+                                    return exit()
+                                }
+
+                            } else if (char === ":") {
+
+                                last_key = key
+                                parsedString = null
+                                stage = 6
+
+                            } else return exit(true);
+                        } else {
+                            if(parsingValueSequenceBroken) {
+                                return exit(true)
+                            }
+
+                            parsingValueLength ++
+                        }
+
+                        break;
+
+
+                    // Start of a value
+                    case 6:
+
+                        // Push values - this *was* supposed to write in an array only if there are multiple values, but this made working with data harder - property values are now always an array
+                        if(parsedString){
+
+                            if(!current_value_isString){
+                                if(parsedString === "true") parsedString = true;
+                                else if(parsedString === "false") parsedString = false;
+                                else if(parser_regex.digit.test(parsedString)) parsedString = Number(parsedString);
+                            }
+
+                            if(block.properties[last_key]) {
+                                block.properties[last_key].push(parsedString)
+                            } else {
+                                block.properties[last_key] = [parsedString]
+                            }
+
+                            parsedString = null
+                        }
+
+                        current_value_isString = false;
+
+                        if(char === ","){
+
+                            type = 0
+                            stage = 6;
+                            
+                        } else if(char === ";"){
+
+                            type = 0
+                            stage = 4;
+
+                        } else if(char === "}"){
+
+                            return exit()
+
+                        } else {
+                            if(parser_regex.stringChar.test(char)){
+                                current_value_isString = true;
+                                stringChar = char
+
+                                value_start(0, 1, 2)
+
+                                next_stage = 6
+                            } else if (parser_regex.plain_value.test(char)){
+                                current_value_isString = false;
+
+                                value_start(1, 0, 3)
+
+                                next_stage = 6
+                            } else return exit(true)
+                        };
+
+                        break;
+                }
+            }
+        }
+
+        if(!confirmed) return exit(true);
+
+        exit()
+    }
+
+    parseAt(blockPosition)
+}
+
 function parse(options){
 
     // Temporary backwards compatibility
@@ -23,330 +351,22 @@ function parse(options){
         return old_parser(...arguments)
     }
 
-    const chunks = Array.isArray(options.content)? options.content: [ options.content ];
-
-    const push = options.onText || function (text) {};
-
-    function flush(){
-        let chunk_index = 0;
-
-        let blockPosition = chunks[chunk_index].indexOf(parser_regex.initiator);
-
-        // Nothing to do, so just skip parsing entirely
-        if(blockPosition === -1) return push(chunks[chunk_index]);
-
-        push(chunks[chunk_index].substring(0, blockPosition));
-
-        // Parse block
-        function parseAt(initialBlockStart){
-            let currentPosition = initialBlockStart;
-
-            // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value, 4 = plaintext until block end, 5 = comment (single-line))
-            let stage = 0, next_stage = 0, parsedString = null, type = 1, revert_type = null, confirmed = false, stringChar = null, current_value_isString, block = {
-                name: "",
-                attributes: [],
-                properties: {}
-            }
-
-            let parsingValueStart = currentPosition, parsingValueLength = 1, parsingValueSequenceBroken = false;
-
-            // Exit block
-            function exit(cancel, message = null){
-                // Find next block
-                blockPosition = text.indexOf(parser_regex.initiator, currentPosition);
-                
-                if(cancel) {
-
-                    // TODO: Throw/broadcast error on cancelled exit when strict mode
-                    const error = new Error("[Parser Syntax Error] " + (message || "") + "\n  (at character " + currentPosition + ")");
-
-                    if(options.strict) throw error;
-                    if(typeof options.onError === "function") options.onError(error);
-
-                    currentPosition = initialBlockStart;
-
-                } else {
-
-                    // No error, send block for processing
-                    process_block(block)
-                    currentPosition ++;
-
-                }
-
-                push(text.slice(currentPosition, blockPosition !== -1? blockPosition: text.length));
-
-                if(blockPosition !== -1) parseAt(blockPosition); else return;
-            }
-
-            function value_start(length = 0, positionOffset = 0, _type = null){
-                if(_type !== null) type = _type;
-                parsingValueStart = currentPosition + positionOffset;
-                parsingValueLength = length;
-                parsingValueSequenceBroken = false;
-                parsedString = null;
-            }
-
-            function get_value(){
-                return text.slice(parsingValueStart, parsingValueStart + parsingValueLength)
-            }
-
-            let last_key;
-
-            while(currentPosition < text.length){
-                currentPosition ++;
-
-                const char = text[currentPosition];
-
-                // console.log("parsing at", currentPosition, "stage:", stage, "type:", type, char);
-
-                if(type === 2) {
-                    // currentPosition += (text.indexOf(stringChar, currentPosition) - currentPosition) -1;
-
-                    if(char === stringChar && text[currentPosition -1] !== "\\"){
-                        type = 0
-
-                        // if(stage !== next_stage) currentPosition--;
-
-                        stage = next_stage
-
-                        parsedString = get_value()
-                    } else parsingValueLength ++
-                } else
-
-                if(type === 4) {
-                    currentPosition += (text.indexOf("}", currentPosition) - currentPosition) -1;
-
-                    if(char === "}"){
-                        type = 0
-
-                        stage = next_stage
-
-                        parsedString = get_value()
-                    } else parsingValueLength ++
-                } else
-
-                if(type === 5) {
-                    currentPosition += (text.indexOf("\n", currentPosition) - currentPosition) -1;
-
-                    if(char === "\n"){
-                        type = revert_type
-                        currentPosition--
-                    }
-                } else
-
-                if(type === 3) {
-                    if(!parser_regex.plain_value.test(char)){
-                        type = 0
-                        stage = next_stage
-                        currentPosition--
-
-                        parsedString = get_value()
-                    } else parsingValueLength ++
-                } else
-
-                // Also skip whitespace when possible.
-                if(type !== 0 || !parser_regex.whitespace.test(char)) {
-
-                    if(char === "#") { revert_type = type; type = 5; continue }
-
-                    switch(stage){
-
-                        // Beginning of a block name
-                        case 0:
-                            if(!parser_regex.keyword.test(char)){
-
-                                if(parser_regex.whitespace.test(char)) {
-                                    parsingValueSequenceBroken = true
-                                    break
-                                }
-
-                                if(char !== "(" && char !== "{") return exit(true, "Unexpected character " + char);
-
-                                type = 0;
-                                stage = 1;
-                                currentPosition --
-
-                            } else if (parsingValueSequenceBroken) return exit(true, "Space in keyword names is not allowed"); else parsingValueLength ++;
-                            break;
-
-
-                        // End of a block name
-                        case 1:
-                            block.name = get_value().replace(parser_regex.initiator, "")
-
-                            if(char === "("){
-                                stage = 2;
-                            } else if (char === "{") {
-                                stage = 4;
-
-                                if(parser_regex.plaintext_blocks.indexOf(block.name) !== -1){
-                                    value_start(0, 1, 4)
-                                }
-                            } else return exit(true);
-
-                            break;
-
-
-                        // Attribute
-                        case 2:
-                            if(char === ")" || char === ","){
-                                type = 0
-                                if(parsedString) block.attributes.push(parsedString.trim())
-                                if(char === ")") stage = 3;
-                                break;
-                            }
-
-                            if(parser_regex.stringChar.test(char)){
-                                stringChar = char
-
-                                value_start(0, 1, 2)
-
-                                next_stage = 2
-                            } else if (parser_regex.plain_value.test(char)){
-                                type = 3
-
-                                value_start(1)
-
-                                next_stage = 2
-                            } else return exit(true)
-
-                            break
-
-
-                        // Before a block
-                        case 3:
-                            if(!/[;{]/.test(char)) return exit(true);
-
-                            if(char === ";"){
-                                return exit()
-                            }
-
-                            stage = 4
-
-                            break
-
-
-                        // Looking for a keyword
-                        case 4:
-                            if(char === "}"){
-                                return exit()
-                            }
-
-                            if(!parser_regex.keyword.test(char)) return exit(true);
-
-                            stage = 5
-
-                            value_start(1, 0, 1)
-                            break
-
-
-                        // Keyword
-                        case 5:
-                            if(!parser_regex.keyword.test(char)){
-                                if(parser_regex.whitespace.test(char)) {
-                                    parsingValueSequenceBroken = true
-                                    break
-                                }
-
-                                const key = get_value().trim()
-
-                                type = 0
-
-                                if(char === ";" || char === "}") {
-
-                                    block.properties[key] = [true]
-                                    stage = 4
-
-                                    if(char === "}"){
-                                        return exit()
-                                    }
-
-                                } else if (char === ":") {
-
-                                    last_key = key
-                                    parsedString = null
-                                    stage = 6
-
-                                } else return exit(true);
-                            } else {
-                                if(parsingValueSequenceBroken) {
-                                    return exit(true)
-                                }
-
-                                parsingValueLength ++
-                            }
-
-                            break;
-
-
-                        // Start of a value
-                        case 6:
-
-                            // Push values - this *was* supposed to write in an array only if there are multiple values, but this made working with data harder - property values are now always an array
-                            if(parsedString){
-
-                                if(!current_value_isString){
-                                    if(parsedString === "true") parsedString = true;
-                                    else if(parsedString === "false") parsedString = false;
-                                    else if(parser_regex.digit.test(parsedString)) parsedString = Number(parsedString);
-                                }
-
-                                if(block.properties[last_key]) {
-                                    block.properties[last_key].push(parsedString)
-                                } else {
-                                    block.properties[last_key] = [parsedString]
-                                }
-
-                                parsedString = null
-                            }
-
-                            current_value_isString = false;
-
-                            if(char === ","){
-
-                                type = 0
-                                stage = 6;
-                                
-                            } else if(char === ";"){
-
-                                type = 0
-                                stage = 4;
-
-                            } else if(char === "}"){
-
-                                return exit()
-
-                            } else {
-                                if(parser_regex.stringChar.test(char)){
-                                    current_value_isString = true;
-                                    stringChar = char
-
-                                    value_start(0, 1, 2)
-
-                                    next_stage = 6
-                                } else if (parser_regex.plain_value.test(char)){
-                                    current_value_isString = false;
-
-                                    value_start(1, 0, 3)
-
-                                    next_stage = 6
-                                } else return exit(true)
-                            };
-
-                            break;
-                    }
-                }
-            }
-
-            if(!confirmed) return exit(true);
-
-            exit()
+    const chunks = Array.isArray(options.content)? options.content: options.content? [ options.content ]: [];
+
+    if(!options.onText) options.onText = function() {};
+
+    if (chunks.length > 0) parser_flush(chunks, options);
+
+    return {
+        write(data) {
+            chunks.push(data)
+        },
+        
+        flush(){
+            parser_flush(chunks, options)
         }
-
-        parseAt(blockPosition)
     }
 
-    flush()
 }
 
 
@@ -1443,6 +1463,6 @@ function replaceObjects(code, replacements) {
 }
 
 
-let _exports = { parser_regex, parse, old_parser, stringify, merge, configTools, assignObjects, replaceObjects };
+let _exports = { parser_regex, parser_flush, parse, old_parser, stringify, merge, configTools, assignObjects, replaceObjects };
 
 if(!globalThis.window) module.exports = _exports; else window.AkenoConfigParser = _exports;

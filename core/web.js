@@ -21,6 +21,8 @@ let
     UglifyJS = require("uglify-js"),
     { Parser } = require('htmlparser2'),
 
+    { xxh32 } = require("@node-rs/xxhash"),
+
     // Local libraries
     { parse, parser_regex, configTools } = require("./parser"),
 
@@ -36,6 +38,7 @@ let
     // Cache && optimisation helpers
     assignedDomains = new Map,
     cache = new Map,
+    compression_cache = new Map;
 
     // Maximal cache size for binary files per-file.
     // If a file is bigger than this, it is not saved and served from RAM.
@@ -147,6 +150,7 @@ function map_resource(link, local_path){
 
     return link
 }
+
 
 function parse_html_content(options){
     const htmlContent = options.content? options.content: options.file? fs.readFileSync(options.file, "utf8"): "";
@@ -387,15 +391,39 @@ function parse_html_content(options){
             // Inline script/style compression
             switch (currentTag){
                 case "script":
-                    if(text) push(options.compress? UglifyJS.minify(text).code || text: text)
+                    if(text) {
+                        if(options.compress) {
+                            const hash = xxh32(text);
+                            let compressed = compression_cache.get(hash);
+
+                            if(!compressed){
+                                compressed = Buffer.from(UglifyJS.minify(text).code)
+                                compression_cache.set(hash, compressed)
+                            }
+
+                            push(compressed || text);
+                        } else push(text);
+                    }
                     return;
 
                 case "style":
-                    if(text) push(options.compress? CleanCSS.minify(text).styles || text: text)
+                    if(text) {
+                        if(options.compress) {
+                            const hash = xxh32(text);
+                            let compressed = compression_cache.get(hash);
+
+                            if(!compressed){
+                                compressed = Buffer.from(CleanCSS.minify(text).styles)
+                                compression_cache.set(hash, compressed)
+                            }
+
+                            push(compressed || text);
+                        } else push(text);
+                    }
                     return;
             }
 
-            parse({ content: text, onText: push, onBlock: process_block, embedded: true, strict: false })
+            parse({ content: [ text ], onText: push, onBlock: process_block, embedded: true, strict: false })
         },
 
         onclosetag(name) {
@@ -649,7 +677,7 @@ server = {
 
                             if(cache !== 1) server.log.warn("Cached data were wrong or empty (serving \""+file+"\"), did you update them correctly? Note: forcing cache reload!");
 
-                            let content;
+                            let content, hash, compressed;
 
                             switch(extension){
                                 case "html":
@@ -658,12 +686,30 @@ server = {
 
                                 case "css":
                                     content = fs.readFileSync(file, "utf8");
-                                    content = Buffer.from(CleanCSS.minify(content).styles || content)
+
+                                    hash = xxh32(content);
+                                    compressed = compression_cache.get(hash);
+        
+                                    if(!compressed){
+                                        compressed = Buffer.from(CleanCSS.minify(content).styles)
+                                        if(compressed) compression_cache.set(hash, compressed); else break;
+                                    }
+        
+                                    content = compressed;
                                 break;
 
                                 case "js":
                                     content = fs.readFileSync(file, "utf8");
-                                    content = Buffer.from(UglifyJS.minify(content).code || content)
+
+                                    hash = xxh32(content);
+                                    compressed = compression_cache.get(hash);
+        
+                                    if(!compressed){
+                                        compressed = Buffer.from(UglifyJS.minify(content).code)
+                                        if(compressed) compression_cache.set(hash, compressed); else break;
+                                    }
+        
+                                    content = compressed;
                                 break;
 
                                 default:
