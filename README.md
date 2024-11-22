@@ -1,20 +1,27 @@
 <p align="center"><img src="https://github.com/the-lstv/Akeno/assets/62482747/d29fb374-aef6-444f-88b1-43aede48fe41" alt="Akeno icon"></p>
 
-Akeno is a fast and modular, mostly automated Node.JS web (static and dynamic), WebSocket, CDN, and API server which comes as a full-featured suite along with DNS, SSL, DB and user management (all available optionally as addons).<br>
-It uses its universal config system to make it easy to manage large quantities of projects or servers all at once.<br>
-<br>
-It has a performance-first webserver, with automated caching, code compression, and a custom HTML parser which allows you to write clean and easier-to-read code, with less maintenance needed.
-<br><br>**NOTE:** Currently Akeno only works on Linux. Windows support is not planned anytime soon due to the complexity and missing features of the Windows platform and low interest. If you must run this on Windows, wsl is the only way.<br>
+Akeno is a really fast, modular server, primarily intended for:<br>
+- Efficient APIs
+- Static and dynamic web sites/apps
+- Realtime web apps
+- Content delivery
+- User management
+
+It supports various configurations for HTTP, HTTPS, HTTP3 (experimental), and WebSocket protocols.<br>
+Though thanks to its modularity, it can be easily expanded.
+<br><br>
+It also has a built-in webserver, which is extremely optimized and has some very nice features that make developing and deploying websites or apps really simple!
+<br><br>**NOTE:** At this time Akeno only works on Linux. Windows support is not planned yet due to no interest. Note that thanks to the modular nature of Akeno, some features may work on Windows just fine.<br>
 
 ---
-Quick installation (Fedora Linux) <br>
+Quick installation (on Fedora Linux) <br>
 Required: `node`, `npm`, `git`
 ```sh
 curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
 ```
 To run automatically on startup and enable `akeno -i`:
 ```sh
-sudo pm2 start /www/content/akeno/app.js --name egapi # If your path differs from the default, replace it.
+sudo pm2 start /path/to/akeno/app.js --name Akeno
 ```
 
 ---
@@ -23,14 +30,22 @@ sudo pm2 start /www/content/akeno/app.js --name egapi # If your path differs fro
 ![🚀 Fast](https://github.com/the-lstv/Akeno/assets/62482747/d7f3466c-c833-4fca-a57b-e93f7aca0882)
 ---
 
-Akeno excels in top-notch performance.
+Akeno is performance, scalability and efficiency focused.
 
-The entire server is started and ready in **10ms** or less on average (making it faster than most modern large servers which can even take minutes), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
+By default, Akeno operates in speed-first mode, where it prioritizes quick operations over memory consumption. You can also enable an efficiency mode where memory consumption will be lower at the cost of speed.
+Either way, Akeno is built to consume the least amount of memory possible.
 
-On top of that, Akeno has smart caching directly to memory, automatic cache header, automatic ?mtime query parametter for file changes, and much more.
+Akeno is also built to scale. It minimizes bandwidth consumption to the minimum and has a smart caching system.
 
-Akeno automatically compresses all of your HTML, CSS and JS code on the fly - saving you the hassle of having to make copies or compress yourself.
-Just write the code and watch the magic happen in real time.
+The entire server is started and ready in **10ms** or less on average, depending on added modules (making it faster than most modern large servers), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
+
+On top of that, Akeno has an automatic cache header, automatic ?mtime query parametter for file changes, and much more.
+
+Akeno can also automatically compresses all of your HTML, CSS and JS code on the fly - saving you the hassle of having to make copies or compress yourself.<br>
+Just write the code and watch the magic happen in real time.<br><br>
+
+Akeno is also faster than popular servers like Nginx for both static and dynamic content.<br>
+(It may possibly also be faster than LiteSpeed, but testing needs to be done in order to confirm that claim).
 
 
 <br><br>
@@ -50,25 +65,23 @@ This includes API extensions - simply create a JS file with your server-side API
 Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats, manage apps, or interact with its API.
 
 ## Examples
-### 1 - Creating a simple web app (minimal example, 4 steps)
-1. Create a new directory for your app
-   (make sure it is included in your main (or imported) config file under `web > locations` - for entries that end with `/*`, all sub-directories will be automatically detected, eg. if you make your directory under `/www/content/web/` (added by default), you do **not** need to add an entry to the config each time you make a new app - they will be simply automatically added as long as there is an app.conf file in them)
+- ### Creating a simple web app (minimal example, 4 steps)
+1. Create a new directory for your app in a directory defined in your config
 2. Create an `app.conf` file and an `index.html` file
-3. Place this basic config:
+3. Place this in app.conf:
    ```
    server {
      domains: your.domain.name, ...;
    }
    ```
-   (Of course, replacing the value with the actual domain names you want your website/app to live on. Wildcards are supported - `example.*`, `*.example.com`, `*.*.example.*` or `*-example.com` will all work, including just `*`. Additionally, to include an unlimited count of domain levels, use `**.example.com` to match both `a.example.com` and `b.a.example.com` and so on.)
-4. Restart akeno<br>
-And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP.
+4. Restart akeno (either `akeno relodad --web` or `akeno restart` for full reload)<br>
+And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP. No further configuration needed.
 
 
 <br>
 
 
-### 2 - Say hello to the builtin pre-processor
+### 2 - Say hello to the builtin custom dynamic syntax
 Tired of the repetetive and long HTML templates? How about doing it the Akeno way instead!<br>
 Let's say that you want to make a simple site with a title, favicon and a font from Google fonts, and a script:
 ```html
@@ -88,16 +101,12 @@ Let's say that you want to make a simple site with a title, favicon and a font f
 
 <body>
     Hello world!
-
-   <style>
-      :root {
-         font-family: Poppins;
-      }
-   </style>
 </body>
 ```
-That's it! All the repetetive work is done for you. Akeno even cleans and compresses the code for you (HTML, CSS, and JS)! (Including removing the script tag if the file cannot be resolved)<br>
-Also - are you tired of your clients not receiving up-to-date resources and dont want to manually bump versions or add `?random` to each resource? Now you don't have to. Akeno will check for changes for local resources automatically and assign a `?mtime` query which contains the last time that the file was changed, to efficiently manage cache while keeping the content always up-to-date!
+That's it! All the repetetive work is done for you. Akeno even cleans and compresses the code for you (HTML, CSS, and JS).<br>
+Also, Akeno will automatically check for local changes and assign a `?mtime` query which, to efficiently keep cache functional while making sure the content is always up-to-date for your users.
+
+![Syntax](https://cdn.extragon.cloud/file/ef25afa3bf73cc5aa2f3f4ca2327ba15.png)
 <br>
 
 
@@ -119,6 +128,7 @@ Exposed properties by default:
 - proxyReq as `proxyRouter` (proxy router)
 - app as `uws` (uWebSockets instance)
 - SSLApp as `uws_ssl` (only if SSL is enabled)<br>
+- H3App as `uws_h3` (only if H3 is enabled)<br>
 
 Any other variables are *not* acessible to the debugger even if global, unless you expose them manually!<br>
 
