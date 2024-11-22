@@ -157,7 +157,7 @@ echo "Installing node modules."
 
 cd /www/node/shared_modules/
 npm i uNetworking/uWebSockets.js#v20.49.0
-npm i uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js fs-extra formidable mysql2 axios sharp parse5 dom-serializer
+npm i uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js fs-extra mysql2 axios sharp parse5 dom-serializer @node-rs/xxhash
 
 echo ""
 echo -e "\x1b[32m[SETUP] Setup complete.\x1b[0m"

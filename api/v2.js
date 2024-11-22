@@ -1,6 +1,6 @@
 /*
 
-    ExtraGon API default endpoints and router (v2)
+    LS API default endpoints and router (v2)
 
 */
 

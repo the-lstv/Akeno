@@ -5,9 +5,6 @@
 # Import generated configs created automatically by the CLI
 import("./etc/generated");
 
-# Do not change
-configVersion("1.3.0");
-
 server {
     # The port to use for HTTP
     port: 80;
@@ -101,30 +98,3 @@ performance {
     backend: uWS;
     # Support is not guaranted.
 }
-
-# plugins {
-#     # Add or remove plugins
-
-#     guardian: {
-#         captcha: auth.lstv.space;
-#     };
-
-#     web: {
-#         parser; # Parse special Akeno syntax
-#         code-compression; # Auto compress HTML, CSS, and JS
-#         cache-management; # Automatically set cahce and update based on file mtime
-
-#         # Default config for all webservers
-#         defaults: {
-#             server {
-#                 allow-backend; # Allow the api option - allows to configure custom API endpoints
-#             }
-#         }
-#     };
-# }
-
-# environment {
-#     git: {
-#         managed;
-#     }
-# }
