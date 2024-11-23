@@ -1,5 +1,5 @@
 let
-    version = "1.5.1:arch=3", // TODO: arch=3 can soon be removed
+    version = "1.5.2",
 
     // Modules
     uws = require('uWebSockets.js'),
@@ -12,27 +12,36 @@ let
     SSLApp,
     H3App,
 
+    lmdb = require('node-lmdb'),
+    lsdb = require("./addons/lsdb_mysql.js"),   // SQL Wrapper (temporary)
+
     bcrypt = require("bcrypt"),     // Secure hashing
     crypto = require('crypto'),     // Cryptographic utils
     uuid = (require("uuid")).v4,    // UUID
     jwt = require('jsonwebtoken'),  // Web tokens
 
-    { exec, spawn } = require('child_process'),
-
-    lsdb = require("./addons/lsdb_mysql.js"),   // SQL Wrapper (temporary)
-
     // Config parser
     { parse, stringify, merge, configTools } = require("./core/parser.js"),
     { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy.js"),
 
+    { xxh32 } = require("@node-rs/xxhash"),
+
     textEncoder = new TextEncoder,
-    textDecoder = new TextDecoder
+    textDecoder = new TextDecoder,
+
+    // For code compression
+    CleanCSS = new (require('clean-css')),
+    UglifyJS = require("uglify-js")
 ;
+
+
 
 try {
     // Disable uWebSockets version header, remove to re-enable
     uws._cfg('999999990007');
 } catch (error) {}
+
+
 
 let
     // Globals
@@ -44,35 +53,66 @@ let
     config,
     configRaw,
 
-    API,
-    apiVersions,
+    API = { handlers: new Map },
 
-    doBuild,
+    serevr_enabled,
 
     PATH = __dirname + "/",
 
     total_hits,
-    // saved_hits,
-    since_startup = Date.now(),
+    since_startup = performance.now(),
 
     devInspecting = isDev && !!process.execArgv.find(v => v.startsWith("--inspect"));
 ;
 
-    
-async function save_hits(){
-    const buffer = Buffer.alloc(4);
+const cache_db = {
+    env: new lmdb.Env(),
 
-    buffer.writeUInt32LE(total_hits, 0);
-    fs.writeFileSync(PATH + "./etc/hits", buffer);
-    // saved_hits = total_hits
+    memory_compression_cache: new Map,
+    memory_general_cache: new Map,
+
+    commit(){
+        try {
+
+            cache_db.txn.commit();
+    
+        } catch (error) {
+    
+            console.error(error);        
+            cache_db.txn.abort();
+    
+        }
+
+        cache_db.txn = cache_db.env.beginTxn();
+    }
 }
 
+cache_db.env.open({
+    path: PATH + "db/cache",
+    maxDbs: 3
+});
 
-// This is the first thing that runs after the config is loaded.
+cache_db.compression = cache_db.env.openDbi({
+    name: "compression_cache",
+    create: true,
+
+    // 32-bit xxhash
+    keyIsUint32: true
+})
+
+cache_db.general = cache_db.env.openDbi({
+    name: "general_cache",
+    create: true,
+})
+
+cache_db.txn = cache_db.env.beginTxn();
+
+
+
+// This is the first thing that runs after the server is loaded.
 function initialize(){
     
     process.on('uncaughtException', (error) => {
-        // Some modules just cant learn to do error handling properly...
         console.debug("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
     })
 
@@ -81,32 +121,26 @@ function initialize(){
         console.log(`[system] API is stopping.`);
     })
 
-    if (doBuild) build();
+    if (serevr_enabled) build();
 
 }
 
-//Add API handlers or addons here.
-
-API = {
-    _default: 2,
-
-    //Add or remove API versions here.
-    1: require("./api/v1.js"),
-    2: require("./api/v2.js")
-}
-
-apiVersions = Object.keys(API).filter(version => !isNaN(+version));
-
-API._latest = Math.max(...apiVersions.map(number => +number));
 
 
+// Add / Remove versions
+API.handlers.set(1, require("./api/v1.js"))
+API.handlers.set(2, require("./api/v2.js"))
 
-let noCorsHeaders = {
+API.default = 2
+
+
+const noCorsHeaders = {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,HEAD,POST,PUT,DELETE",
     "access-control-allow-credentials": "true",
     "access-control-allow-headers": "Authorization, *"
 };
+
 
 
 // The init fucntion that initializes and starts the server.
@@ -117,8 +151,7 @@ function build(){
     Backend.log("Initializing the API...")
 
     // Initialize API
-    for(let version of apiVersions){
-        version = API[version]
+    for(let version of API.handlers.values()){
         if(version.Initialize) version.Initialize(Backend)
     }
 
@@ -163,7 +196,7 @@ function build(){
             
             if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments[0].replace("v", ""))) segments.shift();
 
-            let handler = API[API._latest].GetHandler(segments[0]);
+            let handler = API.handlers.get(API.default).GetHandler(segments[0]);
 
             if(!handler || !handler.HandleSocket) return res.end();
 
@@ -465,64 +498,61 @@ function build(){
             }
         }
 
-        // And when we finally finish with all the utility and other things, let's route the request.
 
-        router: {
-            let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
-    
-            let hrTime = process.hrtime()
-            req.begin = hrTime[0] * 1000 + hrTime[1] / 1000000;
+        // Finally, lets route the request.
 
-            function error(error, code){
-                if(req.abort) return;
-    
-                if(typeof error == "number" && Backend.Errors[error]){
-                    let _code = code;
-                    code = error;
-                    error = (_code? code : "") + Backend.Errors[code]
-                }
-    
-                res.cork(() => {
-                    res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
-                })
-            }
-    
-            function shift(){
-                index++
-                return segments[index] || "";
+        let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
+
+        let hrTime = process.hrtime()
+        req.begin = hrTime[0] * 1000 + hrTime[1] / 1000000;
+
+        function error(error, code){
+            if(req.abort) return;
+
+            if(typeof error == "number" && Backend.Errors[error]){
+                let _code = code;
+                code = error;
+                error = (_code? code : "") + Backend.Errors[code]
             }
 
-            if(segments[0] === "___internal"){
-                // console.log(res.getRemoteAddressAsText()); // this does not get the text for some reason
-                Backend.addon("core/web").HandleInternal({segments, req, res})
-            }
-    
-            // Handle the builtin CDN
-            else if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
-                Backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
-            }
-            
-            // Handle the builtin API
-            else if(req.domain.startsWith("api.extragon")){
-                let ver = segments[0] ? +(segments[0].slice(1)) : 0;
-    
-                if(ver && segments[0].toLowerCase().startsWith("v")){
-                    segments.shift()
-                }
+            res.cork(() => {
+                res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
+            })
+        }
+
+        function shift(){
+            index++
+            return segments[index] || "";
+        }
+
+        if(segments[0] === "___internal"){
+            // console.log(res.getRemoteAddressAsText()); // this does not get the text for some reason
+            Backend.addon("core/web").HandleInternal({segments, req, res})
+        }
+
+        // Handle the builtin CDN
+        else if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
+            Backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
+        }
         
-                ver = (ver? ver : API._default);
-        
-                if(API[ver]){
-                    API[ver].HandleRequest({segments, shift, error, req, res})
-                } else {
-                    return error(0)
-                }
+        // Handle the builtin API
+        else if(req.domain.startsWith("api.extragon")){
+            let version = segments[0] && +(segments[0].slice(1));
+
+            if(version && segments[0][0].toLowerCase().startsWith("v")){
+                segments.shift()
             }
     
-            else {
-                // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
-                Backend.addon("core/web").HandleRequest({segments, req, res})
-            }
+            const handler = API.handlers.get(version || API.default);
+    
+            if(handler){
+                handler.HandleRequest({segments, shift, error, req, res})
+            } else return error(0)
+        }
+
+        else {
+            // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
+            Backend.addon("core/web").HandleRequest({segments, req, res})
         }
     }
 
@@ -543,7 +573,7 @@ function build(){
     
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
-            console.log(`[system] [ time:${Date.now()} ] > The Akeno server has started and is listening on port ${HTTPort}! Total hits so far: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${Date.now() - since_startup}ms`)
+            console.log(`[system] The Akeno server has started and is listening on port ${HTTPort}! Total hits so far: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
 
             // Configure SSL
             if(ssl_enabled) {
@@ -577,9 +607,6 @@ function build(){
                     let SNIDomains = Backend.config.block("sslRouter").properties.domains;
     
                     if(SNIDomains){
-
-                        // This entire proccess is a bit annoying and messy due to the weird API for SNI domains in uWebSockets.
-                        // If it will be necessary, a fork of uWS could be made to make the API cleaner, faster and more fitting to our use-case.
 
                         if(!Backend.config.block("sslRouter").properties.certBase){
                             return Backend.log.error("Could not start SSL server - you are missing certBase in your sslRouter block.")
@@ -638,6 +665,7 @@ function build(){
 
     if(Backend.config.block("server").properties.preloadWeb) Backend.addon("core/web");
 }
+
 
 
 // TODO:
@@ -700,9 +728,10 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 }
 
 
-// First initialization, ints the backend object.
-(private => {
-    let testKey = process.env.AKENO_KEY;
+
+// Initialization.
+;(() => {
+    let jwt_key = process.env.AKENO_KEY;
 
     Backend = {
         isDev,
@@ -776,13 +805,56 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 
         },
 
+        compression: {
+
+            // Code compression with both disk and memory cache.
+            code(code, isCSS){
+                const hash = xxh32(code);
+
+                let compressed;
+                if(compressed = cache_db.memory_general_cache.get(hash)) return compressed;
+
+                let hasDiskCache = lmdb_exists(cache_db.txn, cache_db.compression, hash)
+
+                if(!hasDiskCache){
+                    compressed = Buffer.from(isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code)
+                    cache_db.txn.putBinary(cache_db.compression, hash, compressed);
+
+                    cache_db.commit();
+                } else {
+                    compressed = cache_db.txn.getBinary(cache_db.compression, hash)
+                }
+
+                cache_db.memory_compression_cache.set(hash, compressed)
+
+                return compressed || code;
+            }
+
+        },
+
+        cache: {
+            set(key, value){
+                if(!value instanceof Buffer) throw "Cache only accepts a buffer as a value";
+                cache_db.memory_general_cache.set(key, value)
+                cache_db.txn.putBinary(cache_db.general, key, value);
+            },
+
+            get(key){
+                return cache_db.memory_general_cache.get(key) || cache_db.txn.getBinary(cache_db.general, key)
+            },
+
+            commit(){
+                cache_db.commit();
+            }
+        },
+
         jwt: {
             verify(something, options){
-                return jwt.verify(something, testKey, options)
+                return jwt.verify(something, jwt_key, options)
             },
 
             sign(something, options){
-                return jwt.sign(something, testKey, options)
+                return jwt.sign(something, jwt_key, options)
             }
         },
 
@@ -798,6 +870,7 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
         SSLApp,
 
         API,
+        apiExtensions: {},
 
         broadcast(topic, data, isBinary, compress){
             if(Backend.config.block("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
@@ -958,184 +1031,13 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
             }
         },
 
-        memoryCache: {},
-
-        getCachingID(req){
-            return req.getHeader("host") + req.getUrl() + req.getQuery()
-        },
-
-        setCache(id, data, expire = 5){
-            return (Backend.memoryCache[id] = {data, expire: Date.now() + (expire * 1000)}).data
-        },
-
-        getCache(req){
-            let id = req.getHeader("host") + req.getUrl() + req.getQuery(), cache = Backend.memoryCache[id];
-            return {data: cache && cache.expire > Date.now()? cache.data: (delete Backend.memoryCache[id], false), id}
-        },
-
-        pockets: {
-            createWallet(pocket, holder, options, callback = (error, address) => {}){
-                let address = Backend.pockets.generateAddress(32);
-
-                db.database("extragon").table("pockets_wallets").insert({
-                    comment: null,
-                    ...options,
-
-                    pocket,
-                    identifier: address,
-                    balance: 0,
-                    created: Date.now(),
-                    holder
-
-                }, (err, result) => {
-                    if(err || !result) return callback(err);
-                    callback(null, address)
-                })
-            },
-
-            generateAddress(length = 64) {
-                const buffer = crypto.randomBytes(Math.ceil(length * 3 / 4)); // 3/4 factor because base64 encoding
-
-                return buffer.toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, length);
-            },
-
-            listWallets(holder, options = {}, callback = (error, data) => {}){
-                db.database("extragon").query(
-                    'SELECT balance, comment, identifier, created, pocket FROM `pockets_wallets` WHERE holder = ?' + (options.pocket? " AND pocket = ?" : ""),
-                    [holder, options.pocket],
-
-                    function(err, result){
-                        if(err) return callback(err);
-                        callback(null, result)
-                    }
-                )
-            },
-
-            listTransactions(author, options = {}, callback = (error, data) => {}){
-                db.database("extragon").query(
-                    'SELECT * FROM `pockets_transactions` WHERE source = ?' + (options.target? " AND target = ?" : "") + " LIMIT ? OFFSET ?",
-                    [author, ...options.target? [options.target] : [], options.limit || 20, options.offset || 0],
-
-                    function(err, result){
-                        if(err) return callback(err);
-                        callback(null, result)
-                    }
-                )
-            },
-
-            transaction(pocket, source, target, value = 0, options = {}, callback = (error, data) => {}){
-
-
-                // WARNING: This is a low-level transaction API and should never be exposed to the internet directly.
-                // Transactions are taken as-is and only have standard security measures and validations to make sure the transaction is valid, but it does not check for things like if the transaction has been authorized by the user or the pocket.
-                // ALWAYS validate the request heavily depending on your use before passing it here.
-                // Failing to do so might have undesired consequences.
-
-                /*
-                    pocket = Pocket ID. Not the wallet ID.
-                    source = Source wallet to transfer FROM
-                    target = Target wallet to transfer TO
-                    value = Value to transfer
-                */
-
-                // Step 1) verify the transaction author and that he has enough balance
-
-                db.database("extragon").query(
-                    'SELECT balance, holder FROM `pockets_wallets` WHERE `pocket` = ? AND `identifier` = ?',
-                    [pocket, source],
-
-                    function(err, result){
-                        if(err) return callback(err);
-                        if(result.length < 1) return callback("Source pocket not found");
-
-                        // if(result[0].holder !== source){
-                        //     callback("The transaction author does not own the pocket.")
-                        // }
-
-                        let initBalance = result[0].balance;
-
-                        db.database("extragon").table("pockets_transactions").insert({
-                            ...options,
-        
-                            pocket,
-                            source,
-                            target,
-
-                            value,
-                            initBalance,
-                            date: Date.now(),
-                            merchant: options.merchant || null,
-                            pending: true,
-                            failed: false
-
-                        }, (err, result) => {
-                            if(err) return callback(err);
-        
-                            let transaction_id = result.insertId;
-
-                            db.database("extragon").query(
-                                'SELECT holder, balance FROM `pockets_wallets` WHERE `pocket` = ? AND `identifier` = ?',
-                                [pocket, target],
-
-                                function(err, result){
-                                    if(err) return callback(err);
-                                    if(result.length < 1) return callback("Target pocket not found");
-
-                                    let targetInitBalance = result[0].balance;
-
-                                    db.database("extragon").table("pockets_wallets").update("WHERE identifier='" + source.replaceAll("'", "") + "'", {
-                                        balance: initBalance - value
-                                    }, (err, result) => {
-                                        if(err) return callback(err);
-
-                                        db.database("extragon").table("pockets_wallets").update("WHERE identifier='" + target.replaceAll("'", "") + "'", {
-                                            balance: targetInitBalance + value
-                                        }, (err, result) => {
-                                            if(err) return callback(err);
-
-                                            db.database("extragon").table("pockets_transactions").update("WHERE id='" + transaction_id + "'", {
-                                                pending: false
-                                            }, (err, result) => {
-                                                if(err) return callback(err);
-        
-                                                callback(null, transaction_id)
-                                            })
-                                        })
-                                    })
-                                }
-                            )
-                        })
-
-                    }
-                )
-            }
-        },
-
-        apiExtensions: {},
-
         writeLog(data, severity = 2, source = "api"){
             // 0 = Debug (Verbose), 1 = Info (Verbose), 2 = Info, 3 = Warning, 4 = Error, 5 = Important
 
-            if(!Array.isArray(data)) data = [data];
-
-            for(let callback of Backend.__logListeners){
-                if(callback(source, severity, data) === false){
-                    return;
-                }
-            }
-
             if(severity < (5 - Backend.logLevel)) return;
-
+            if(!Array.isArray(data)) data = [data];
             if(devInspecting) data.unshift("color: aquamarine");
-
             console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`${devInspecting? "%c": ""}[${source}]`, ...data)
-        },
-
-        __logListeners: [],
-
-        onLog(callback){
-            if(typeof callback !== "function") throw "Callback must be a function";
-            Backend.__logListeners.push(callback)
         },
 
         createLoggerContext(target){
@@ -1189,7 +1091,7 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
         },
 
         mime: {
-            // Had to make my own mimetype "library" since the current mimetype library for Node is... meh.
+            // My own mimetype checker since the current mimetype library for Node is meh.
 
             types: null,
             extensions: null,
@@ -1210,32 +1112,6 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
             getExtension(mimetype){
                 return Backend.mime.extensions[mimetype] || null
             }
-        },
-
-        async getDiscordUserInfo(accessToken) {
-            try {
-                // Make a GET request to Discord API to fetch user information
-                const response = await fetch('https://discord.com/api/users/@me', {
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                    },
-                });
-
-                if (response.ok) {
-                    const userInfo = await response.json();
-                    return userInfo;
-                } else {
-                    console.error('Failed to fetch user information:', response.status, response.statusText);
-                    return null;
-                }
-            } catch (error) {
-                console.error('Error occurred while fetching user information:', error.message);
-                return null;
-            }
-        },
-        
-        Economy: {
-            CV: 100
         },
 
         Errors: {
@@ -1299,41 +1175,6 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
             500: "Internal Server Error."
         },
 
-        claimedErrorRanges: [
-            [0, 100],
-            [400, 600]
-        ],
-
-        claimErrorCodeRange(from = 0, to = 0){
-            if(typeof from !== "number" || typeof to !== "number") throw "Invalid type";
-            if(from < 0) throw "Minimum for an error range is 0";
-            if(from > to) throw "Invalid range; 'from' must be smaller than 'to'";
-            if(to - from > 1000) throw "Error range is too big - maximum size per range is 1000";
-
-            for(let range of Backend.claimedErrorRanges){
-                if((from >= range[0] && from <= range[1]) || (to <= range[1] && from >= range[1])) throw "Error range is conflicting with another range: " + range.join(" - ");
-            }
-
-            Backend.claimedErrorRanges.push([from, to]);
-
-            function registerError(code, message){
-                if(typeof code !== "number") throw "Code must be a number";
-                if(from > code || to < code) throw "Error code is outside of claimed range";
-                Backend.Errors[code] = message
-            }
-
-            return {
-                error: registerError,
-                errors(list){
-                    if(!Array.isArray(list)) list = Object.entries(list);
-
-                    for(let [code, message] of list){
-                        registerError(code, message)
-                    }
-                }
-            }
-        },
-
         exposeToDebugger(key, thing){
             if(!devInspecting) return;
 
@@ -1346,26 +1187,48 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
             return thing
         }
     }
+
+    // Startup:
+    Backend.log = Backend.createLoggerContext("api")
+    Backend.refreshConfig()
+
+    if(isDev){
+        Backend.log("NOTE: API is running in development mode.")
+
+        if(devInspecting){
+            console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
+            console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
+        }
+    }
+
+    Backend.exposeToDebugger("backend", Backend)
+    Backend.exposeToDebugger("addons", AddonCache)
+    Backend.exposeToDebugger("api", API)
+
+    serevr_enabled = Backend.config.block("server").properties.enable;
+
+    Backend.mime.load()
+
+    initialize()
 })()
 
-Backend.log = Backend.createLoggerContext("api")
-Backend.refreshConfig()
 
-if(isDev){
-    Backend.log("NOTE: API is running in development mode.")
 
-    if(devInspecting){
-        console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
-        console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
-    }
+// Misc functions:
+
+
+function lmdb_exists(txn, db, key){
+    const cursor = new lmdb.Cursor(txn, db);
+    let keyExists = cursor.goToKey(key) !== null;
+    cursor.close();
+    return keyExists;
 }
 
-Backend.exposeToDebugger("backend", Backend)
-Backend.exposeToDebugger("addons", AddonCache)
-Backend.exposeToDebugger("api", API)
 
-doBuild = Backend.config.block("server").properties.enableBuild;
+async function save_hits(){
+    const buffer = Buffer.alloc(4);
 
-Backend.mime.load()
-
-initialize()
+    buffer.writeUInt32LE(total_hits, 0);
+    fs.writeFileSync(PATH + "./etc/hits", buffer);
+    // saved_hits = total_hits
+}

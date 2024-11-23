@@ -3,6 +3,7 @@ let backend,
 
     fs = require("fs"),
     sharp = require('sharp'),
+
     mime,
 
     fileMetadataCache = {},
@@ -307,7 +308,7 @@ api = {
                             This code handles transfer of the framework.
                         */
 
-                        ls_api.HandleRequest({ req, res, segments, error })
+                        ls_api.HandleRequest({ req, res, segments, error, backend, send })
                     break;
 
                     default:

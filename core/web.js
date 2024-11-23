@@ -17,8 +17,7 @@ let
     fs = require("fs"),
     nodePath = require("path"),
     mime,
-    CleanCSS = new (require('clean-css')),
-    UglifyJS = require("uglify-js"),
+
     { Parser } = require('htmlparser2'),
 
     { xxh32 } = require("@node-rs/xxhash"),
@@ -38,7 +37,6 @@ let
     // Cache && optimisation helpers
     assignedDomains = new Map,
     cache = new Map,
-    compression_cache = new Map;
 
     // Maximal cache size for binary files per-file.
     // If a file is bigger than this, it is not saved and served from RAM.
@@ -129,7 +127,7 @@ function checkSupportedBrowser(userAgent, properties) {
 }
 
 
-let latest_ls_version = fs.readFileSync("/www/content/akeno/cdn/ls/source/version.info", "utf8").trim(),
+let latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "4.0.0",
 
     // Is set in initialization
     ls_url = null,
@@ -272,15 +270,15 @@ function parse_html_content(options){
                 if(block.properties["ls-js"]){
                     misc.default_attributes.body.ls = "";
             
-                    let url = `${ls_url}${backend.isDev? "js" : "js.min"}/${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}`;
-                    
+                    let url = `${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${options.compress? "min." : ""}js`;
+
                     head += `<script src="${url}"></script>`;
                 }
             
                 if(block.properties["ls-css"]){
                     misc.default_attributes.body.ls = "";
 
-                    let url = `${ls_url}css/${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}`;
+                    let url = `${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${options.compress? "min." : ""}css`;
                     
                     head += `<link rel=stylesheet href="${url}">`
                 }
@@ -392,33 +390,36 @@ function parse_html_content(options){
             switch (currentTag){
                 case "script":
                     if(text) {
-                        if(options.compress) {
-                            const hash = xxh32(text);
-                            let compressed = compression_cache.get(hash);
+                        push(options.compress? backend.compression.code(text) : text)
 
-                            if(!compressed){
-                                compressed = Buffer.from(UglifyJS.minify(text).code)
-                                compression_cache.set(hash, compressed)
-                            }
+                        // if(options.compress) {
+                        //     const hash = xxh32(text);
+                        //     let compressed = compression_cache.get(hash);
 
-                            push(compressed || text);
-                        } else push(text);
+                        //     if(!compressed){
+                        //         compressed = Buffer.from(UglifyJS.minify(text).code)
+                        //         compression_cache.set(hash, compressed)
+                        //     }
+
+                        //     push(compressed || text);
+                        // } else push(text);
                     }
                     return;
 
                 case "style":
                     if(text) {
-                        if(options.compress) {
-                            const hash = xxh32(text);
-                            let compressed = compression_cache.get(hash);
+                        push(options.compress? backend.compression.code(text, true) : text)
+                        // if(options.compress) {
+                        //     const hash = xxh32(text);
+                        //     let compressed = compression_cache.get(hash);
 
-                            if(!compressed){
-                                compressed = Buffer.from(CleanCSS.minify(text).styles)
-                                compression_cache.set(hash, compressed)
-                            }
+                        //     if(!compressed){
+                        //         compressed = Buffer.from(CleanCSS.minify(text).styles)
+                        //         compression_cache.set(hash, compressed)
+                        //     }
 
-                            push(compressed || text);
-                        } else push(text);
+                        //     push(compressed || text);
+                        // } else push(text);
                     }
                     return;
             }
@@ -533,7 +534,7 @@ server = {
         mime = backend.mime;
 
         ls_url = `http${backend.isDev? "" : "s"}://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
-        html_header = Buffer.from(`<!DOCTYPE html>\n<!-- This is auto-generated code! (Powered by LSTV Akeno ${backend.version}) -->\n<html lang="en">`)
+        html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://lstv.space/akeno -->\n<html lang="en">`)
     },
     
     async Reload(firstTime){
@@ -686,30 +687,32 @@ server = {
 
                                 case "css":
                                     content = fs.readFileSync(file, "utf8");
+                                    content = content && (backend.compression.code(content, true) || content)
 
-                                    hash = xxh32(content);
-                                    compressed = compression_cache.get(hash);
-        
-                                    if(!compressed){
-                                        compressed = Buffer.from(CleanCSS.minify(content).styles)
-                                        if(compressed) compression_cache.set(hash, compressed); else break;
-                                    }
-        
-                                    content = compressed;
+                                    // hash = xxh32(content);
+                                    // compressed = compression_cache.get(hash);
+
+                                    // if(!compressed){
+                                    //     compressed = Buffer.from(CleanCSS.minify(content).styles)
+                                    //     if(compressed) compression_cache.set(hash, compressed); else break;
+                                    // }
+
+                                    // content = compressed;
                                 break;
 
                                 case "js":
                                     content = fs.readFileSync(file, "utf8");
+                                    content = content && (backend.compression.code(content) || content)
 
-                                    hash = xxh32(content);
-                                    compressed = compression_cache.get(hash);
+                                    // hash = xxh32(content);
+                                    // compressed = compression_cache.get(hash);
         
-                                    if(!compressed){
-                                        compressed = Buffer.from(UglifyJS.minify(content).code)
-                                        if(compressed) compression_cache.set(hash, compressed); else break;
-                                    }
+                                    // if(!compressed){
+                                    //     compressed = Buffer.from(UglifyJS.minify(content).code)
+                                    //     if(compressed) compression_cache.set(hash, compressed); else break;
+                                    // }
         
-                                    content = compressed;
+                                    // content = compressed;
                                 break;
 
                                 default:
@@ -717,8 +720,11 @@ server = {
                                     content = fs.readFileSync(file);
                             }
 
-                            res.send(content, headers)
-                            if(content.length < max_cache_size) updateCache(file, content)
+                            if(content) {
+                                res.send(content, headers);
+
+                                if(content.length < max_cache_size) updateCache(file, content)
+                            } else res.end();
                             return
                         }
 
@@ -765,6 +771,7 @@ server = {
             applicationCache.push({
                 basename,
                 path,
+
                 get enabled(){
                     return app.enabled
                 }

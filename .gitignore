@@ -2,30 +2,21 @@
 
 etc/hits
 etc/generated
-/addons/data/*
-/addons/data/currencyCache.json
 
-cdn/metadata.cache.json
-cdn/ls
-cdn/file
-cdn/deprecated
-cdn/archive
-cdn/flags
-cdn/temp
-cdn/tw
-cdn/beta
-cdn/lib/*
+archive
+config
+
+cdn/*
 !cdn/lib/example
-
-/archive
-version/v1.js
-version/v1.js.save
-version/v1.old.js
 
 addons/*
 !addons/cdn.js
 
-model.nlp
-config
+db/cache/*
+!db/cache/.gitkeep
 
 core/native/build
+
+node_modules
+package.json
+package-lock.json

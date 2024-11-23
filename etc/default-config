@@ -13,28 +13,20 @@ server {
     # enableSSL;
     sslPort: 443;
 
-    # Enable HTTP3 (EXPERIMENTAL)
+    # Enable HTTP3
     # enableH3;
     h3Port: 443;
 
-    # Enable server; Enable sub-host
-    enableBuild;
-
-    # In case you are using persistent.js to manage persistent shared proccesses
-    # enableHost;
-    # hostSocketName: "eg_persistentHost";
-
-    # Temporarily required. Path to where Akeno is located.
-    PATH: "/www/content/akeno/";
+    # Enable server
+    enable;
 }
 
 web {
     locations:
         # Website locations - /* will take all directories inside as individual locations.
-        # If the directory is not found, it is simply skipped along with a console warning.
-        "/www/content/web/*",
-        "/www/content/akeno/examples/hello-world-website",
-        "/www/content/akeno/core/gui",
+        "/var/www/akeno/*",
+        "/var/lib/akeno/examples/hello-world-website",
+        "/var/lib/akeno/core/gui"
     ;
 }
 

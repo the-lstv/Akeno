@@ -1,9 +1,6 @@
 #! /bin/node
 
-
-
 // Warning: This code is currently in terrible quality...
-
 
 // Libraries
 let exec = require("child_process").execSync,
@@ -49,7 +46,7 @@ function grep_value(search){
 }
 
 function getInfo(){
-    info = exec("pm2 info egapi").toString()
+    info = exec("pm2 info Akeno").toString()
     infoLines = info.split("\n")
 }
 
@@ -253,7 +250,7 @@ async function resolve(command){
                 await resolve(["logs"])
             }
 
-            exec("pm2 reload egapi")
+            exec("pm2 reload Akeno")
             log(`${signature} API Server sucessfully reloaded.`);
         break;
 
@@ -395,7 +392,7 @@ async function resolve(command){
         case "logs":
             if(command[1]) log(`${signature} Showing only lines including "${command[1]}"`);
 
-            const childProcess = spawn('pm2 logs egapi', {
+            const childProcess = spawn('pm2 logs Akeno', {
                 shell: true,
                 env: {
                     ...process.env,

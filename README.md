@@ -14,14 +14,13 @@ It also has a built-in webserver, which is extremely optimized and has some very
 <br><br>**NOTE:** At this time Akeno only works on Linux. Windows support is not planned yet due to no interest. Note that thanks to the modular nature of Akeno, some features may work on Windows just fine.<br>
 
 ---
-Quick installation (on Fedora Linux) <br>
-Required: `node`, `npm`, `git`
+Quick installation (Linux) <br>
 ```sh
 curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
 ```
 To run automatically on startup and enable `akeno -i`:
 ```sh
-sudo pm2 start /path/to/akeno/app.js --name Akeno
+sudo pm2 start /usr/lib/akeno/app.js --name Akeno
 ```
 
 ---
@@ -63,6 +62,16 @@ This includes API extensions - simply create a JS file with your server-side API
 ![🖥️ CLI](https://github.com/the-lstv/Akeno/assets/62482747/924f2a21-91f4-4a42-9c22-bbe25f44ec48)
 ---
 Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats, manage apps, or interact with its API.
+
+<br>
+
+## Updates: New in 1.5.2
+- Fast and efficient global code compression cache - disk-based, memory-mapped.
+- Removed old code, old extensions and some light refactoration
+- Deprecated request helpers - backend.request shoud now be used for clarity and efficiency
+- The server is now even faster and more efficient
+- Moved LS handler to its own repo
+<br><br>
 
 ## Examples
 - ### Creating a simple web app (minimal example, 4 steps)
