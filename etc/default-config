@@ -5,6 +5,13 @@
 # Import generated configs created automatically by the CLI
 import("./etc/generated");
 
+system {
+    # You can enable development mode when not in production - it enabled some extra debugging tools.
+
+    # developmentMode;
+    # logLevel: 5;
+}
+
 server {
     # The port to use for HTTP
     port: 80;
@@ -41,24 +48,17 @@ sslRouter {
     # Currently the options for sslRouter are very limited and only suited for a thin range of configurations
     # To allow multiple certificates, you add server names below.
 
-    certBase: "/www/server/certs/{domain}/fullchain.pem";
-    keyBase: "/www/server/certs/{domain}/privkey.pem";
+    certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
+    keyBase: "/etc/letsencrypt/live/{domain}/privkey.pem";
 
     domains:
-        lstv.space,
-        extragon.cloud,
-        upedie.online
+        example.com, # Only example.com
+        *.example2.com, # example2.com + all subdomains
+        another.example3.com # Only another.example3.com
     ;
 
     autoAddDomains;
     subdomainWildcard;
-}
-
-# Route requests to API/webserver/CDN based on domain
-baseRouter {
-    web: "*";
-    api: "api.*";
-    cdn: "cdn.*", "cdn-origin.*";
 }
 
 # If you intend to use a SQL database
@@ -79,6 +79,9 @@ performance {
 
     # Compress JS, HTML, CSS on the fly
     code-compression;
+
+    # Cache to both disk and memory
+    cache-to: disk, memory;
 
     # Enable caching for individual files in-memory.
     file-cache;

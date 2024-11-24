@@ -15,19 +15,27 @@ const parser_regex = {
     initiator: "@"
 }
 
-function parser_flush(chunks, options){
-    if(chunks.length < 1) return;
 
-    let chunk_index = 0, blockPosition = chunks[chunk_index].indexOf(parser_regex.initiator);
+function parse(options){
+    // Temporary for backwards compatibility
+    if(typeof options === "string"){
+        console.warn("[parser] Warning: Invalid usage of parse() - the old parser will be temporarily used. Please consider upgrading to the new version.");
+        return old_parser(...arguments)
+    }
+
+    if(!options.onText) options.onText = function() {};
+
+    let chunk_index = 0, blockPosition = options.content.indexOf(parser_regex.initiator);
 
     // Nothing to do, so just skip parsing entirely
-    if(blockPosition === -1) return options.onText(chunks[chunk_index]);
+    if(blockPosition === -1) return options.onText(options.content);
 
-    options.onText(chunks[chunk_index].substring(0, blockPosition));
+    options.onText(options.content.substring(0, blockPosition));
 
     // Parse block
     function parseAt(initialBlockStart){
         let currentPosition = initialBlockStart;
+
 
         // Stage of parsing + types (0 = default, 1 = keyword, 2 = string, 3 = plain value, 4 = plaintext until block end, 5 = comment (single-line))
         let stage = 0, next_stage = 0, parsedString = null, type = 1, revert_type = null, confirmed = false, stringChar = null, current_value_isString, block = {
@@ -41,7 +49,7 @@ function parser_flush(chunks, options){
         // Exit block
         function exit(cancel, message = null){
             // Find next block
-            blockPosition = chunks[chunk_index].indexOf(parser_regex.initiator, currentPosition);
+            blockPosition = options.content.indexOf(parser_regex.initiator, currentPosition);
 
             if(cancel) {
 
@@ -61,7 +69,7 @@ function parser_flush(chunks, options){
 
             }
 
-            options.onText(chunks[chunk_index].slice(currentPosition, blockPosition !== -1? blockPosition: chunks[chunk_index].length));
+            options.onText(options.content.slice(currentPosition, blockPosition !== -1? blockPosition: options.content.length));
 
             if(blockPosition !== -1) parseAt(blockPosition); else return;
         }
@@ -75,31 +83,22 @@ function parser_flush(chunks, options){
         }
 
         function get_value(){
-            return chunks[chunk_index].slice(parsingValueStart, parsingValueStart + parsingValueLength)
+            return options.content.slice(parsingValueStart, parsingValueStart + parsingValueLength)
         }
 
         let last_key;
 
-        while(chunk_index < chunks.length && currentPosition < chunks[chunk_index].length){
+        while(currentPosition < options.content.length){
             currentPosition ++;
 
-            if(currentPosition === chunks[chunk_index].length) {
-                chunk_index ++
-                currentPosition = 0
-
-                if (chunk_index >= chunks.length) {
-                    break;
-                }
-            }
-
-            const char = chunks[chunk_index][currentPosition];
+            const char = options.content[currentPosition];
 
             // console.log("parsing at", currentPosition, "stage:", stage, "type:", type, char);
 
             if(type === 2) {
-                // currentPosition += (chunks[chunk_index].indexOf(stringChar, currentPosition) - currentPosition) -1;
+                // currentPosition += (options.content.indexOf(stringChar, currentPosition) - currentPosition) -1;
 
-                if(char === stringChar && chunks[chunk_index][currentPosition -1] !== "\\"){
+                if(char === stringChar && options.content[currentPosition -1] !== "\\"){
                     type = 0
 
                     // if(stage !== next_stage) currentPosition--;
@@ -111,7 +110,7 @@ function parser_flush(chunks, options){
             } else
 
             if(type === 4) {
-                currentPosition += (chunks[chunk_index].indexOf("}", currentPosition) - currentPosition) -1;
+                currentPosition += (options.content.indexOf("}", currentPosition) - currentPosition) -1;
 
                 if(char === "}"){
                     type = 0
@@ -123,7 +122,7 @@ function parser_flush(chunks, options){
             } else
 
             if(type === 5) {
-                currentPosition += (chunks[chunk_index].indexOf("\n", currentPosition) - currentPosition) -1;
+                currentPosition += (options.content.indexOf("\n", currentPosition) - currentPosition) -1;
 
                 if(char === "\n"){
                     type = revert_type
@@ -341,32 +340,6 @@ function parser_flush(chunks, options){
     }
 
     parseAt(blockPosition)
-}
-
-function parse(options){
-
-    // Temporary backwards compatibility
-    if(typeof options === "string"){
-        console.warn("[parser] Warning: Invalid usage of parse() - the old parser will be temporarily used. Please consider upgrading to the new version.");
-        return old_parser(...arguments)
-    }
-
-    const chunks = Array.isArray(options.content)? options.content: options.content? [ options.content ]: [];
-
-    if(!options.onText) options.onText = function() {};
-
-    if (chunks.length > 0) parser_flush(chunks, options);
-
-    return {
-        write(data) {
-            chunks.push(data)
-        },
-        
-        flush(){
-            parser_flush(chunks, options)
-        }
-    }
-
 }
 
 
@@ -1463,6 +1436,6 @@ function replaceObjects(code, replacements) {
 }
 
 
-let _exports = { parser_regex, parser_flush, parse, old_parser, stringify, merge, configTools, assignObjects, replaceObjects };
+let _exports = { parser_regex, parse, old_parser, stringify, merge, configTools, assignObjects, replaceObjects };
 
 if(!globalThis.window) module.exports = _exports; else window.AkenoConfigParser = _exports;

@@ -391,40 +391,17 @@ function parse_html_content(options){
                 case "script":
                     if(text) {
                         push(options.compress? backend.compression.code(text) : text)
-
-                        // if(options.compress) {
-                        //     const hash = xxh32(text);
-                        //     let compressed = compression_cache.get(hash);
-
-                        //     if(!compressed){
-                        //         compressed = Buffer.from(UglifyJS.minify(text).code)
-                        //         compression_cache.set(hash, compressed)
-                        //     }
-
-                        //     push(compressed || text);
-                        // } else push(text);
                     }
                     return;
 
                 case "style":
                     if(text) {
                         push(options.compress? backend.compression.code(text, true) : text)
-                        // if(options.compress) {
-                        //     const hash = xxh32(text);
-                        //     let compressed = compression_cache.get(hash);
-
-                        //     if(!compressed){
-                        //         compressed = Buffer.from(CleanCSS.minify(text).styles)
-                        //         compression_cache.set(hash, compressed)
-                        //     }
-
-                        //     push(compressed || text);
-                        // } else push(text);
                     }
                     return;
             }
 
-            parse({ content: [ text ], onText: push, onBlock: process_block, embedded: true, strict: false })
+            parse({ content: text, onText: push, onBlock: process_block, embedded: true, strict: false })
         },
 
         onclosetag(name) {
@@ -537,9 +514,9 @@ server = {
         html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://lstv.space/akeno -->\n<html lang="en">`)
     },
     
-    async Reload(firstTime){
+    async Reload(server_initiated){
 
-        if(!firstTime){
+        if(!server_initiated){
             backend.refreshConfig()
         }
 
@@ -688,31 +665,11 @@ server = {
                                 case "css":
                                     content = fs.readFileSync(file, "utf8");
                                     content = content && (backend.compression.code(content, true) || content)
-
-                                    // hash = xxh32(content);
-                                    // compressed = compression_cache.get(hash);
-
-                                    // if(!compressed){
-                                    //     compressed = Buffer.from(CleanCSS.minify(content).styles)
-                                    //     if(compressed) compression_cache.set(hash, compressed); else break;
-                                    // }
-
-                                    // content = compressed;
                                 break;
 
                                 case "js":
                                     content = fs.readFileSync(file, "utf8");
                                     content = content && (backend.compression.code(content) || content)
-
-                                    // hash = xxh32(content);
-                                    // compressed = compression_cache.get(hash);
-        
-                                    // if(!compressed){
-                                    //     compressed = Buffer.from(UglifyJS.minify(content).code)
-                                    //     if(compressed) compression_cache.set(hash, compressed); else break;
-                                    // }
-        
-                                    // content = compressed;
                                 break;
 
                                 default:
@@ -881,76 +838,105 @@ server = {
 
     parse_html_content,
 
-    // Debugging purposes and temporarily pretty messy, will be reworked later
-    async HandleInternal({segments, req, res}){
-        let application;
+    util: {
+        getApp(path_or_name){
+            if(!path_or_name) return null;
+            if(path_or_name.includes("/") && fs.existsSync(path_or_name)) return path_or_name;
 
-        switch (segments[1]) {
-            case "list":
+            const found = applicationCache.find(app => app.basename === path_or_name);
 
-                for(let app of applicationCache){
-                    app.domains = assignedDomains.keys().filter(domain => assignedDomains.get(domain) === app.path)
+            return found && found.path
+        },
+        
+        list(){
+            for(let app of applicationCache){
+                app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain) === app.path)
+            }
+
+            return applicationCache
+        },
+
+        enable(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
+            
+            for(let application of applications.values()) {
+                if(application.path === app_path) {
+                    application.enabled = true
+                    return true
                 }
+            }
 
-                res.send(applicationCache)
-                break
+            return false
+        },
 
-            case "resolve":
-
-                if(!req.getQuery("app") || !req.getQuery("path")) return res.writeStatus("500").end();
-                
-                application = applications.get(req.getQuery("app"));
-                if(!application) return res.writeStatus("500").end();
-
-                application.serve({ domain: "internal", method: "GET", segments: req.getQuery("path").replace(/\?.*$/, '').split("/").filter(g => g), req, res })
-                break
-
-            case "enable": case "disable":
-
-                if(!req.getQuery("app")) return res.writeStatus("500").end();
-                
-                for(let application of applications.values()) {
-                    if(application.path === req.getQuery("app")) {
-                        application.enabled = segments[1] === "enable"
-                        res.end()
-                        return
-                    }
+        disable(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
+        
+            for(let application of applications.values()) {
+                if(application.path === app_path) {
+                    application.enabled = false
+                    return true
                 }
+            }
 
-                res.writeStatus("500").end();
-                break
+            return false
+        },
 
-            case "domain":
-                for(domain in assignedDomains.keys()){
-                    if(assignedDomains.get(domain) == req.getQuery("app")) return res.send(asd);
-                }
-                return res.send("");
+        listDomains(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
 
-            case "domains":
-                let list = [];
+            let list = [];
 
-                for(domain in assignedDomains.keys()){
-                    if(assignedDomains.get(domain) == req.getQuery("app")) list.push(domain);
-                }
+            for(domain in assignedDomains.keys()){
+                if(assignedDomains.get(domain) === app_path) list.push(domain);
+            }
 
-                return res.send(list);
+            return list;
+        },
 
-            case "temporaryDomain":
+        reload(app_path = null){
+            if(app_path && !(app_path = server.util.getApp(app_path))) return false;
 
-                let random = backend.uuid();
-                assignedDomains.set(random) = req.getQuery("app");
+            server.log("Server is reloading!")
+            server.Reload(null, app_path)
+        },
 
-                return res.send(random);
+        getDomain(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
 
-            case "reload":
-                server.log("Server is reloading!")
-                await server.Reload()
-                return res.end();
+            for(domain in assignedDomains.keys()){
+                if(assignedDomains.get(domain) === req.getQuery(app_path)) return domain;
+            }
 
-            default:
-                res.end()
+            return "";
+        },
+
+        tempDomain(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
+
+            let random = backend.uuid();
+            assignedDomains.set(random, app_path);
+
+            return random;
         }
     },
+
+    // Outdated, replaced by utils
+    // async HandleInternal({segments, req, res}){
+    //     let application;
+
+    //     switch (segments[1]) {
+
+    //         case "resolve":
+    //             if(!req.getQuery("app") || !req.getQuery("path")) return res.writeStatus("500").end();
+                
+    //             application = applications.get(req.getQuery("app"));
+    //             if(!application) return res.writeStatus("500").end();
+
+    //             application.serve({ domain: "internal", method: "GET", segments: req.getQuery("path").replace(/\?.*$/, '').split("/").filter(g => g), req, res })
+    //             break
+    //     }
+    // },
 }
 
 

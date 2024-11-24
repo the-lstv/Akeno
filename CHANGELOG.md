@@ -2,16 +2,21 @@
 - Once implemented by uWS, add low-level request caching in the C++ layer over the current caching system on the Node.JS layer
 - More complete HTTP3 implementation and WebTransport
 - Enhance the config
-
-## Planned in 1.5.3
-- Refactoration of the CLI, add `akeno update`
-- Make hot-reloading of web applications work again
-- Refactor the code so it is not hard-coded for Linux systems and a specific directory, rather allow installs from anywhere
 - Builtin multi-threading support
+
+## Planned in 1.5.4
 - Port the remaining uses of the old parser to the new one
-- Remove the old parser
+- Removed the old parser
 - Fast dynamic HTML generation
 - Separate user management addon with much improved cache, profiles, etc. management
+
+## New in 1.5.3
+- Refactoration and fixes of the CLI, new commands, among other enhancements
+- Added an Unix socket for IPC and internal queries
+- Removed the outdated and slow __internal handler
+- Make hot-reloading of web applications work again
+- Installation script is now supported across multiple distros
+- Temporarily removed chunked parsing and the .write() and .flush() methods from the parser
 
 ## New in 1.5.2
 - Added a fast (global) code compression cache - disk-based, memory-mapped, shared across all addons and instances.

@@ -1,9 +1,10 @@
 #! /bin/node
 
-// Warning: This code is currently in terrible quality...
+const
+    minimist = require('minimist'),
+    argv = minimist(process.argv.slice(2)),
 
-// Libraries
-let exec = require("child_process").execSync,
+    exec = require("child_process").execSync,
     execAsync = require("child_process").exec,
     spawn = require("child_process").spawn,
 
@@ -11,111 +12,19 @@ let exec = require("child_process").execSync,
 
     // Local libraries
     { parse, stringify, configTools, merge } = require("./parser"),
+    { ipc_client } = require("./ipc"),
 
-    path = require('path'),
-    axios = require('axios')
-    // cheerio = require('cheerio')
+    // path = require('path'),
+    // axios = require('axios'),
+
+    socketPath = '/tmp/akeno.backend.sock',
+    
+    client = new ipc_client(socketPath)
 ;
 
 
-let version = "0", // TODO: Get this from the config
-    PATH = "/www/content/akeno/",
-    COMMAND_PATH = "/www/cmd/bin/",
-    info = "",
-    infoLines = []
-;
 
-// Utilities
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function log(...data){
-    if(!process.argv.includes("--silent") && !process.argv.includes("-s")) console.log(...data.map(thing => typeof thing == "string"? process.argv.includes("--no-color")? thing.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '') : thing : thing))
-}
-
-function grep(search){
-    return infoLines.find(thing => thing.toLowerCase().includes(search.toLowerCase()))
-}
-
-function grep_value(search){
-    let found = (grep(search) || "").match(/│(.*?)│(.*?)│/);
-    
-    return found? found[2].trim() : ""
-}
-
-function getInfo(){
-    info = exec("pm2 info Akeno").toString()
-    infoLines = info.split("\n")
-}
-
-function getHits(){
-    return fs.existsSync(PATH + "/etc/hits") ? fs.readFileSync(PATH + "./etc/hits").readUInt32LE(0) : 0
-}
-
-function gradient(text) {
-    let gradientColors = [],
-        lines = text.split('\n'),
-        steps = lines.length,
-        start = 196, // Red
-        end = 204, // Orange
-        step = (end - start) / steps;
-    ;
-
-    for (let i = 0; i < steps; i++) {
-        const color = start + Math.round(step * i);
-        gradientColors.push(`\x1b[38;5;${color}m`);
-    }
-
-    let gradientText = "", i = -1;
-
-    for (let line of lines) {
-        i++
-        gradientText += gradientColors[i] + line + "\n";
-    }
-
-    gradientText += "\x1b[0m";
-
-    return gradientText;
-}
-
-function box(text, padding = 1, margin = 0, color = "90") {
-    // Super messy code but does what it should
-
-    if(process.argv.includes("--no-boxes")) return text;
-
-    let lines = text.split('\n'),
-        lengths = lines.map(str => str.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '').length),
-        width = lengths.reduce((maxLength, length) => Math.max(maxLength, length), 0),
-        outerWidth = width + (padding * 2),
-        fullWidth = outerWidth + (margin * 2),
-        result = ""
-    ;
-
-    color = `\x1b[${color}m`
-
-    result += (" ".repeat(fullWidth) + "\n").repeat(margin)
-    result += " ".repeat(margin) + color + "┌" + ("─".repeat(outerWidth)) + "┐\x1b[0m" + " ".repeat(margin) + "\n"
-    // result += (" ".repeat(margin) + color + "│\x1b[0m" + " ".repeat(padding) + (" ".repeat(width)) + " ".repeat(padding) + color + "│\x1b[0m" + " ".repeat(margin) + "\n").repeat(padding)
-    
-    for(let i = 0; i < lines.length; i++){
-        if(lines[i] == "---"){
-            result += " ".repeat(margin) + color + "├" + ("─".repeat(outerWidth)) + "┤\x1b[0m" + " ".repeat(margin) + "\n"
-        }else{
-            result += (" ".repeat(margin) + color + "│\x1b[0m" + " ".repeat(padding) + lines[i] + (" ".repeat(width - lengths[i])) + " ".repeat(padding) + color + "│\x1b[0m" + " ".repeat(margin) + "\n").repeat(padding)
-        }
-    }
-
-    // result += (" ".repeat(margin) + color + "│\x1b[0m" + " ".repeat(padding) + (" ".repeat(width)) + " ".repeat(padding) + color + "│\x1b[0m" + " ".repeat(margin) + "\n").repeat(padding)
-    result += " ".repeat(margin) + color + "└" + ("─".repeat(outerWidth)) + "┘\x1b[0m" + " ".repeat(margin) + "\n"
-    result += (" ".repeat(fullWidth) + "\n").repeat(margin)
-
-    return result
-}
-
-let logo = 
-process.argv.includes("--no-ascii")? "" : (gradient(`\x1b[1m
+let logo = argv["no-ascii"]? "" : (gradient(`\x1b[1m
      _    _
     / \\  | | _____ _ __   ___
    / _ \\ | |/ / _ \\ '_ \\ / _ \\
@@ -125,9 +34,7 @@ process.argv.includes("--no-ascii")? "" : (gradient(`\x1b[1m
     signature = "\x1b[95m[akeno]\x1b[0m"
 ;
 
-
-if(process.argv.includes("-h") || process.argv.includes("--help") || process.argv.includes("help") || process.argv.length < 3){
-
+if(process.argv.length < 3 || argv.h || argv.help || argv._[0] === "help" || argv._[0] === "h" || argv._[0] === "?" || argv._[0] === "/?"){
     log(logo + box(`Global options:
     \x1b[1m--json                      \x1b[90m│\x1b[0m  Preffer JSON output (where supported)
     \x1b[1m--no-ascii                  \x1b[90m│\x1b[0m  Disable the Akeno ASCII art
@@ -135,27 +42,26 @@ if(process.argv.includes("-h") || process.argv.includes("--help") || process.arg
     \x1b[1m--no-color                  \x1b[90m│\x1b[0m  Disable all colouring from the output
     \x1b[1m--silent | -s               \x1b[90m│\x1b[0m  Disable all output (excluding errors)
 ---
-Base command list:
+Base commands list:
     \x1b[1mhelp | --help | -h          \x1b[90m│\x1b[0m  Display command help
-    \x1b[1minfo | --info | -i          \x1b[90m│\x1b[0m  Display some current information about the server and its status
-    \x1b[1mreload                      \x1b[90m│\x1b[0m  Reload the API server
-       \x1b[90m⤷\x1b[0m --hot                  \x1b[90m│\x1b[0m  Hot-reload of the web addon (for when you add/remove apps)
-       \x1b[90m⤷\x1b[0m --host                 \x1b[90m│\x1b[0m  [Deprecated] Reload the host server (eg. Nginx, DNS...)
-       \x1b[90m⤷\x1b[0m --logs                 \x1b[90m│\x1b[0m  Display log while loading the server
-    \x1b[1mhot-reload                  \x1b[90m│\x1b[0m  Same as "reload --hot"
-  \x1b[93m•\x1b[0m \x1b[1mlist | ls                   \x1b[90m│\x1b[0m  List web applications
+    \x1b[1minfo | status | --info | -i \x1b[90m│\x1b[0m  Display some current information about the server and its status
+    \x1b[1mstart                       \x1b[90m│\x1b[0m  Start the server (without a PM)
+    \x1b[1mreload                      \x1b[90m│\x1b[0m  Reload the server (PM2 required)
+       \x1b[90m⤷\x1b[0m --hot                  \x1b[90m│\x1b[0m  Hot-reload of the webserver (when you add/remove apps)
+       \x1b[90m⤷\x1b[0m --logs                 \x1b[90m│\x1b[0m  Display logs while loading the server
     \x1b[1mlogs [filter]               \x1b[90m│\x1b[0m  View server logs
-  \x1b[93m•\x1b[0m \x1b[1mparse-config <file|text>    \x1b[90m│\x1b[0m  Parse a config file and return it as JSON. Defaults to the main config.
-        \x1b[90m⤷\x1b[0m -t                    \x1b[90m│\x1b[0m  Parse from text input instead of a file
-        \x1b[90m⤷\x1b[0m -d                    \x1b[90m│\x1b[0m  Parse as plain content (HTML code - keep text and require blocks to start with @)
+  \x1b[93m•\x1b[0m \x1b[1mparse-config <file>         \x1b[90m│\x1b[0m  Parse a config file and return it as JSON. Defaults to the main config.
+        \x1b[90m⤷\x1b[0m -t | --text [text]    \x1b[90m│\x1b[0m  Parse from text input instead of a file
         \x1b[90m⤷\x1b[0m -p                    \x1b[90m│\x1b[0m  Prettify JSON output
-        \x1b[90m⤷\x1b[0m --stringify           \x1b[90m│\x1b[0m  Return as re-stringified config, aka "clean" output
+        \x1b[90m⤷\x1b[0m --stringify           \x1b[90m│\x1b[0m  Return stringified (converted back to a readable syntax)
 ---
-Web addon:
-    \x1b[1mcreate <name> [path]                \x1b[90m│\x1b[0m  Setup a new web application. Automatically updates server config and creates a template.
-    \x1b[1mbundle <source> [target path]       \x1b[90m│\x1b[0m  Bundle a web application for offline use
-    \x1b[1mtemp-hostname [app]                 \x1b[90m│\x1b[0m  Generate a temporary hostname for an app
-    \x1b[1mrenew-cert [domain]                 \x1b[90m│\x1b[0m  Automatically renew a certificate for a domain
+Webserver:
+  \x1b[93m•\x1b[0m \x1b[1mlist | ls                          \x1b[90m│\x1b[0m  List web applications
+    \x1b[1menable [app]                       \x1b[90m│\x1b[0m  Enable a web application
+    \x1b[1mdisable [app]                      \x1b[90m│\x1b[0m  Disable a web application
+    \x1b[1mtemp-hostname [app]                \x1b[90m│\x1b[0m  Generate a temporary hostname for an app
+    \x1b[1mcreate <name> [path]               \x1b[90m│\x1b[0m  Setup a new web application. Automatically updates server config and creates a template.
+    \x1b[1mbundle <source> [target path]      \x1b[90m│\x1b[0m  Bundle a web application for offline use
 ---
 Auth addon:
   \x1b[93m•\x1b[0m \x1b[1mauth login [name] [password]       \x1b[90m│\x1b[0m  Attempt login and return token
@@ -172,227 +78,229 @@ Auth addon:
     process.exit()
 }
 
-if(process.argv.includes("-i") || process.argv.includes("--info") || process.argv.includes("info")){
-    try {
-        getInfo();
-    } catch {
-        console.error("\n\x1b[31m[Akeno] [Error]\x1b[0m\nWe could not fetch information about the backend.\nAre you sure that you are running the server via PM2 (as the setup script does)?\nMake sure that you are the same user that ran the server setup (probably root - in that case, you can try running this command with sudo).\n\n\x1b[31mIf you have not yet set-up the server, this is an expected error!\x1b[0m\n\nIf you are a regular user without sudo permissions, you may safely ignore this error and continue using akeno.");
-        process.exit(2)
-    }
+else if(argv.i || argv.info || argv._[0] === "info" || argv._[0] === "status"){
+    client.request("usage cpu", (error, response) => {
+        if(error){
+            if(error.code === "ECONNREFUSED") {
+                return client.close() && log_error(`${signature} Can't get status: Akeno is not running! Make sure you have started it either with a process manager, or the "akeno start" command.`)
+            }
 
-    let isOnline = grep("status").includes("online");
+            return client.close() && log_error(`${signature} Couln't get information, Akeno may not be running! Error:`, error)
+        }
 
-    log(logo + box(`You are running the Akeno backend - an open source, fast, modern and fully automated
-web application management system with integrated API, CDN and a webserver!
+        const mem_total = response.mem.heapTotal
+        const mem_used = response.mem.heapUsed
+    
+        log(logo + box(`You are running the Akeno backend - an open source, fast, modern and fully automated
+web application, API and content delivery management system / server!
+
 \x1b[95mCreated with <3 by \x1b[1mTheLSTV\x1b[0m\x1b[95m (https://lstv.test).\x1b[0m
 
-    Version: ${version}
-    Server is ${isOnline? `\x1b[32monline\x1b[0m for \x1b[36m\x1b[1m${grep_value("uptime")}\x1b[0m`: "\x1b[31moffline\x1b[0m"}
-    ${isOnline?`Running in \x1b[36m\x1b[1m${fs.existsSync("/www/__dev__")? "development": "production"}\x1b[0m environment and received \x1b[36m\x1b[1m${getHits()}\x1b[0m hits so far.
-    It is currently using \x1b[36m\x1b[1m${grep_value("Used Heap Size")}\x1b[0m of its heap size (RAM).`:''}
+Version: ${response.version}
+Server is ${response.server_enabled? `\x1b[32monline\x1b[0m for \x1b[36m\x1b[1m${formatUptime(response.uptime)}\x1b[0m`: "\x1b[31moffline\x1b[0m"}
+${response.server_enabled?`Running in \x1b[36m\x1b[1m${response.isDev? "development": "production"}\x1b[0m environment.
 ---
-Some command examples:
-    akeno\x1b[1m reload                   \x1b[90m│\x1b[0m  Reload the API server
-    akeno\x1b[1m bundle <source> [target] \x1b[90m│\x1b[0m  Bundle a web application
-    akeno\x1b[1m logs [my_web_app]        \x1b[90m│\x1b[0m  Show (and stream) logs, with a filter
-    akeno\x1b[1m disable <id>             \x1b[90m│\x1b[0m  Disable an application
+Currently using \x1b[36m\x1b[1m${(mem_used / 1000000).toFixed(2)} MB\x1b[0m RAM out of a \x1b[36m\x1b[1m${(mem_total / 1000000).toFixed(2)} MB\x1b[0m heap and \x1b[36m\x1b[1m${response.cpu.usage.toFixed(4)}%\x1b[0m CPU.` : ''}
+---
+Some examples:
+    akeno\x1b[1m reload              \x1b[90m│\x1b[0m  Reload the API server
+    akeno\x1b[1m logs                \x1b[90m│\x1b[0m  Show (and stream) logs
+    akeno\x1b[1m disable <id>        \x1b[90m│\x1b[0m  Disable an application
     ...
-
----
-\x1b[92m•\x1b[0m \x1b[1mDo "akeno --help" for all possible commands!\x1b[0m`))
-    process.exit()
-}
-
-
-// const rl = readline.createInterface({
-//     input: process.stdin,
-//     output: process.stdout
-// });
-
-
-let values = process.argv.slice(2).filter(arg => !arg.startsWith("-")), api = "http://0.0.0.0/___internal";
-
-async function resolve(command){
-    let thing, domain, data; // Theese mean NOTHING for most commands, its there just for commands that define the same variable name as you cannot do that inside a switch.
-
-    switch(command[0]) {
-        case "reload":
-            if(process.argv.includes("--host")){
-                return (()=>{
-                    log(`${signature} Reloading the host server\n`);
-
-                    let thing = spawn(COMMAND_PATH + "reload");
     
-                    thing.stderr.on("data", ()=>{
-                        console.error(`Error reloading server: ${error.message}`);
-                    })
+---
+    \x1b[92m•\x1b[0m \x1b[1mTry "akeno --help" for explanation of all commands!\x1b[0m`));
+        process.exit()
+    })
+} else resolve(argv)
 
-                    thing.stdout.on("data", data => {
-                        process.stdout.write(data)
-                    })
 
-                    thing.on("close", ()=>{
-                        log(`\n${signature} \x1b[32mSuccessfully reloaded the server!\x1b[0m`);
-                    })
-                })()
+
+async function resolve(argv){
+
+    let childProcess;
+
+    switch(argv._[0]) {
+        case "reload":
+            if(argv.hot){
+                // TODO: Add hot-reloading per app
+
+                log(`${signature} Hot-reloading web ${(argv.hot? `application`: "server")}...`);
+
+                client.request("web.reload" + (typeof argv.hot === "string"? ` ${argv.hot}`: ""), (error, response) => {
+                    if(error){
+                        return client.close() && log_error(`${signature} Could not reload:`, error)
+                    }
+    
+                    log(`${signature} Sucessfully reloaded!`);
+                })
+
+            } else {
+                if(argv.logs){
+                    await resolve({_: ["logs"]})
+                }
+    
+                exec("pm2 reload Akeno")
+                log(`${signature} API Server sucessfully reloaded.`);
             }
 
-            if(process.argv.includes("--hot")){
-                log(`${signature} Hot-reloading web server...`);
-
-                await fetch(`${api}/reload`)
-
-                log(`${signature} Web server config sucessfully reloaded!`);
-                return
-            }
-
-            if(process.argv.includes("--logs")){
-                await resolve(["logs"])
-            }
-
-            exec("pm2 reload Akeno")
-            log(`${signature} API Server sucessfully reloaded.`);
         break;
+
 
         case "list": case "ls":
-            thing = await(await fetch(api + "/list")).json();
-            
-            if(process.argv.includes("--json")){
-                return log(thing)
-            }
-            
-            return log(box(thing.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}\n\n\x1b[1mDomains:\x1b[0m\n${app.domains.join("\n")}`).join("\n---\n")))
+            client.request("web.list", (error, response) => {
+                client.close()
+
+                if(error){
+                    return log_error(`${signature} Could not list applications:`, error)
+                }
+
+                if(argv.json){
+                    return log(response)
+                }
+                
+                return log(box(response.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}\n\n\x1b[1mDomains:\x1b[0m\n${app.domains.join("\n")}`).join("\n---\n")))
+            })
+
         break;
 
-        case "parse-config":
-            let file = !process.argv.includes("-t"), input;
 
-            if(!command[1]) {
-                command[1] = PATH + "/config"
-                file = true
+        case "parse-config": case "parse":
+            let input = argv.t || argv.text;
+
+            if(typeof input !== "string"){
+                if(!fs.existsSync(argv._[1])) return log_error(`${signature} Could not find file "${argv._[1]}"`);
+                input = fs.readFileSync(argv._[1], "utf8")
             }
 
-            if(file){
-                if(!fs.existsSync(command[1])) throw new Error(`${signature} Could not find file "${command[1]}"`);
-                
-                input = fs.readFileSync(command[1], "utf8")
-            } else input = command[1];
+            if(typeof input !== "string") return log_error(`${signature} No input provided"`);
 
-            data = parse(input, !process.argv.includes("-d"));
+            data = parse(input, !argv.d);
 
-            if(process.argv.includes("--stringify")) data = stringify(data); else if(process.argv.includes("-p")) data = JSON.stringify(data, null, 4); else data = JSON.stringify(data);
+            if(argv.stringify) data = stringify(data); else if(argv.p) data = JSON.stringify(data, null, 4); else data = JSON.stringify(data);
 
             return log(data)
 
-        case "temp-hostname":
-            (async()=>{
-                thing = await(await fetch(api + "/list")).json();
-    
-                let app;
-    
-                if(command[1] && command[1].includes("/")){
-                    if(fs.existsSync(command[1])) app = command[1]
-                } else if(command[1]) {
-                    app = thing.find(thing => thing.basename == command[1]).path
-                }
-    
-                if(!app){
-                    return log(`${signature} App "${command[1]}" not found`)
-                }
 
-                log(await(await fetch(`${api}/temporaryDomain?app=${app}`)).text())
-            })()
-        break;
+        case "enable":
+            client.request("web.enable " + argv._[1], (error, response) => {
+                client.close()
 
-        case "create":
-            return (()=>{
-                let path = command[2] || process.env["PWD"];
-    
-                log(`${signature} Creating a new web application named ${command[1]} at "${path}"`)
-
-
-            })()
-
-        case "bundle":
-            thing = await(await fetch(api + "/list")).json();
-
-            let app, path = command[2] || process.env["PWD"];
-
-            if(command[1] && command[1].includes("/")){
-                if(fs.existsSync(command[1])) app = command[1]
-            } else if(command[1]) {
-                app = thing.find(thing => thing.basename == command[1]).path
-            }
-
-            if(!app){
-                return log(`${signature} App "${command[1]}" not found`)
-            }
-
-            log(`${signature} Preparing to bundle app "${app}" into ${path}...`)
-
-            async function getDomain(file = "/"){
-
-                /*
-                    What does this do?
-                    This generates a random hostname on-demand that the server will accept as a valid domain for this application, when provided in the host header.
-                    This allows the web scrape script to reach the app, even if it has no domains attached or is not available globally.
-                */
-
-                return await(await fetch(`${api}/temporaryDomain?app=${app}`)).text()
-            }
-
-            domain = await getDomain();
-
-            let scraper = (await import('/www/node/shared_modules/node_modules/website-scraper/index.mjs')).default,
-                random = "akeno-temp-bundle-" + (Math.random() * 1000).toString(16) // Why? Because the scraper throws an error if the directory already exists for some reason
-            ;
-
-            log(`${signature} Fetching data to a temporary directory ("${"/tmp/" + random}")`)
-
-            // This module is a pain to work with, but it works..
-            await scraper({
-                urls: [`http://0.0.0.0`],
-                directory: "/tmp/" + random,
-
-                plugins: [
-                    new class {
-                        apply(register){
-                            register("beforeRequest", async ({resource, requestOptions}) => {
-                                let url = resource.getUrl();
-
-                                log(`${signature} Fetching ${url}`)
-
-                                return {
-                                    requestOptions: {
-                                        ...requestOptions,
-                                        headers: url.includes("0.0.0.0")? {
-                                            host: domain
-                                        }: {}
-                                    }
-                                }
-                            })
-                            register("error", async ({error}) => {
-                                log(`${signature} Error ${error}`)
-                            })
-                            register("onResourceError", async ({error}) => {
-                                log(`${signature} Error ${error}`)
-                            })
-                        }
-                    }
-                ]
+                if(response){
+                    log(`${signature} Sucessfully enabled app!`)
+                } else log_error(`${signature} Couldnt enable app (it either doesnt exist or Akeno is not running).`)
             })
+            break;
 
-            log(`${signature} Moving data.`)
+
+        case "disable":
+            client.request("web.disable " + argv._[1], (error, response) => {
+                client.close()
+
+                if(response){
+                    log(`${signature} Sucessfully disabled app!`)
+                } else log_error(`${signature} Couldnt disable app (it either doesnt exist or Akeno is not running).`)
+            })
+            break;
+
+
+        case "temp-hostname":
+            client.request("web.tempDomain " + argv._[1], (error, response) => {
+                client.close()
+                log(response)
+            })
+            break;
+
+
+        // case "create":
+        //     return (()=>{
+        //         let path = argv._[2] || process.env["PWD"];
+    
+        //         log(`${signature} Creating a new web application named ${argv._[1]} at "${path}"`)
+
+
+        //     })()
+
+        // case "bundle":
+        //     thing = await(await fetch(api + "/list")).json();
+
+        //     let app, path = argv._[2] || process.env["PWD"];
+
+        //     if(argv._[1] && argv._[1].includes("/")){
+        //         if(fs.existsSync(argv._[1])) app = argv._[1]
+        //     } else if(argv._[1]) {
+        //         app = thing.find(thing => thing.basename == argv._[1]).path
+        //     }
+
+        //     if(!app){
+        //         return log(`${signature} App "${argv._[1]}" not found`)
+        //     }
+
+        //     log(`${signature} Preparing to bundle app "${app}" into ${path}...`)
+
+        //     async function getDomain(file = "/"){
+
+        //         /*
+        //             What does this do?
+        //             This generates a random hostname on-demand that the server will accept as a valid domain for this application, when provided in the host header.
+        //             This allows the web scrape script to reach the app, even if it has no domains attached or is not available globally.
+        //         */
+
+        //         return await(await fetch(`${api}/temporaryDomain?app=${app}`)).text()
+        //     }
+
+        //     domain = await getDomain();
+
+        //     let scraper = (await import('/www/node/shared_modules/node_modules/website-scraper/index.mjs')).default,
+        //         random = "akeno-temp-bundle-" + (Math.random() * 1000).toString(16) // Why? Because the scraper throws an error if the directory already exists for some reason
+        //     ;
+
+        //     log(`${signature} Fetching data to a temporary directory ("${"/tmp/" + random}")`)
+
+        //     // This module is a pain to work with, but it works..
+        //     await scraper({
+        //         urls: [`http://0.0.0.0`],
+        //         directory: "/tmp/" + random,
+
+        //         plugins: [
+        //             new class {
+        //                 apply(register){
+        //                     register("beforeRequest", async ({resource, requestOptions}) => {
+        //                         let url = resource.getUrl();
+
+        //                         log(`${signature} Fetching ${url}`)
+
+        //                         return {
+        //                             requestOptions: {
+        //                                 ...requestOptions,
+        //                                 headers: url.includes("0.0.0.0")? {
+        //                                     host: domain
+        //                                 }: {}
+        //                             }
+        //                         }
+        //                     })
+        //                     register("error", async ({error}) => {
+        //                         log(`${signature} Error ${error}`)
+        //                     })
+        //                     register("onResourceError", async ({error}) => {
+        //                         log(`${signature} Error ${error}`)
+        //                     })
+        //                 }
+        //             }
+        //         ]
+        //     })
+
+        //     log(`${signature} Moving data.`)
             
-            fs.moveSync("/tmp/" + random, path, { overwrite: true });
+        //     fs.moveSync("/tmp/" + random, path, { overwrite: true });
             
-            log(`${signature} \x1b[32mSUCCESS!\x1b[0m Bundle has been created.`)
-        break;
+        //     log(`${signature} \x1b[32mSUCCESS!\x1b[0m Bundle has been created.`)
+        // break;
 
         case "logs":
-            if(command[1]) log(`${signature} Showing only lines including "${command[1]}"`);
+            if(argv._[1]) log(`${signature} Showing only lines including "${argv._[1]}"`);
 
-            const childProcess = spawn('pm2 logs Akeno', {
+            childProcess = spawn('pm2 logs Akeno', {
                 shell: true,
                 env: {
                     ...process.env,
@@ -405,7 +313,7 @@ async function resolve(command){
                 let data = buffer.toString();
 
                 log(data.split("\n").map(line => line.replace(/\d+\|[^|]*\|/, "█ ").trim()).filter(thing => {
-                    if(command[1] && !thing.includes(command[1])) return;
+                    if(argv._[1] && !thing.includes(argv._[1])) return;
 
                     return thing
                 }).join("\n"))
@@ -416,12 +324,35 @@ async function resolve(command){
             });
         break;
 
+        case "start":
+            log(`${signature} Launching Akeno (without a package manager).`);
+            
+            childProcess = spawn('node ' + (argv.inspect? "--inspect " : "") + __dirname + '/../app', {
+                shell: true,
+                env: {
+                    ...process.env
+                }
+            })
+
+            childProcess.stdout.on('data', (buffer) => {
+                if(!buffer) return;
+                process.stdout.write(buffer)
+            });
+
+            childProcess.stderr.on('data', (buffer) => {
+                process.stderr.write(buffer)
+            });
+        break;
+
+
+        // DO NOT USE THIS COMMAND :D
+        // It is here just for backwards compatibility with my old system, and this part is still relied on.
         case "renew-cert":
-            if(!command[1] || command[1].length < 1 || !command[1].includes(".")){
-                return log(`${signature} \x1b[31mDomain "${command[1]}" seems to be invalid.\x1b[0m`)
+            if(!argv._[1] || argv._[1].length < 1 || !argv._[1].includes(".")){
+                return log(`${signature} \x1b[31mDomain "${argv._[1]}" seems to be invalid.\x1b[0m`)
             }
 
-            domain = command[1];
+            domain = argv._[1];
 
             let configPath = "/www/server/config/server.json";
 
@@ -433,8 +364,6 @@ async function resolve(command){
             let
                 config = JSON.parse(fs.readFileSync(configPath, "utf8").replace(/\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g, (m, g) => g ? "" : m))
             ;
-
-            // log(config);
 
             function TXT(domain){
                 return new Promise(complete => dns.resolveTxt(domain, (err, records) => {
@@ -538,8 +467,96 @@ async function resolve(command){
         break;
     
         default:
-            console.error(signature + " Unknown command \"" + command[0] + "\". Type 'akeno -h' for help.")
+            console.error(signature + " Unknown command \"" + argv._[0] + "\". Type 'akeno -h' for help.")
     }
 }
 
-resolve(values)
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function formatUptime(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    
+    return `${hours}h ${minutes}m ${remainingSeconds}s`;
+}
+
+function data_to_log(data){
+    return data.map(thing => typeof thing == "string"? argv["no-color"]? thing.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '') : thing : thing)
+}
+
+function log(...data){
+    if(argv.silent || argv.s) return;
+    console.log(...data_to_log(data))
+}
+
+function log_error(...data){
+    console.error(...data_to_log(data))
+}
+
+// function getHits(){
+//     return fs.existsSync(PATH + "/etc/hits") ? fs.readFileSync(PATH + "./etc/hits").readUInt32LE(0) : 0
+// }
+
+function gradient(text) {
+    let gradientColors = [],
+        lines = text.split('\n'),
+        steps = lines.length,
+        start = 196, // Red
+        end = 204, // Orange
+        step = (end - start) / steps;
+    ;
+
+    for (let i = 0; i < steps; i++) {
+        const color = start + Math.round(step * i);
+        gradientColors.push(`\x1b[38;5;${color}m`);
+    }
+
+    let gradientText = "", i = -1;
+
+    for (let line of lines) {
+        i++
+        gradientText += gradientColors[i] + line + "\n";
+    }
+
+    gradientText += "\x1b[0m";
+
+    return gradientText;
+}
+
+function box(text, padding = 1, margin = 0, color = "90") {
+    // Super messy code but does what it should
+
+    if(argv["no-boxes"]) return text;
+
+    let lines = text.split('\n'),
+        lengths = lines.map(str => str.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '').length),
+        width = lengths.reduce((maxLength, length) => Math.max(maxLength, length), 0),
+        outerWidth = width + (padding * 2),
+        fullWidth = outerWidth + (margin * 2),
+        result = ""
+    ;
+
+    color = `\x1b[${color}m`
+
+    result += (" ".repeat(fullWidth) + "\n").repeat(margin)
+    result += " ".repeat(margin) + color + "┌" + ("─".repeat(outerWidth)) + "┐\x1b[0m" + " ".repeat(margin) + "\n"
+    // result += (" ".repeat(margin) + color + "│\x1b[0m" + " ".repeat(padding) + (" ".repeat(width)) + " ".repeat(padding) + color + "│\x1b[0m" + " ".repeat(margin) + "\n").repeat(padding)
+    
+    for(let i = 0; i < lines.length; i++){
+        if(lines[i] == "---"){
+            result += " ".repeat(margin) + color + "├" + ("─".repeat(outerWidth)) + "┤\x1b[0m" + " ".repeat(margin) + "\n"
+        }else{
+            result += (" ".repeat(margin) + color + "│\x1b[0m" + " ".repeat(padding) + lines[i] + (" ".repeat(width - lengths[i])) + " ".repeat(padding) + color + "│\x1b[0m" + " ".repeat(margin) + "\n").repeat(padding)
+        }
+    }
+
+    // result += (" ".repeat(margin) + color + "│\x1b[0m" + " ".repeat(padding) + (" ".repeat(width)) + " ".repeat(padding) + color + "│\x1b[0m" + " ".repeat(margin) + "\n").repeat(padding)
+    result += " ".repeat(margin) + color + "└" + ("─".repeat(outerWidth)) + "┘\x1b[0m" + " ".repeat(margin) + "\n"
+    result += (" ".repeat(fullWidth) + "\n").repeat(margin)
+
+    return result
+}

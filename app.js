@@ -1,19 +1,21 @@
 let
-    version = "1.5.2",
+    version = "1.5.3",
 
     // Modules
     uws = require('uWebSockets.js'),
-
     fastJson = require("fast-json-stringify"),
-
     fs = require("fs"),
+    net = require('net'),
+
+    { ipc_server } = require("./core/ipc"),
+    ipc,
 
     app,
     SSLApp,
     H3App,
 
     lmdb = require('node-lmdb'),
-    lsdb = require("./addons/lsdb_mysql.js"),   // SQL Wrapper (temporary)
+    lsdb = require("./addons/lsdb_mysql"),   // SQL Wrapper (temporary)
 
     bcrypt = require("bcrypt"),     // Secure hashing
     crypto = require('crypto'),     // Cryptographic utils
@@ -21,8 +23,8 @@ let
     jwt = require('jsonwebtoken'),  // Web tokens
 
     // Config parser
-    { parse, stringify, merge, configTools } = require("./core/parser.js"),
-    { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy.js"),
+    { parse, stringify, merge, configTools } = require("./core/parser"),
+    { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy"),
 
     { xxh32 } = require("@node-rs/xxhash"),
 
@@ -45,24 +47,26 @@ try {
 
 let
     // Globals
-    isDev = fs.existsSync("/www/__dev__"),
     initialized = false,
-    db,
     AddonCache = {},
     Backend,
+    db,
+    
     config,
     configRaw,
 
     API = { handlers: new Map },
-
-    serevr_enabled,
-
+    
+    server_enabled,
+    
     PATH = __dirname + "/",
-
+    
     total_hits,
     since_startup = performance.now(),
-
-    devInspecting = isDev && !!process.execArgv.find(v => v.startsWith("--inspect"));
+    
+    // For debugging
+    isDev,
+    devInspecting
 ;
 
 const cache_db = {
@@ -109,20 +113,88 @@ cache_db.txn = cache_db.env.beginTxn();
 
 
 
-// This is the first thing that runs after the server is loaded.
+// This is the first thing that runs after the backend is loaded.
 function initialize(){
-    
-    process.on('uncaughtException', (error) => {
-        console.debug("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
+    const socketPath = (Backend.config.block("ipc") && Backend.config.block("ipc").properties.socket_path[0]) || '/tmp/akeno.backend.sock';
+
+    // Internal ipc server
+    ipc = new ipc_server({
+        onRequest(socket, args, respond){
+
+            switch(args[0]){
+                case "ping":
+                    respond(null, {
+                        backend_path: PATH,
+                        version,
+                        isDev,
+                        server_enabled
+                    })
+                    break
+
+                case "usage":
+                    const res = {
+                        mem: process.memoryUsage(),
+                        cpu: process.cpuUsage(),
+                        uptime: process.uptime(),
+                        backend_path: PATH,
+                        version,
+                        isDev,
+                        server_enabled,
+                    };
+
+                    // Calculate CPU usage in percentages
+                    if(args[1] === "cpu") {
+                        setTimeout(() => {
+                            const endUsage = process.cpuUsage(res.cpu);
+                            const userTime = endUsage.user / 1000;
+                            const systemTime = endUsage.system / 1000;
+
+                            res.cpu.usage = ((userTime + systemTime) / 200) * 100
+                            respond(null, res)
+                        }, 200);
+                    } else respond(null, res);
+                    break
+
+                case "web.list":
+                    respond(null, Backend.addon("core/web").util.list())
+                    break
+
+                case "web.list.domains":
+                    respond(null, Backend.addon("core/web").util.listDomains(args[1]))
+                    break
+
+                case "web.list.getDomain":
+                    respond(null, Backend.addon("core/web").util.getDomain(args[1]))
+                    break
+
+                case "web.enable":
+                    respond(null, Backend.addon("core/web").util.enable(args[1]))
+                    break
+
+                case "web.disable":
+                    respond(null, Backend.addon("core/web").util.disable(args[1]))
+                    break
+
+                case "web.reload":
+                    respond(null, Backend.addon("core/web").util.reload(args[1]))
+                    break
+
+                case "web.tempDomain":
+                    respond(null, Backend.addon("core/web").util.tempDomain(args[1]))
+                    break
+
+                default:
+                    respond("Invalid command")
+            }
+
+        }
     })
 
-    process.on('exit', () => {
-        save_hits()
-        console.log(`[system] API is stopping.`);
+    ipc.listen(socketPath, () => {
+        console.log(`[system] IPC socket is listening on ${socketPath}`)
     })
 
-    if (serevr_enabled) build();
-
+    if (server_enabled) build();
 }
 
 
@@ -132,14 +204,6 @@ API.handlers.set(1, require("./api/v1.js"))
 API.handlers.set(2, require("./api/v2.js"))
 
 API.default = 2
-
-
-const noCorsHeaders = {
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,HEAD,POST,PUT,DELETE",
-    "access-control-allow-credentials": "true",
-    "access-control-allow-headers": "Authorization, *"
-};
 
 
 
@@ -239,7 +303,14 @@ function build(){
 
     const HTTPort = (+ Backend.config.block("server").properties.port) || 80;
     const SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
-    const H3Port = (+ Backend.config.block("server").properties.h3Port) || 52003;
+    const H3Port = (+ Backend.config.block("server").properties.h3Port) || 443;
+
+    const noCorsHeaders = {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET,HEAD,POST,PUT,DELETE",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-headers": "Authorization, *"
+    };
 
     function resolve(res, req, flags, virtual) {
         total_hits++
@@ -525,13 +596,8 @@ function build(){
             return segments[index] || "";
         }
 
-        if(segments[0] === "___internal"){
-            // console.log(res.getRemoteAddressAsText()); // this does not get the text for some reason
-            Backend.addon("core/web").HandleInternal({segments, req, res})
-        }
-
         // Handle the builtin CDN
-        else if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
+        if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
             Backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
         }
         
@@ -734,9 +800,6 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
     let jwt_key = process.env.AKENO_KEY;
 
     Backend = {
-        isDev,
-        logLevel: isDev? 5 : 3, // TODO: This should be in config
-
         version,
 
         config,
@@ -1192,6 +1255,12 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
     Backend.log = Backend.createLoggerContext("api")
     Backend.refreshConfig()
 
+    isDev = Backend.config.block("system").properties.developmentMode;
+    devInspecting = isDev && !!process.execArgv.find(v => v.startsWith("--inspect"));
+
+    Backend.isDev = isDev;
+    Backend.logLevel = (+ Backend.config.block("system").properties.logLevel) || isDev? 5 : 3;
+
     if(isDev){
         Backend.log("NOTE: API is running in development mode.")
 
@@ -1205,9 +1274,18 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
     Backend.exposeToDebugger("addons", AddonCache)
     Backend.exposeToDebugger("api", API)
 
-    serevr_enabled = Backend.config.block("server").properties.enable;
+    server_enabled = Backend.config.block("server").properties.enable;
 
     Backend.mime.load()
+    
+    process.on('uncaughtException', (error) => {
+        console.debug("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
+    })
+
+    process.on('exit', () => {
+        save_hits()
+        console.log(`[system] API is stopping.`);
+    })
 
     initialize()
 })()
@@ -1218,10 +1296,13 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 
 
 function lmdb_exists(txn, db, key){
-    const cursor = new lmdb.Cursor(txn, db);
-    let keyExists = cursor.goToKey(key) !== null;
-    cursor.close();
-    return keyExists;
+    let cursor;
+    try {
+        cursor = new lmdb.Cursor(txn, db);
+        return cursor.goToKey(key) !== null;
+    } finally {
+        if (cursor) cursor.close();
+    }
 }
 
 

@@ -18,7 +18,11 @@ Quick installation (Linux) <br>
 ```sh
 curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
 ```
-To run automatically on startup and enable `akeno -i`:
+You can quickly start Akeno with
+```sh
+akeno start
+```
+To run under a package manager (recommended):
 ```sh
 sudo pm2 start /usr/lib/akeno/app.js --name Akeno
 ```
@@ -36,7 +40,7 @@ Either way, Akeno is built to consume the least amount of memory possible.
 
 Akeno is also built to scale. It minimizes bandwidth consumption to the minimum and has a smart caching system.
 
-The entire server is started and ready in **10ms** or less on average, depending on added modules (making it faster than most modern large servers), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
+The entire server is started and ready in **10ms** on average, depending on added modules (making it faster than most modern large servers), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
 
 On top of that, Akeno has an automatic cache header, automatic ?mtime query parametter for file changes, and much more.
 
@@ -126,7 +130,7 @@ Also, Akeno will automatically check for local changes and assign a `?mtime` que
 Starting version 1.5, Akeno is compatible with the node `--inspect` flag and allows you to debug or test your server with DevTools!<br><br>
 ### How to enable:
 1. Open chrome://inspect/ and click "Open dedicated DevTools for Node"
-2. Start Akeno in dev mode and with the `--inspect` flag
+2. Start Akeno in dev mode and with the `--inspect` flag (`akeno start --inspect`)
 3. Enjoy debugging! The process will be detected and attached automatically. You can directly access the backend (`backend` is a global getter to the backend object).
 
 Exposed properties by default:
