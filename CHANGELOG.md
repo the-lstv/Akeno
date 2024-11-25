@@ -4,11 +4,14 @@
 - Enhance the config
 - Builtin multi-threading support
 
-## Planned in 1.5.4
-- Port the remaining uses of the old parser to the new one
-- Removed the old parser
-- Fast dynamic HTML generation
+## Planned in 1.5.5
 - Separate user management addon with much improved cache, profiles, etc. management
+
+## New in 1.5.4
+- Ported the remaining uses of the old parser to the new one
+- Removed the old parser
+- Fixed old confusing naming of block keys
+- Fast dynamic HTML generation
 
 ## New in 1.5.3
 - Refactoration and fixes of the CLI, new commands, among other enhancements

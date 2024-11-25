@@ -52,7 +52,7 @@ let
 
 
 
-let version, locations;
+let locations;
 
 // Section: utils
 function files_try(...files){
@@ -519,8 +519,6 @@ server = {
         if(!server_initiated){
             backend.refreshConfig()
         }
-
-        version = backend.config.valueOf("version") || "unknown";
     
         let webConfig = backend.config.block("web");
     
@@ -580,7 +578,7 @@ server = {
                         if(file) file = nodePath.normalize(file);
 
                         for(const route of app.routes){
-                            if(route.values.find(route => url.startsWith(route))){
+                            if(route.attributes.find(route => url.startsWith(route))){
                                 if(route.properties.files) {
                                     let fExt = nodePath.extname(file || "").replace(".", ""), match = false;
 
@@ -697,26 +695,30 @@ server = {
             }
 
             if(manifestPath) {
-                for(let block of parse(fs.readFileSync(manifestPath, "utf8"), true, app.path)){
+                for(let block of parse({
+                    content: fs.readFileSync(manifestPath, "utf8"),
+                    strict: true,
+                    asArray: true
+                })){
                     if(!typeof block == "object") continue;
 
                     // This is mainly for optimisation so that the app does not have to look for route blocks each time.
-                    if(block.key == "route"){
-                        app.routes.push({properties: block.properties, values: block.values});
+                    if(block.name == "route"){
+                        app.routes.push({properties: block.properties, attributes: block.attributes});
                         continue
                     }
 
-                    if(block.key == "handle"){
-                        app.handles.push({properties: block.properties, values: block.values});
+                    if(block.name == "handle"){
+                        app.handles.push({properties: block.properties, attributes: block.attributes});
                         continue
                     }
 
-                    if(block.key == "stack"){
-                        app.stacks.push({properties: block.properties, values: block.values});
+                    if(block.name == "stack"){
+                        app.stacks.push({properties: block.properties, attributes: block.attributes});
                         continue
                     }
 
-                    manifest[block.key] = {properties: block.properties, values: block.values}
+                    manifest[block.name] = {properties: block.properties, attributes: block.attributes}
                 }
 
                 if(!manifest.server) manifest.server = {properties: {}};
@@ -758,13 +760,13 @@ server = {
 
         for(let app of applications.values()){
             if(!app.manifest || !app.manifest.server) continue;
-
+            
             if(app.manifest.server.properties.domains) {
                 for(let domain of app.manifest.server.properties.domains){
                     assignedDomains.set(domain, app.path);
                 }
             }
-
+            
             if(app.manifest.server.properties.api) {
                 for(let api of app.manifest.server.properties.api){
                     api = api.split(">");
@@ -815,7 +817,7 @@ server = {
             // Redirect handles
             if(app.handles && app.handles.length > 0){
                 for(const handle of app.handles){
-                    if(handle.values.find(route => url.startsWith(route))){
+                    if(handle.attributes.find(route => url.startsWith(route))){
                         if(handle.properties.target) {
                             return backend.resolve(res, req, req.secured, {
                                 domain: "api.extragon.cloud",
@@ -830,7 +832,7 @@ server = {
             app.serve({ segments, req, res, url })
         } else {
             res.cork(() => {
-                res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${version}`)
+                res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}`)
             })
         }
     },
@@ -919,24 +921,7 @@ server = {
 
             return random;
         }
-    },
-
-    // Outdated, replaced by utils
-    // async HandleInternal({segments, req, res}){
-    //     let application;
-
-    //     switch (segments[1]) {
-
-    //         case "resolve":
-    //             if(!req.getQuery("app") || !req.getQuery("path")) return res.writeStatus("500").end();
-                
-    //             application = applications.get(req.getQuery("app"));
-    //             if(!application) return res.writeStatus("500").end();
-
-    //             application.serve({ domain: "internal", method: "GET", segments: req.getQuery("path").replace(/\?.*$/, '').split("/").filter(g => g), req, res })
-    //             break
-    //     }
-    // },
+    }
 }
 
 

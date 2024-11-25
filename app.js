@@ -1,5 +1,5 @@
 let
-    version = "1.5.3",
+    version = "1.5.4",
 
     // Modules
     uws = require('uWebSockets.js'),
@@ -35,8 +35,6 @@ let
     CleanCSS = new (require('clean-css')),
     UglifyJS = require("uglify-js")
 ;
-
-
 
 try {
     // Disable uWebSockets version header, remove to re-enable
@@ -115,7 +113,7 @@ cache_db.txn = cache_db.env.beginTxn();
 
 // This is the first thing that runs after the backend is loaded.
 function initialize(){
-    const socketPath = (Backend.config.block("ipc") && Backend.config.block("ipc").properties.socket_path[0]) || '/tmp/akeno.backend.sock';
+    const socketPath = (Backend.config.block("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
 
     // Internal ipc server
     ipc = new ipc_server({
@@ -220,7 +218,7 @@ function build(){
     }
 
     // TODO: uh, no. away with this
-    db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', Backend.config.block("database").properties.password[0])
+    db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', Backend.config.block("database").get("password", String))
 
     // Websocket handler
     let wss = {
@@ -823,47 +821,55 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 
             let alreadyResolved = {}; // Prevent infinite loops
 
-            function resolveImports(parsed, stack, referer){
-                let imports = [];
+            // TODO: Merge function must be updated
+
+            // function resolveImports(parsed, stack, referer){
+            //     let imports = [];
 
                 
-                configTools(parsed).forEach("import", (block, remove) => {
-                    remove() // remove the block from the config
+            //     configTools(parsed).forEach("import", (block, remove) => {
+            //         remove() // remove the block from the config
 
-                    if(block.values[0][0]){
-                        let path = block.values[0].join("").replace("./", PATH + "/");
-                        
-                        if(path === stack) return Backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
+            //         if(block.attributes.length !== 0){
+            //             let path = block.attributes[0].replace("./", PATH + "/");
 
-                        if(!fs.existsSync(path)){
-                            Backend.log.warn("Failed import of \"" + path + "\", file not found")
-                            return;
-                        }
+            //             if(path === stack) return Backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
 
-                        imports.push(path)
-                    }
-                })
+            //             if(!fs.existsSync(path)){
+            //                 Backend.log.warn("Failed import of \"" + path + "\", file not found")
+            //                 return;
+            //             }
 
-                alreadyResolved[stack] = imports;
+            //             imports.push(path)
+            //         }
+            //     })
 
-                for(let path of imports){
-                    if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
-                        Backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
-                        continue
-                    }
+            //     alreadyResolved[stack] = imports;
 
-                    parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, stack))
-                }
+            //     for(let path of imports){
+            //         if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
+            //             Backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
+            //             continue
+            //         }
+
+            //         parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, stack))
+            //     }
 
 
 
-                return parsed
-            }
+            //     return parsed
+            // }
 
-            
             let path = PATH + "/config";
 
-            configRaw = Backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, null);
+            // configRaw = Backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, null);
+
+            configRaw = Backend.configRaw = parse({
+                content: fs.readFileSync(path, "utf8"),
+                strict: true,
+                asLookupTable: true
+            });
+
             config = Backend.config = configTools(configRaw);
 
         },
@@ -1255,11 +1261,11 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
     Backend.log = Backend.createLoggerContext("api")
     Backend.refreshConfig()
 
-    isDev = Backend.config.block("system").properties.developmentMode;
+    isDev = Backend.config.block("system").get("developmentMode", Boolean);
     devInspecting = isDev && !!process.execArgv.find(v => v.startsWith("--inspect"));
 
     Backend.isDev = isDev;
-    Backend.logLevel = (+ Backend.config.block("system").properties.logLevel) || isDev? 5 : 3;
+    Backend.logLevel = (+ Backend.config.block("system").get("logLevel", Number)) || isDev? 5 : 3;
 
     if(isDev){
         Backend.log("NOTE: API is running in development mode.")
@@ -1274,7 +1280,7 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
     Backend.exposeToDebugger("addons", AddonCache)
     Backend.exposeToDebugger("api", API)
 
-    server_enabled = Backend.config.block("server").properties.enable;
+    server_enabled = Backend.config.block("server").get("enable", Boolean);
 
     Backend.mime.load()
     
