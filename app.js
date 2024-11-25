@@ -202,14 +202,6 @@ function initialize(){
 
 
 
-// Add / Remove versions
-API.handlers.set(1, require("./api/v1.js"))
-API.handlers.set(2, require("./api/v2.js"))
-
-API.default = 2
-
-
-
 // The init fucntion that initializes and starts the server.
 function build(){
     if(initialized) return;
@@ -1113,6 +1105,15 @@ for (const block of backend.config.blocks("route")) {
             cdn: 1,
             api: 2
         }[block.get("to", String)])
+    }
+}
+
+// Setup API versions/modules
+API.default = backend.config.block("api").get("default", Number, 1)
+
+for (const block of backend.config.blocks("api.version")) {
+    for(const name of block.attributes) {
+        API.handlers.set(+name, require("./api/" + block.get("module", String)))
     }
 }
 

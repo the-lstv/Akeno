@@ -1,13 +1,8 @@
+# This is the default config that will get created after you first launch the server.
 
-
-# This is the default config that will get created after you first launch the server with no /config file.
-
-# Import generated configs created automatically by the CLI
-import("./etc/generated");
 
 system {
-    # You can enable development mode when not in production - it enabled some extra debugging tools.
-
+    # You can enable development mode when debugging.
     # developmentMode;
     # logLevel: 5;
 }
@@ -30,19 +25,28 @@ server {
 
 web {
     locations:
-        # Website locations - /* will take all directories inside as individual locations.
+        # Website locations - /* searches all subdirectories as individual locations.
         "/var/www/akeno/*",
         "/var/lib/akeno/examples/hello-world-website",
         "/var/lib/akeno/core/gui"
     ;
 }
 
-# More info on libraries is in /cdn/lib
-cdn.libraries {
-    locations:
-        "./cdn/lib/*",
-    ;
+
+# API configuration
+api {
+    default: 1;
 }
+
+# Example of an API version. This will route /v1/ API requests to api/v1.example.js
+api.version(1) {
+    module: v1.example.js;
+}
+
+# Setup domains to route to API:
+route ("api.example.com") { to: api }
+
+
 
 sslRouter {
     # Currently the options for sslRouter are very limited and only suited for a thin range of configurations
@@ -61,35 +65,34 @@ sslRouter {
     subdomainWildcard;
 }
 
-# If you intend to use a SQL database
+# If you intend to use a SQL database, eg. for user management
 database {
-    enabled: false;
-    
+    db: "...";
     host: "...";
     user: "...";
     password: "...";
 }
 
+
+# More info on libraries is in /cdn/lib
+cdn.libraries {
+    locations:
+        "./cdn/lib/*",
+    ;
+}
+
+
 performance {
-    # How many threads to spawn for multi-threading. Range between 1 to the amount of your CPU cores.
-    threads: 2;
-
-    # Compressor - shared or dedicated and how much RAM to dedicate per socket.
-    compressor: dedicated 32kb;
-
     # Compress JS, HTML, CSS on the fly
     code-compression;
 
     # Cache to both disk and memory
     cache-to: disk, memory;
 
-    # Enable caching for individual files in-memory.
-    file-cache;
-
     # Enable the ?mtime query to be added to requests, automatically refreshing files that have been changed while caching still works.
     mtime-query;
-
-    # Either uWS or Express - uWS is a low-level native socket, Express uses Node.JS APIs. uWS is faster, Express is more dynamic.
-    backend: uWS;
-    # Support is not guaranted.
 }
+
+
+# Import generated configs created automatically by the CLI
+import("./etc/generated");
