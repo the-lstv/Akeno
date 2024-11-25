@@ -645,7 +645,7 @@ const backend = {
             if(req.abort) return;            
 
             if(Array.isArray(data) || (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof DataView) && !(data instanceof Buffer))) {
-                headers["content-type"] = types["json"];    
+                headers["content-type"] = backend.helper.types["json"];    
                 data = JSON.stringify(data);
             }
 
