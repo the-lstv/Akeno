@@ -14,7 +14,7 @@ It also has a built-in webserver, which is extremely optimized and has some very
 <br><br>**NOTE:** At this time Akeno only works on Linux. Windows support is not planned yet due to no interest. Note that thanks to the modular nature of Akeno, some features may work on Windows just fine.<br>
 
 ---
-Quick installation (Linux) <br>
+Quick installation (Linux) - requires node, npm, git, gcc, g++, and python (will install automatically if not found)<br>
 ```sh
 curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
 ```

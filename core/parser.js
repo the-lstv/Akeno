@@ -85,6 +85,7 @@ function parse(options){
 
         // Exit block
         function exit(cancel, message = null){
+            const endPosition = currentPosition;
 
             if(cancel) {
 
@@ -114,7 +115,7 @@ function parse(options){
 
                 if(blockPosition !== -1) parseAt(blockPosition); else return;
 
-            } else parseAt(currentPosition +1)
+            } else parseAt(endPosition)
 
         }
 
@@ -520,7 +521,8 @@ function configTools(parsed){
         },
 
         blocks(name){
-            return parsed.get(name).map(block => block_proxy)
+            const blocks = parsed.get(name);
+            return blocks? blocks.map(block_proxy): []
         },
 
         add(name, attributes, properties){

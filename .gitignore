@@ -9,6 +9,9 @@ config
 cdn/*
 !cdn/lib/example
 
+api/*
+!api/v1.js
+
 addons/*
 !addons/cdn.js
 

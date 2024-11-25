@@ -24,7 +24,9 @@ fi
 
 ensure_dependency() {
     PACKAGE=$1
-    if ! command -v "$PACKAGE" &> /dev/null; then
+    COMMAND=$2
+
+    if ! command -v "$COMMAND" &> /dev/null; then
         echo "$PACKAGE is not installed. Attempting to install it using $PM..."
 
         if [ "$PM" = "dnf" ] || [ "$PM" = "yum" ]; then
@@ -51,17 +53,20 @@ ensure_dependency() {
                 ;;
         esac
 
-        if ! command -v "$PACKAGE" &> /dev/null; then
+        if ! command -v "$COMMAND" &> /dev/null; then
             echo "$PACKAGE is not installed. Aborting."
-            echo "Please install $PACKAGE using your package manager."
+            echo "[installer] Please install $PACKAGE using your package manager."
             exit 1
         fi
     fi
 }
 
-ensure_dependency nodejs
-ensure_dependency npm
-ensure_dependency git
+ensure_dependency nodejs node
+ensure_dependency npm npm
+ensure_dependency git git
+ensure_dependency gcc gcc
+ensure_dependency python python3
+ensure_dependency gcc-c++ g++
 
 # Check if pm2 is installed
 if ! command -v pm2 &> /dev/null; then
@@ -104,7 +109,9 @@ echo "Installing Node.js modules..."
 mkdir -p /usr/lib/akeno/node_modules/
 cd /usr/lib/akeno/
 npm i uNetworking/uWebSockets.js#v20.49.0
-npm i uuid fast-json-stringify node-lmdb bcrypt jsonwebtoken clean-css uglify-js fs-extra mysql2 axios sharp parse5 dom-serializer @node-rs/xxhash
+npm i uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js @node-rs/xxhash htmlparser2 minimist
+npm i node-lmdb
+npm i mysql2 sharp
 
 echo ""
 echo -e "\x1b[32m[SETUP COMPLETE] Run \`akeno start\` or \`sudo pm2 start /usr/lib/akeno/app.js --name Akeno\` to start the server!\x1b[0m"

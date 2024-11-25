@@ -14,7 +14,7 @@ let
     H3App,
 
     lmdb = require('node-lmdb'),
-    lsdb = require("./addons/lsdb_mysql"), // SQL Wrapper (temporary)
+    lsdb,
 
     bcrypt = require("bcrypt"),     // Secure hashing
     crypto = require('crypto'),     // Cryptographic utils
@@ -26,9 +26,6 @@ let
     { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy"),
 
     { xxh32 } = require("@node-rs/xxhash"),
-
-    textEncoder = new TextEncoder,
-    textDecoder = new TextDecoder,
 
     // For code compression
     CleanCSS = new (require('clean-css')),
@@ -48,13 +45,12 @@ let
     // Globals
     initialized = false,
     AddonCache = {},
-    db,
 
     config,
     configRaw,
 
     API = { handlers: new Map },
-    
+
     PATH = __dirname + "/",
     
     total_hits,
@@ -88,7 +84,7 @@ const cache_db = {
     
         } catch (error) {
     
-            console.error(error);        
+            console.error(error);
             cache_db.txn.abort();
     
         }
@@ -219,15 +215,11 @@ function build(){
     if(initialized) return;
     initialized = true;
 
-    backend.log("Initializing the API...")
+    backend.log("Initializing the server...")
 
-    // Initialize API
     for(let version of API.handlers.values()){
         if(version.Initialize) version.Initialize(backend)
     }
-
-    // TODO: uh, no. away with this
-    db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', backend.config.block("database").get("password", String))
 
     // Websocket handler
     let wss = {
@@ -304,7 +296,6 @@ function build(){
         //     return res.end("Hi")
         // }
 
-
         // Virtual requests
         if(virtual){
             if(virtual.method) req.getMethod = () => virtual.method
@@ -315,7 +306,10 @@ function build(){
 
         // Lowercase is pretty but most code already uses uppercase
         req.method = req.getMethod && req.getMethod().toUpperCase();
-        req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
+
+        const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
+        req.domain = _colon_index === -1? _host: _host.slice(0, _host.lastIndexOf(":"));
+
         req.path = req.getUrl();
         req.secured = flags && !!flags.secured; // If the request is done over a secured connection
 
@@ -385,7 +379,7 @@ function build(){
 
             res.cork(() => {
                 res.writeStatus('400')
-                backend.helper.corsHeaders()
+                backend.helper.corsHeaders(req, res)
                 res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
             })
         }
@@ -394,10 +388,9 @@ function build(){
             index++
             return segments[index] || "";
         }
-        
-        const target = domainRouter.get(req.domain);
 
-        console.log(domainRouter);
+        // TODO: improve
+        const target = domainRouter.get(req.domain);
 
         // Handle the builtin CDN
         if(target === 1){
@@ -599,6 +592,7 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 
 
 const jwt_key = process.env.AKENO_KEY;
+const devInspecting = !!process.execArgv.find(v => v.startsWith("--inspect"));
 
 const backend = {
     version,
@@ -639,7 +633,7 @@ const backend = {
             res.cork(() => {
                 res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
 
-                backend.helper.writeHeaders(res, req, no_cors_headers)
+                backend.helper.writeHeaders(req, res, no_cors_headers)
 
                 res.writeHeader("Origin", req.domain)
 
@@ -656,7 +650,7 @@ const backend = {
         // This helper should be avoided.
         // Only use this if: 1) You are lazy; ...
         send(req, res, data, headers = {}, status){
-            if(req.abort) return;
+            if(req.abort) return;            
 
             if(Array.isArray(data) || (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof DataView) && !(data instanceof Buffer))) {
                 headers["content-type"] = types["json"];    
@@ -905,10 +899,6 @@ const backend = {
         }
     },
 
-    get db(){
-        return db
-    },
-
     uuid,
     bcrypt,
     fastJson,
@@ -921,161 +911,6 @@ const backend = {
 
     broadcast(topic, data, isBinary, compress){
         if(backend.config.block("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
-    },
-
-    user: {
-        get(idList, callback, items = ["username", "displayname", "pfp", "email", "verified_email", "status", "id"]){
-            if(!Array.isArray(idList)) idList = [idList];
-
-            for(let i = 0; i < idList.length; i++){
-                if(typeof idList[i] === "object") idList[i] = idList[i].id;
-                if(typeof idList[i] === "string") idList[i] = +idList[i];
-            }
-
-            idList = idList.filter(id => typeof id === "number")
-            if(idList.length < 1) return callback(2);
-
-            items = items.map(item => item.replace(/[^a-zA-Z0-9_.\-]/g, '')).filter(nothing => nothing).join();
-            if(items.length < 1) return callback(2);
-
-            db.database("extragon").query(`SELECT ${items} FROM users WHERE id IN (${idList.join()}) LIMIT 300`,
-                function(err, results){
-                    if(err){
-                        return callback(err)
-                    }
-
-                    if(results.length < 1){
-                        return callback(6)
-                    }
-
-                    for(let result of results){
-                        if(result.verified_email) result.verified_email = !!result.verified_email.data
-                    }
-
-                    callback(null, results)
-                }
-            )
-        },
-
-        login(identification, password, callback, expiresIn = 5184000000, createToken = true){
-            db.database("extragon").query(
-                'SELECT hash, id, username FROM `users` WHERE `username` = ? OR `email` = ?',
-
-                [identification, identification],
-
-                async function(err, results) {
-                    if(err){
-                        return callback(err)
-                    }
-
-                    if(results.length < 1){
-                        return callback(6)
-                    }
-
-                    let user = results[0];
-
-                    bcrypt.compare(password, user.hash.replace("$2y$", "$2b$"), function(err, result){
-                        if(!err && result){
-
-                            let token;
-                            if(createToken) token = backend.jwt.sign(
-                                {
-                                    id: user.id
-                                },
-                                {
-                                    expiresIn: expiresIn < 1000 ? 1 : expiresIn / 1000
-                                }
-                            );
-
-                            callback(null, {
-                                token,
-                                id: user.id,
-                                legacy: user.hash.includes("$2y$")
-                            })
-
-                        } else callback(err ? 12 : 11);
-                    })
-                }
-            )
-        },
-
-        async createAccount(user, callback, ip){
-            let discord = user.discord? await backend.getDiscordUserInfo(user.discord): {};
-
-            if (!user.username || !user.email || !user.password) {
-                return callback("Missing required fields: username, email, or password.");
-            }
-
-            if (discord && !discord.id) {
-                return callback("Invalid Discord information.");
-            }
-
-            db.database("extragon").query(`SELECT username, email, discord_id FROM users WHERE username = ? OR email = ? OR discord_id = ?`,
-                [user.username, user.email, discord? +discord.id : 0],
-
-                async function(err, results) {
-                    if(err || results.length > 0){
-                        if(discord && results[0].discord_id == +discord.id){
-                            return callback("Some other account already has this same Discord account linked.")
-                        } else {
-                            return callback(err? 12 : (user.email == results[0].email? (user.username == results[0].username? "Both the email and username are": "This email is"): "This username is") +" already taken.")
-                        }
-                    }
-
-                    let finalUser = {
-
-                        // Profile
-                        displayname: user.username,
-                        ...user.profile || {},
-
-                        // User
-                        username: user.username,
-                        hash: await bcrypt.hash(user.password, 8),
-                        email: user.email,
-                        ip: ip || "",
-
-                        ...(discord && {
-                            discord_link: user.discord,
-                            discord_id: +discord.id,
-                            discord_raw: JSON.stringify(discord),
-                        })
-                    };
-
-                    db.database("extragon").table("users").insert(finalUser, (err, result) => {
-                        if(err){
-                            return callback(err)
-                        }
-
-                        if (user.generateToken) {
-                            backend.user.login(user.username, user.password, (err, data)=>{
-                                if(err){
-                                    return callback(null, {id: result.insertId, token: null, err})
-                                }
-
-                                callback(null, {id: result.insertId, ...data})
-                            }, 5184000000, true)
-                        } else {
-                            callback(null, {id: result.insertId})
-                        }
-
-                    })
-                }
-            )
-        },
-
-        getAuth(req){
-            if(req.User) return req.User;
-            // TODO: || req.cookies.token - parse cookies
-            let token = typeof req == "string"? req : decodeURIComponent(req.getHeader("authorization") || "").replace('Bearer ','').replace('APIKey ','');
-        
-            if(!token) return {error: 13};
-        
-            try{
-                return backend.jwt.verify(token, backend.testKey)
-            } catch {
-                return {error: 9}
-            }
-        }
     },
 
     writeLog(data, severity = 2, source = "api"){
@@ -1120,12 +955,10 @@ const backend = {
     },
 
     addon(name, path){
-        // if(!fs.existsSync("./addons/"+name+".js")) return false;
-
-        path = path || `./${name.startsWith("core/") ? "" : "addons/"}${name}`;
-
         if(!AddonCache[name]){
-            backend.log("Loading addon; " + name);
+            path = path || `./${name.startsWith("core/") ? "" : "addons/"}${name}`;
+
+            backend.log("Loading addon;", name);
 
             AddonCache[name] = require(path);
 
@@ -1234,8 +1067,30 @@ const backend = {
         })
 
         return thing
+    },
+
+    db: {
+        sql_connections: {},
+
+        sql_open(db, host, user, password){
+            if(!user && !host) {
+                if(!db) db = backend.config.block("database.sql").get("db", String)
+                host = backend.config.block("database.sql").get("host", String)
+                user = backend.config.block("database.sql").get("user", String)
+                password = backend.config.block("database.sql").get("password", String)
+
+                if(!host || !db || !user || !password) {
+                    return null
+                }
+            }
+
+            if(!lsdb) lsdb = require("./addons/lsdb_mysql");
+            if(backend.db.sql_connections[db]) return backend.db.sqlDb;
+            return backend.db.sql_connections[db] = lsdb.Server(host, user, password)
+        }
     }
 }
+
 
 backend.log = backend.createLoggerContext("api")
 backend.refreshConfig()
@@ -1249,7 +1104,7 @@ const SSLPort = backend.config.block("server").get("sslPort", Number, 443);
 const H3Port = backend.config.block("server").get("h3Port", Number, 443);
 
 const isDev = backend.config.block("system").get("developmentMode", Boolean);
-const devInspecting = isDev && !!process.execArgv.find(v => v.startsWith("--inspect"));
+
 
 
 for (const block of backend.config.blocks("route")) {
