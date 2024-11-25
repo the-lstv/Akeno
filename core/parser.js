@@ -1,5 +1,5 @@
-const fs = require("fs");
-const { xxh32 } = require("@node-rs/xxhash");
+// const fs = require("fs");
+// const { xxh32 } = require("@node-rs/xxhash");
 
 
 const parser_regex = {
@@ -186,7 +186,13 @@ function parse(options){
             // Also skip whitespace when possible.
             if(type !== 0 || !parser_regex.whitespace.test(char)) {
 
-                if(char === "#") { revert_type = type; type = 5; continue }
+                if(char === "#") {
+                    // revert_type = type; type = 5;
+                    while(options.content[currentPosition] !== "\n" && currentPosition < options.content.length){
+                        currentPosition ++
+                    }
+                    continue
+                }
 
                 switch(stage){
 
@@ -473,14 +479,16 @@ function configTools(parsed){
         return new Proxy(block, {
             get(target, prop) {
                 if (prop === "get") {
-                    return function (key, type){
-                        if(block.isShadow) return null;
+                    return function (key, type, default_value = null){
+                        if(block.isShadow) return default_value;
 
                         if(type === Array || type === null || type === undefined) return target.properties[key];
                         if(type === Boolean) return !!(target.properties[key] && target.properties[key][0]);
+ 
+                        if(!target.properties.hasOwnProperty(key)) return default_value;
                         if(typeof type === "function") return type(target.properties[key] && target.properties[key][0]);
 
-                        return null
+                        return default_value
                     }
                 }
 
@@ -577,335 +585,6 @@ function configTools(parsed){
     
     return tools
 }
-
-// function assignObjects(code, dynamicObjects = {}, fill = false) {
-//     /*
-
-//         Shouldnt be used
-    
-//         This is a parser made for clientside JavaScript code, which allows the server to dynamically expose an object or multiple to the client.
-//         (Or for any other use where you need to expose an object to a string of JS code).
-
-//         If fill is set to false (most cases):
-//             Returns the code spliced as an array of strings, with references to the functions to call.
-        
-//             Warning: Static values will get added directly to the code as a string (potentially causing caching problems if the value changes.).
-//             You must make the value a function in order to achieve a refresh each time.
-
-//         If fill is set to true:
-//             Returns the code as a string, now with replaced and filled references to the object, including function calls.
-
-//         Note: This parser automatically removes all comments!
-//         Warning: This does not respect scopes! Be careful with the name of your objects - treat them as a global.
-//         Warning: Syntax like object["key"] is NOT supported, because no actual code evaluation is performed. You are only allowed to write full object paths.
-//         Warning: You cannot put variables into function calls. Only immediate values are supported (due to no-evaluation).
-
-//     */
-
-//     let dynamicObjectKeys = Object.keys(dynamicObjects),
-//         dynamicObjectFirstLetters = dynamicObjectKeys.map(key => key[0]),
-//         dynamicObjectSecondLetters = dynamicObjectKeys.map(key => key[1])
-//     ;
-
-//     let state = 0, current = "", result = [], string, parsingString, browsing, keyword, arguments = [];
-
-//     function push(){
-//         if(current.length < 1) return;
-//         result.push(current)
-//         current = ""
-//     }
-
-//     let acceptableStartingRegex = /[\n\s;,(]/,
-//         acceptableEndingRegex = /[\s\n.[;,)]/,
-//         whitespaceRegex = /[\s\n]/
-//     ;
-
-
-//     for(let i = 0; i < code.length; i++){
-//         let char = code[i];
-
-//         switch(state){
-//             case 0: // Normal
-//                 if(acceptableStartingRegex.test(code[i - 1] || " ") && dynamicObjectFirstLetters.includes(char) && dynamicObjectSecondLetters.includes(code[i + 1])) {
-//                     let keyword = dynamicObjectKeys.find(key => code.substring(i, i + key.length) == key);
-
-//                     if(keyword && acceptableEndingRegex.test(code[i + keyword.length] || " ")){
-
-//                         let whiteSpace = false;
-//                         i += keyword.length
-
-//                         while(whitespaceRegex.test(code[i])){
-//                             whiteSpace = true
-//                             i++
-//                         } // Ignore whitespace
-    
-//                         if(code[i] !== ".") {current += "{}"; if(whiteSpace) current += "\n"; current += code[i] || ""; continue};
-
-
-//                         while(whitespaceRegex.test(code[i + 1])) i++; // Ignore whitespace
-
-//                         string = ""
-//                         browsing = dynamicObjects[keyword]
-//                         state = 2
-//                         arguments = [];
-
-//                         continue
-//                     }
-//                 }
-
-//                 if(char == "'" || char == '"' || char == "`") {state = 1; current += char; string = char; continue}
-//                 if((char == "/" && (code[i + 1] == "/" || code[i + 1] == "*"))) {state = 3; string = code[i + 1]; continue}
-
-//                 current += char
-//             break
-
-//             case 1: // String
-//                 if(char == string) {state = 0}
-//                 current += char
-//             break
-
-//             case 2: // Keyword
-//                 if(!/^[a-zA-Z0-9$_]+$/.test(char)){
-//                     while(whitespaceRegex.test(code[i])) i++; // Ignore whitespace
-
-//                     keyword = string;
-
-//                     if(code[i] === ".") {
-
-//                         while(whitespaceRegex.test(code[i + 1])) i++; // Ignore whitespace
-
-//                         if(!browsing[keyword]){
-//                             throw `error: can't get ${keyword}`
-//                         }
-
-//                         browsing = browsing[keyword]
-//                         string = ""
-//                         keyword = ""
-//                         continue
-//                     }
-
-//                     if(code[i] === "(") {
-
-//                         while(whitespaceRegex.test(code[i])) i++; // Ignore whitespace
-//                         state = 5
-
-//                         continue
-//                     }
-
-//                     state = 4
-//                     i -= 2
-//                     continue
-//                 }
-
-//                 string += char
-//             break
-
-//             case 3: // Comment
-//                 if((string === "/" && char === "\n") || (string === "*" && char === "*" && code[i + 1] === "/")) {
-//                     if(string === "/") current += char;
-//                     if(string === "*") i++;
-
-//                     state = 0;
-//                     continue
-//                 }
-//             break;
-
-//             case 4: // End of keyword, do something with it:
-//                 state = 0
-                
-//                 if(typeof browsing[keyword] === "function"){
-//                     if(fill){
-//                         current += JSON.stringify(browsing[keyword](...arguments))
-//                         continue
-//                     }
-
-//                     push()
-//                     result.push({
-//                         call: browsing[keyword],
-//                         args: arguments
-//                     })
-//                     continue
-//                 }
-
-//                 current += JSON.stringify(browsing[keyword])
-//             break;
-
-//             case 5: // Arguments
-//                 while(whitespaceRegex.test(code[i])) i++; // Ignore whitespace
-
-//                 if(code[i] == "'" || code[i] == '"' || code[i] == "`") {state = 6; parsingString = ""; string = code[i]; continue}
-
-//                 if(code[i] == "," || code[i] == ")") arguments.push(parsingString);
-
-//                 if(code[i] == ")") {
-//                     state = 4
-//                     i--
-//                     continue
-//                 }
-
-//             break;
-
-//             case 6: // Argument string
-
-//                 if(char == string) {state = 5; continue}
-
-//                 parsingString += char;
-
-//             break;
-//         }
-//     }
-
-//     push()
-
-//     return result
-// }
-
-// function replaceObjects(code, replacements) {
-
-//     // FIXME: Needs improved parsing logic to choose when to replace
-
-//     let keys = Object.keys(replacements);
-
-//     if(!replacements || typeof replacements !== "object" || keys.length < 1) return code;
-
-//     let output = '', i = -1, length = code.length;
-
-//     // Optimization
-//     let firstIndex = keys.map(key => key[0]);
-
-//     let insideString = false, stringChar = '', insideSingleLineComment = false, insideMultiLineComment = false, insideRegex = false, insideTemplateStringInsert = false;
-
-//     while (i < length) {
-//         i++
-
-//         let char = code[i];
-//         let nextChar = code[i + 1];
-
-//         if(!char) break;
-
-//         if (insideString) {
-//             if (char === stringChar && code[i - 1] !== '\\') {
-
-//                 insideString = false;
-
-//             }
-            
-//             // else if(stringChar === "`" && char === "$" && nextChar === "{" && code[i - 1] !== '\\'){
-
-//             //     insideTemplateStringInsert = true
-//             //     output += "${"
-//             //     i++
-//             //     continue
-
-//             // }
-
-//             output += char;
-
-//             continue
-//         }
-
-//         // if(insideTemplateStringInsert){
-//         //     if(char === "}"){
-//         //         // FIXME: Bracket matching needed :(
-
-//         //         insideTemplateStringInsert = false
-//         //         output += "}";
-//         //         continue
-//         //     }
-
-//         //     // Also match in template strings
-//         //     if(find()) continue;
-
-//         //     output += char;
-//         //     continue
-//         // }
-
-//         if (insideRegex) {
-//             if (char === "/" && code[i - 1] !== '\\') {
-//                 insideRegex = false;
-//             }
-
-//             output += char;
-//             continue
-//         }
-
-//         if (insideSingleLineComment) {
-//             if (char === '\n') {
-//                 insideSingleLineComment = false;
-//             }
-//             output += char;
-
-//             continue
-//         }
-
-//         if (insideMultiLineComment) {
-//             if (char === '*' && nextChar === '/') {
-//                 insideMultiLineComment = false;
-//                 output += '*/';
-//                 i++
-//             } else {
-//                 output += char;
-//             }
-
-//             continue
-//         }
-
-//         if (char === '"' || char === "'" || char === '`') {
-//             insideString = true;
-//             stringChar = char;
-//             output += char;
-
-//             continue
-//         }
-
-//         if (char === '/') {
-
-//             if(nextChar === '/'){
-//                 insideSingleLineComment = true;
-//                 output += '//';
-//                 i++
-//                 continue
-//             }
-
-//             if(nextChar === '*'){
-//                 insideMultiLineComment = true;
-//                 output += '/*';
-//                 i++
-//                 continue
-//             }
-
-//             insideRegex = true;
-//             output += '/' + nextChar;
-//             i++
-
-//             continue
-//         }
-
-//         function find(){
-//             let find = firstIndex.includes(char) && keys.find(key => code.substring(i, i + key.length) === key);
-    
-//             if (
-//                 find &&
-//                 !/[a-zA-Z0-9_$]/.test(code[i - 1]) && // Make sure it's not part of a larger identifier
-//                 !/[a-zA-Z0-9_$:]/.test(code[i + find.length])   // Make sure it's not part of a larger identifier
-//             ) {
-//                 output += replacements[find];
-//                 i += find.length - 1
-    
-//                 return true
-//             }
-
-//             return false
-//         }
-
-//         if(find()) continue;
-
-//         output += char;
-//     }
-
-//     return output;
-// }
-
 
 let _exports = { parser_regex, parse, stringify, merge, configTools };
 

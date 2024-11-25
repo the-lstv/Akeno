@@ -9,9 +9,11 @@
 
 ## New in 1.5.4
 - Ported the remaining uses of the old parser to the new one
-- Removed the old parser
-- Fixed old confusing naming of block keys
-- Fast dynamic HTML generation
+- Removed the old parser (compatibility remains)
+- Increased performance of the main request handler
+- Fixed old naming of block's properties to be more accurate (values => attributes, key => name)
+- Experimenting with fast dynamic HTML generation (or "server side rendering" as people call it)
+- Breaking change: Removed all non-builtin request helpers from `req` and `res` objects - Instead, call `backend.helper.name(req, res, ...arguments)` - this is for efficiency and so that the request handler is less crowded. (I know, its ugly. Maybe the request/responce prototypes could be used?)
 
 ## New in 1.5.3
 - Refactoration and fixes of the CLI, new commands, among other enhancements
@@ -20,13 +22,13 @@
 - Make hot-reloading of web applications work again
 - Installation script is now supported across multiple distros
 - Temporarily removed chunked parsing and the .write() and .flush() methods from the parser
+- Deprecated request helpers - its recommended to migrate to backend.helper
 
 ## New in 1.5.2
 - Added a fast (global) code compression cache - disk-based, memory-mapped, shared across all addons and instances.
 - Removed old code and extensions
 - Light refactoration
 - Fixed processing caching and enhanced routing speed
-- Deprecated request helpers - backend.request shoud now be used for clarity and efficiency
 - Moved LS.Framework request handler to its own repo
 - The version variable is now streamlined, instead of existing all over the place
 - Expanded support from Fedora/RHEL to Debian-based, Arch-based, Alpine, and openSUSE distros.

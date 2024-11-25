@@ -1,11 +1,12 @@
 
 
 /*
-A powerful dynamic proxy built into Akeno.
+A powerful-ish proxy built into Akeno.
 
 Current limitations:
 - No streaming support
 - Not always 100% accurate, some sites might block it or break
+- Not too well written
 
 Current features:
 - WebSockets proxying

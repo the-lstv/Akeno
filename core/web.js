@@ -157,8 +157,6 @@ function parse_html_content(options){
 
     let head_string_index = null, head = options.head || '<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
 
-    let now = performance.now();
-
     let currentTag = null;
 
     if(!options.app) options.app = {};
@@ -426,8 +424,6 @@ function parse_html_content(options){
         push("</html>");
     }
 
-    console.log(performance.now() - now);
-
     // Finally, condense buffers and return.
     return condense_parsed_output(output, options.dynamic);
 }
@@ -612,7 +608,7 @@ server = {
                             file = get_error_page(404);
 
                             if(!file){
-                                return res.send(url + " not found", null, 404);
+                                return backend.helper.send(req, res, url + " not found", null, 404);
                             }
                         }
 
@@ -621,7 +617,7 @@ server = {
                         // TODO: Extend this functionality
                         if(fs.statSync(file).isDirectory()){
 
-                            res.send("You have landed in " + url + " - which is a directory.", headers);
+                            backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.", headers);
 
                         } else {
 
@@ -645,9 +641,8 @@ server = {
                             headers['x-content-type-options'] = "nosniff";
                             
                             if(cache instanceof Buffer || typeof cache === "string") {
-                                // Great, content is cached and up to date, lets send the cache:
-
-                                res.send(cache, headers)
+                                // Great, content is cached and up to date, lets send the cache directly:
+                                backend.helper.send(req, res, cache, headers)
                                 return
                             }
 
@@ -671,12 +666,11 @@ server = {
                                 break;
 
                                 default:
-                                    // res.stream(fs.createReadStream(file));
                                     content = fs.readFileSync(file);
                             }
 
                             if(content) {
-                                res.send(content, headers);
+                                backend.helper.send(req, res, content, headers);
 
                                 if(content.length < max_cache_size) updateCache(file, content)
                             } else res.end();
@@ -688,7 +682,7 @@ server = {
                         console.error(error)
 
                         try {
-                            res.send("<b>Internal Server Error - Incident log was saved.</b> <br> Don't know what this means? Something went wrong on our side - the staff was notified of this issue and will look into what caused this. Try again later, or contact the website admin.", null, 500)
+                            backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b> <br> Don't know what this means? Something went wrong on our side - the staff was notified of this issue and will look into what caused this. Try again later, or contact the website admin.", null, 500)
                         } catch {}
                     }
                 }
@@ -792,7 +786,7 @@ server = {
             }
 
             if(!app.enabled){
-                res.send("This website is temporarily disabled.", null, 422)
+                backend.helper.send(req, res, "This website is temporarily disabled.", null, 422)
                 return
             }
 

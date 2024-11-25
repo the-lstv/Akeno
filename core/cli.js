@@ -79,13 +79,13 @@ Auth addon:
 }
 
 else if(argv.i || argv.info || argv._[0] === "info" || argv._[0] === "status"){
-    client.request("usage cpu", (error, response) => {
+    client.request(["usage", "cpu"], (error, response) => {
         if(error){
             if(error.code === "ECONNREFUSED") {
                 return client.close() && log_error(`${signature} Can't get status: Akeno is not running! Make sure you have started it either with a process manager, or the "akeno start" command.`)
             }
 
-            return client.close() && log_error(`${signature} Couln't get information, Akeno may not be running! Error:`, error)
+            return client.close() && log_error(`${signature} Couln't get information! Error:`, error)
         }
 
         const mem_total = response.mem.heapTotal
@@ -127,7 +127,7 @@ async function resolve(argv){
 
                 log(`${signature} Hot-reloading web ${(argv.hot? `application`: "server")}...`);
 
-                client.request("web.reload" + (typeof argv.hot === "string"? ` ${argv.hot}`: ""), (error, response) => {
+                client.request(["web.reload", ...typeof argv.hot === "string"? argv.hot: []], (error, response) => {
                     if(error){
                         return client.close() && log_error(`${signature} Could not reload:`, error)
                     }
@@ -183,7 +183,7 @@ async function resolve(argv){
 
 
         case "enable":
-            client.request("web.enable " + argv._[1], (error, response) => {
+            client.request(["web.enable", argv._[1]], (error, response) => {
                 client.close()
 
                 if(response){
@@ -194,7 +194,7 @@ async function resolve(argv){
 
 
         case "disable":
-            client.request("web.disable " + argv._[1], (error, response) => {
+            client.request(["web.disable", argv._[1]], (error, response) => {
                 client.close()
 
                 if(response){
@@ -205,7 +205,7 @@ async function resolve(argv){
 
 
         case "temp-hostname":
-            client.request("web.tempDomain " + argv._[1], (error, response) => {
+            client.request(["web.tempDomain", argv._[1]], (error, response) => {
                 client.close()
                 log(response)
             })

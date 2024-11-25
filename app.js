@@ -5,7 +5,6 @@ let
     uws = require('uWebSockets.js'),
     fastJson = require("fast-json-stringify"),
     fs = require("fs"),
-    net = require('net'),
 
     { ipc_server } = require("./core/ipc"),
     ipc,
@@ -15,7 +14,7 @@ let
     H3App,
 
     lmdb = require('node-lmdb'),
-    lsdb = require("./addons/lsdb_mysql"),   // SQL Wrapper (temporary)
+    lsdb = require("./addons/lsdb_mysql"), // SQL Wrapper (temporary)
 
     bcrypt = require("bcrypt"),     // Secure hashing
     crypto = require('crypto'),     // Cryptographic utils
@@ -36,6 +35,8 @@ let
     UglifyJS = require("uglify-js")
 ;
 
+
+
 try {
     // Disable uWebSockets version header, remove to re-enable
     uws._cfg('999999990007');
@@ -47,25 +48,32 @@ let
     // Globals
     initialized = false,
     AddonCache = {},
-    Backend,
     db,
-    
+
     config,
     configRaw,
 
     API = { handlers: new Map },
     
-    server_enabled,
-    
     PATH = __dirname + "/",
     
     total_hits,
     since_startup = performance.now(),
-    
-    // For debugging
-    isDev,
-    devInspecting
+
+    domainRouter = new Map
 ;
+
+
+
+// For requests that shouldn't have CORS restrictions (should be used responsibly)
+const no_cors_headers = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,HEAD,POST,PUT,DELETE",
+    "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "Authorization, *"
+}
+
+
 
 const cache_db = {
     env: new lmdb.Env(),
@@ -111,15 +119,16 @@ cache_db.txn = cache_db.env.beginTxn();
 
 
 
-// This is the first thing that runs after the backend is loaded.
 function initialize(){
-    const socketPath = (Backend.config.block("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
+    const socketPath = (backend.config.block("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
 
     // Internal ipc server
     ipc = new ipc_server({
-        onRequest(socket, args, respond){
+        onRequest(socket, request, respond){
+            
+            const command = typeof request === "string"? (request = [request] && request[0]): request[0];
 
-            switch(args[0]){
+            switch(command){
                 case "ping":
                     respond(null, {
                         backend_path: PATH,
@@ -141,7 +150,7 @@ function initialize(){
                     };
 
                     // Calculate CPU usage in percentages
-                    if(args[1] === "cpu") {
+                    if(request[1] === "cpu") {
                         setTimeout(() => {
                             const endUsage = process.cpuUsage(res.cpu);
                             const userTime = endUsage.user / 1000;
@@ -154,31 +163,31 @@ function initialize(){
                     break
 
                 case "web.list":
-                    respond(null, Backend.addon("core/web").util.list())
+                    respond(null, backend.addon("core/web").util.list())
                     break
 
                 case "web.list.domains":
-                    respond(null, Backend.addon("core/web").util.listDomains(args[1]))
+                    respond(null, backend.addon("core/web").util.listDomains(request[1]))
                     break
 
                 case "web.list.getDomain":
-                    respond(null, Backend.addon("core/web").util.getDomain(args[1]))
+                    respond(null, backend.addon("core/web").util.getDomain(request[1]))
                     break
 
                 case "web.enable":
-                    respond(null, Backend.addon("core/web").util.enable(args[1]))
+                    respond(null, backend.addon("core/web").util.enable(request[1]))
                     break
 
                 case "web.disable":
-                    respond(null, Backend.addon("core/web").util.disable(args[1]))
+                    respond(null, backend.addon("core/web").util.disable(request[1]))
                     break
 
                 case "web.reload":
-                    respond(null, Backend.addon("core/web").util.reload(args[1]))
+                    respond(null, backend.addon("core/web").util.reload(request[1]))
                     break
 
                 case "web.tempDomain":
-                    respond(null, Backend.addon("core/web").util.tempDomain(args[1]))
+                    respond(null, backend.addon("core/web").util.tempDomain(request[1]))
                     break
 
                 default:
@@ -210,15 +219,15 @@ function build(){
     if(initialized) return;
     initialized = true;
 
-    Backend.log("Initializing the API...")
+    backend.log("Initializing the API...")
 
     // Initialize API
     for(let version of API.handlers.values()){
-        if(version.Initialize) version.Initialize(Backend)
+        if(version.Initialize) version.Initialize(backend)
     }
 
     // TODO: uh, no. away with this
-    db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', Backend.config.block("database").get("password", String))
+    db = lsdb.Server(isDev? '109.71.252.170' : "localhost", 'api_full', backend.config.block("database").get("password", String))
 
     // Websocket handler
     let wss = {
@@ -288,34 +297,13 @@ function build(){
         }
     };
 
-    const types = {
-        json: "application/json; charset=utf-8",
-        js: "text/javascript; charset=utf-8",
-        css: "text/css; charset=utf-8",
-        html: "text/html; charset=utf-8",
-    }
-
-    // Constants
-    const ssl_enabled = Backend.config.block("server").properties.enableSSL;
-    const h3_enabled = Backend.config.block("server").properties.enableH3;
-
-    const HTTPort = (+ Backend.config.block("server").properties.port) || 80;
-    const SSLPort = (+ Backend.config.block("server").properties.sslPort) || 443;
-    const H3Port = (+ Backend.config.block("server").properties.h3Port) || 443;
-
-    const noCorsHeaders = {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET,HEAD,POST,PUT,DELETE",
-        "access-control-allow-credentials": "true",
-        "access-control-allow-headers": "Authorization, *"
-    };
-
     function resolve(res, req, flags, virtual) {
-        total_hits++
+        // total_hits++
 
         // if(flags && flags.h3){
         //     return res.end("Hi")
         // }
+
 
         // Virtual requests
         if(virtual){
@@ -324,72 +312,41 @@ function build(){
             if(virtual.domain) req.getHeader = header => header === "host"? virtual.domain: req.getHeader(header)
         }
 
+
         // Lowercase is pretty but most code already uses uppercase
         req.method = req.getMethod && req.getMethod().toUpperCase();
         req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
-
         req.path = req.getUrl();
-        req.secured = flags && !!flags.secured; // If the communication is done over HTTP or HTTPS
+        req.secured = flags && !!flags.secured; // If the request is done over a secured connection
 
+
+        // This can be called more than once, due to internal redirecions, that is why we check if the request was resolved:
         if(!req.wasResolved){
-
-            req.wasResolved = true; // To handle virtual redirecions
-
-            res.writeHeaders = (headers) => {
-                if(!headers) return res;
-    
-                res.cork(() => {
-                    for(let header in headers){
-                        if(!headers[header]) return;
-                        res.writeHeader(header, headers[header])
-                    }
-                });
-    
-                return res
-            }
+            req.wasResolved = true;
     
             res.onAborted(() => {
                 clearTimeout(res.timeout)
                 req.abort = true;
             })
 
+
             // Handle proxied requests
             if(shouldProxy(req, res, flags)) return;
 
-            res.corsHeaders = () => {
-                res.cork(() => {
-                    res .writeHeader('X-Powered-By', 'Akeno Server/' + version)
-                        .writeHeaders(noCorsHeaders)
-                        .writeHeader("Origin", req.domain)
 
-                    if(h3_enabled){
-                        // EXPERIMENTAL: add alt-svc header for HTTP3
-                        res.writeHeader("alt-svc", `h3=":${H3Port}"`)
-                    }
-                })
-                    
-                return res
-            }
-
-            // Handle preflights:
+            // Handle preflight requests
             if(req.method == "OPTIONS"){
-                // Prevent preflights for 16 days... which chrome totally ignores anyway
-                res.corsHeaders().writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
+                backend.helper.corsHeaders(req, res)
+                res.writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
                 return
             }
 
+
+            // Receive POST body
             if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
                 req.fullBody = Buffer.from('');
 
-                /*
-                    [Lukas]: In my opinion, body on GET requests SHOULD be allowed by browsers.
-                             There are many legitimate uses (eg. when needed to provide data, like a query, to the server so it knows what I want to fetch).
-                             But since current browser implementations usually block the body for GET requests, I am also currently skipping their body proccessing here.
-                             Weirdly enough, the spec itself does not prohibit body on GET requests, and yet it is still not available.
-                             In case that this gets sorted out in browsers, Ill happily add handling here
-                */
-
-                req.hasFullBody = false
+                req.hasFullBody = false;
                 req.contentType = req.getHeader('content-type');
 
                 res.onData((chunk, isLast) => {
@@ -400,80 +357,6 @@ function build(){
                         if(req.onFullData) req.onFullData();
                     }
                 })
-
-                // Helper function
-                req.parseBody = function bodyParser(callback){
-                    return {
-                        get type(){
-                            return req.getHeader("content-type")
-                        },
-        
-                        get length(){
-                            return req.getHeader("content-length")
-                        },
-
-                        upload(key = "file", hash){
-    
-                            function done(){
-                                let parts = uws.getParts(req.fullBody, req.contentType);
-                                
-                                for(let part of parts){
-                                    part.data = Buffer.from(part.data)
-                                    if(hash) part.md5 = crypto.createHash('md5').update(part.data).digest('hex')
-                                }
-    
-                                callback(parts)
-                            }
-
-                            if(req.hasFullBody) done(); else req.onFullData = done;
-
-                        },
-
-                        parts(){
-    
-                            function done(){
-                                let parts = uws.getParts(req.fullBody, req.contentType);
-    
-                                callback(parts)
-                            }
-
-                            if(req.hasFullBody) done(); else req.onFullData = done;
-
-                        },
-        
-                        data(){
-                            function done(){
-                                req.body = {
-                                    get data(){
-                                        return req.fullBody
-                                    },
-    
-                                    get string(){
-                                        return req.fullBody.toString('utf8');
-                                    },
-    
-                                    get json(){
-                                        let data;
-    
-                                        try{
-                                            data = JSON.parse(req.fullBody.toString('utf8'));
-                                        } catch {
-                                            return null
-                                        }
-    
-                                        return data
-                                    }
-                                }
-            
-                                callback(req.body)
-                            }
-    
-    
-                            if(req.hasFullBody) done(); else req.onFullData = done;
-                        }
-                    }
-                }
-
             }
 
             // Default 15s timeout when the request doesnt get answered
@@ -484,108 +367,26 @@ function build(){
                     if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
                 } catch {}
             }, res.timeout || 15000)
-
-            res.send = (message, headers = {}, status) => {
-                if(req.abort) return;
-
-                // FIXME: This is OUTDATED!
-                // Should be avoided (but I decided not to spam the console with warnings)
-
-                if(Array.isArray(message) || (typeof message !== "string" && !(message instanceof ArrayBuffer) && !(message instanceof Uint8Array) && !(message instanceof DataView) && !(message instanceof Buffer))) {
-                    headers["content-type"] = types["json"];    
-                    message = JSON.stringify(message);
-                }
-    
-                if(res.setType){
-                    headers["content-type"] = res.setType;
-                }
-    
-                if(res.setCache){
-                    headers["Cache-Control"] = "public, max-age=" + res.setCache;
-                }
-    
-                if(req.begin && headers) {
-                    let hrTime = process.hrtime()
-                    headers["server-timing"] = `generation;dur=${hrTime[0] * 1000 + hrTime[1] / 1000000 - req.begin}`
-                };
-    
-                res.cork(() => {
-                    res.writeStatus(status? status + "": "200 OK").corsHeaders().writeHeaders(headers).end(message)
-                });
-            }
-    
-            res.stream = (stream, totalSize) => {
-                stream.on('data', (chunk) => {
-                    let buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength), lastOffset = res.getWriteOffset();
-    
-                    res.cork(() => {
-                        // Try writing the chunk
-                        const [ok, done] = res.tryEnd(buffer, totalSize);
-
-                        if (!done && !ok) {
-                            // Backpressure handling
-                            stream.pause();
-        
-                            // Resume once the client is ready
-                            res.onWritable((offset) => {
-                                const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
-        
-                                if (done) {
-                                    stream.close();
-                                } else if (ok) {
-                                    stream.resume();
-                                }
-        
-                                return ok;
-                            });
-                        } else if (done) stream.close();
-                    })
-                    
-                });
-    
-                stream.on('error', (err) => {
-                    res.writeStatus('500 Internal Server Error').end();
-                });
-    
-                stream.on('end', () => {
-                    res.end();
-                });
-    
-                res.onAborted(() => {
-                    stream.destroy();
-                });
-            }
-    
-            res.type = (type) => {
-                res.setType = types[type] || type
-                return res
-            }
-    
-            res.cache = (duration) => {
-                res.setCache = duration
-                return res
-            }
         }
-
 
         // Finally, lets route the request.
 
-        let index = -1, segments = req.path.split("/").filter(trash => trash).map(segment => decodeURIComponent(segment));
-
-        let hrTime = process.hrtime()
-        req.begin = hrTime[0] * 1000 + hrTime[1] / 1000000;
+        let index = -1, segments = decodeURIComponent(req.path).split("/").filter(Boolean)
+        req.begin = performance.now()
 
         function error(error, code){
             if(req.abort) return;
 
-            if(typeof error == "number" && Backend.Errors[error]){
+            if(typeof error == "number" && backend.Errors[error]){
                 let _code = code;
                 code = error;
-                error = (_code? code : "") + Backend.Errors[code]
+                error = (_code? code : "") + backend.Errors[code]
             }
 
             res.cork(() => {
-                res.writeStatus('400').corsHeaders().writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
+                res.writeStatus('400')
+                backend.helper.corsHeaders()
+                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
             })
         }
 
@@ -593,14 +394,18 @@ function build(){
             index++
             return segments[index] || "";
         }
+        
+        const target = domainRouter.get(req.domain);
+
+        console.log(domainRouter);
 
         // Handle the builtin CDN
-        if(req.domain.startsWith("cdn.") || req.domain.startsWith("cdn-origin.")){
-            Backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
+        if(target === 1){
+            return backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
         }
-        
+
         // Handle the builtin API
-        else if(req.domain.startsWith("api.extragon")){
+        if(target === 2){
             let version = segments[0] && +(segments[0].slice(1));
 
             if(version && segments[0][0].toLowerCase().startsWith("v")){
@@ -615,25 +420,25 @@ function build(){
         }
 
         else {
-            // In this case, the request didnt match any special scenarios, thus should be passed to the webserver:
-            Backend.addon("core/web").HandleRequest({segments, req, res})
+            // Let's handle it by the webserever addon by default
+            backend.addon("core/web").HandleRequest({segments, req, res})
         }
     }
 
-    Backend.exposeToDebugger("router", resolve)
+    backend.exposeToDebugger("router", resolve)
 
-    Backend.exposeToDebugger("proxyRouter", proxyReq)
+    backend.exposeToDebugger("proxyRouter", proxyReq)
 
     // Create server instances
     app = uws.App()
 
-    Backend.exposeToDebugger("uws", app)
+    backend.exposeToDebugger("uws", app)
 
     // Initialize WebSockets
     app.ws('/*', wss)
     
     // Initialize WebServer
-    app.any('/*', (res, req) => resolve(res, req, Backend.isDev))
+    app.any('/*', (res, req) => resolve(res, req, backend.isDev))
     
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
@@ -644,7 +449,7 @@ function build(){
 
 
                 SSLApp = uws.SSLApp();
-                Backend.exposeToDebugger("uws_ssl", SSLApp)
+                backend.exposeToDebugger("uws_ssl", SSLApp)
 
 
                 if(h3_enabled){
@@ -658,7 +463,7 @@ function build(){
     
                     H3App.any('/*', (res, req) => resolve(res, req, {secured: true, h3: true}))
     
-                    Backend.exposeToDebugger("uws_h3", H3App)
+                    backend.exposeToDebugger("uws_h3", H3App)
                 }
 
 
@@ -667,22 +472,22 @@ function build(){
                 
 
                 // If sslRouter is defined
-                if(Backend.config.block("sslRouter")){
-                    let SNIDomains = Backend.config.block("sslRouter").properties.domains;
+                if(backend.config.block("sslRouter")){
+                    let SNIDomains = backend.config.block("sslRouter").properties.domains;
     
                     if(SNIDomains){
 
-                        if(!Backend.config.block("sslRouter").properties.certBase){
-                            return Backend.log.error("Could not start SSL server - you are missing certBase in your sslRouter block.")
+                        if(!backend.config.block("sslRouter").properties.certBase){
+                            return backend.log.error("Could not start SSL server - you are missing certBase in your sslRouter block.")
                         }
-                        if(!Backend.config.block("sslRouter").properties.certBase){
-                            return Backend.log.error("Could not start SSL server - you are missing keyBase in your sslRouter block.")
+                        if(!backend.config.block("sslRouter").properties.certBase){
+                            return backend.log.error("Could not start SSL server - you are missing keyBase in your sslRouter block.")
                         }
 
                         function addSNIRoute(domain) {
                             SSLApp.addServerName(domain, {
-                                key_file_name:  Backend.config.block("sslRouter").properties.keyBase[0].replace("{domain}", domain.replace("*.", "")),
-                                cert_file_name: Backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", domain.replace("*.", ""))
+                                key_file_name:  backend.config.block("sslRouter").properties.keyBase[0].replace("{domain}", domain.replace("*.", "")),
+                                cert_file_name: backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", domain.replace("*.", ""))
                             })
     
                             // For some reason we still have to include a separate router like so:
@@ -693,7 +498,7 @@ function build(){
 
                         for(let domain of SNIDomains) {
                             addSNIRoute(domain)
-                            if(Backend.config.block("sslRouter").properties.subdomainWildcard){
+                            if(backend.config.block("sslRouter").properties.subdomainWildcard){
                                 addSNIRoute("*." + domain)
                             }
                         }
@@ -711,23 +516,23 @@ function build(){
                 SSLApp.listen(SSLPort, (listenSocket) => {
                     if (listenSocket) {
                         console.log(`[system] Listening with SSL on ${SSLPort}!`)
-                    } else Backend.log.error("[error] Could not start the SSL server! If you do not need SSL, you can ignore this, but it is recommended to remove it from the config. If you do need SSL, make sure nothing is taking the port you configured (" +SSLPort+ ")")
+                    } else backend.log.error("[error] Could not start the SSL server! If you do not need SSL, you can ignore this, but it is recommended to remove it from the config. If you do need SSL, make sure nothing is taking the port you configured (" +SSLPort+ ")")
                 });
 
                 if(h3_enabled){
                     H3App.listen(H3Port, (listenSocket) => {
                         if (listenSocket) {
                             console.log(`[system] HTTP3 Listening with SSL on ${H3Port}!`)
-                        } else Backend.log.error("[error] Could not start the HTTP3 server! If you do not need HTTP3, you can ignore this, but it is recommended to remove it from the config. Make sure nothing is taking the port you configured for H3 (" +H3Port+ ")")
+                        } else backend.log.error("[error] Could not start the HTTP3 server! If you do not need HTTP3, you can ignore this, but it is recommended to remove it from the config. Make sure nothing is taking the port you configured for H3 (" +H3Port+ ")")
                     });
                 }
             }
-        } else Backend.log.error("[error] Could not start the server on port " + HTTPort + "!")
+        } else backend.log.error("[error] Could not start the server on port " + HTTPort + "!")
     });
 
-    Backend.resolve = resolve;
+    backend.resolve = resolve;
 
-    if(Backend.config.block("server").properties.preloadWeb) Backend.addon("core/web");
+    if(backend.config.block("server").properties.preloadWeb) backend.addon("core/web");
 }
 
 
@@ -778,7 +583,7 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
         }
 
         return proxyReq(req, res, {
-            overwriteHeaders: noCorsHeaders,
+            overwriteHeaders: no_cors_headers,
             hostname: url.hostname,
             protocol: url.protocol,
             path: url.pathname + url.search
@@ -793,514 +598,706 @@ function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 
 
 
-// Initialization.
-;(() => {
-    let jwt_key = process.env.AKENO_KEY;
+const jwt_key = process.env.AKENO_KEY;
 
-    Backend = {
-        version,
+const backend = {
+    version,
 
-        config,
-        configRaw,
+    config,
+    configRaw,
 
-        get path(){
-            return PATH
-        },
+    get path(){
+        return PATH
+    },
 
-        get PATH(){
-            return PATH
-        },
+    get PATH(){
+        return PATH
+    },
 
-        refreshConfig(){
-            Backend.log("Refreshing configuration")
-
-            if(!fs.existsSync(PATH + "/config")){
-                Backend.log("No main config file found in /config, creating a default config file.")
-                fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
-            }
-
-            let alreadyResolved = {}; // Prevent infinite loops
-
-            // TODO: Merge function must be updated
-
-            // function resolveImports(parsed, stack, referer){
-            //     let imports = [];
-
-                
-            //     configTools(parsed).forEach("import", (block, remove) => {
-            //         remove() // remove the block from the config
-
-            //         if(block.attributes.length !== 0){
-            //             let path = block.attributes[0].replace("./", PATH + "/");
-
-            //             if(path === stack) return Backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
-
-            //             if(!fs.existsSync(path)){
-            //                 Backend.log.warn("Failed import of \"" + path + "\", file not found")
-            //                 return;
-            //             }
-
-            //             imports.push(path)
-            //         }
-            //     })
-
-            //     alreadyResolved[stack] = imports;
-
-            //     for(let path of imports){
-            //         if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
-            //             Backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
-            //             continue
-            //         }
-
-            //         parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, stack))
-            //     }
-
-
-
-            //     return parsed
-            // }
-
-            let path = PATH + "/config";
-
-            // configRaw = Backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, null);
-
-            configRaw = Backend.configRaw = parse({
-                content: fs.readFileSync(path, "utf8"),
-                strict: true,
-                asLookupTable: true
-            });
-
-            config = Backend.config = configTools(configRaw);
-
-        },
-
-        compression: {
-
-            // Code compression with both disk and memory cache.
-            code(code, isCSS){
-                const hash = xxh32(code);
-
-                let compressed;
-                if(compressed = cache_db.memory_general_cache.get(hash)) return compressed;
-
-                let hasDiskCache = lmdb_exists(cache_db.txn, cache_db.compression, hash)
-
-                if(!hasDiskCache){
-                    compressed = Buffer.from(isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code)
-                    cache_db.txn.putBinary(cache_db.compression, hash, compressed);
-
-                    cache_db.commit();
-                } else {
-                    compressed = cache_db.txn.getBinary(cache_db.compression, hash)
-                }
-
-                cache_db.memory_compression_cache.set(hash, compressed)
-
-                return compressed || code;
-            }
-
-        },
-
-        cache: {
-            set(key, value){
-                if(!value instanceof Buffer) throw "Cache only accepts a buffer as a value";
-                cache_db.memory_general_cache.set(key, value)
-                cache_db.txn.putBinary(cache_db.general, key, value);
-            },
-
-            get(key){
-                return cache_db.memory_general_cache.get(key) || cache_db.txn.getBinary(cache_db.general, key)
-            },
-
-            commit(){
-                cache_db.commit();
-            }
-        },
-
-        jwt: {
-            verify(something, options){
-                return jwt.verify(something, jwt_key, options)
-            },
-
-            sign(something, options){
-                return jwt.sign(something, jwt_key, options)
-            }
-        },
-
-        get db(){
-            return db
-        },
-
-        uuid,
-        bcrypt,
-        fastJson,
-
-        app,
-        SSLApp,
-
-        API,
-        apiExtensions: {},
-
-        broadcast(topic, data, isBinary, compress){
-            if(Backend.config.block("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
-        },
-
-        user: {
-            get(idList, callback, items = ["username", "displayname", "pfp", "email", "verified_email", "status", "id"]){
-                if(!Array.isArray(idList)) idList = [idList];
-
-                for(let i = 0; i < idList.length; i++){
-                    if(typeof idList[i] === "object") idList[i] = idList[i].id;
-                    if(typeof idList[i] === "string") idList[i] = +idList[i];
-                }
-
-                idList = idList.filter(id => typeof id === "number")
-                if(idList.length < 1) return callback(2);
-
-                items = items.map(item => item.replace(/[^a-zA-Z0-9_.\-]/g, '')).filter(nothing => nothing).join();
-                if(items.length < 1) return callback(2);
-
-                db.database("extragon").query(`SELECT ${items} FROM users WHERE id IN (${idList.join()}) LIMIT 300`,
-                    function(err, results){
-                        if(err){
-                            return callback(err)
-                        }
-
-                        if(results.length < 1){
-                            return callback(6)
-                        }
-
-                        for(let result of results){
-                            if(result.verified_email) result.verified_email = !!result.verified_email.data
-                        }
-
-                        callback(null, results)
+    helper: {
+        writeHeaders(req, res, headers){
+            if(headers) {
+                res.cork(() => {
+                    for(let header in headers){
+                        if(!headers[header]) return;
+                        res.writeHeader(header, headers[header])
                     }
-                )
-            },
-
-            login(identification, password, callback, expiresIn = 5184000000, createToken = true){
-                db.database("extragon").query(
-                    'SELECT hash, id, username FROM `users` WHERE `username` = ? OR `email` = ?',
-
-                    [identification, identification],
-
-                    async function(err, results) {
-                        if(err){
-                            return callback(err)
-                        }
-
-                        if(results.length < 1){
-                            return callback(6)
-                        }
-
-                        let user = results[0];
-
-                        bcrypt.compare(password, user.hash.replace("$2y$", "$2b$"), function(err, result){
-                            if(!err && result){
-
-                                let token;
-                                if(createToken) token = Backend.jwt.sign(
-                                    {
-                                        id: user.id
-                                    },
-                                    {
-                                        expiresIn: expiresIn < 1000 ? 1 : expiresIn / 1000
-                                    }
-                                );
-
-                                callback(null, {
-                                    token,
-                                    id: user.id,
-                                    legacy: user.hash.includes("$2y$")
-                                })
-
-                            } else callback(err ? 12 : 11);
-                        })
-                    }
-                )
-            },
-
-            async createAccount(user, callback, ip){
-                let discord = user.discord? await Backend.getDiscordUserInfo(user.discord): {};
-
-                if (!user.username || !user.email || !user.password) {
-                    return callback("Missing required fields: username, email, or password.");
-                }
-
-                if (discord && !discord.id) {
-                    return callback("Invalid Discord information.");
-                }
-
-                db.database("extragon").query(`SELECT username, email, discord_id FROM users WHERE username = ? OR email = ? OR discord_id = ?`,
-                    [user.username, user.email, discord? +discord.id : 0],
-
-                    async function(err, results) {
-                        if(err || results.length > 0){
-                            if(discord && results[0].discord_id == +discord.id){
-                                return callback("Some other account already has this same Discord account linked.")
-                            } else {
-                                return callback(err? 12 : (user.email == results[0].email? (user.username == results[0].username? "Both the email and username are": "This email is"): "This username is") +" already taken.")
-                            }
-                        }
-
-                        let finalUser = {
-
-                            // Profile
-                            displayname: user.username,
-                            ...user.profile || {},
-
-                            // User
-                            username: user.username,
-                            hash: await bcrypt.hash(user.password, 8),
-                            email: user.email,
-                            ip: ip || "",
-
-                            ...(discord && {
-                                discord_link: user.discord,
-                                discord_id: +discord.id,
-                                discord_raw: JSON.stringify(discord),
-                            })
-                        };
-
-                        db.database("extragon").table("users").insert(finalUser, (err, result) => {
-                            if(err){
-                                return callback(err)
-                            }
-
-                            if (user.generateToken) {
-                                Backend.user.login(user.username, user.password, (err, data)=>{
-                                    if(err){
-                                        return callback(null, {id: result.insertId, token: null, err})
-                                    }
-
-                                    callback(null, {id: result.insertId, ...data})
-                                }, 5184000000, true)
-                            } else {
-                                callback(null, {id: result.insertId})
-                            }
-
-                        })
-                    }
-                )
-            },
-
-            getAuth(req){
-                if(req.User) return req.User;
-                // TODO: || req.cookies.token - parse cookies
-                let token = typeof req == "string"? req : decodeURIComponent(req.getHeader("authorization") || "").replace('Bearer ','').replace('APIKey ','');
-            
-                if(!token) return {error: 13};
-            
-                try{
-                    return Backend.jwt.verify(token, Backend.testKey)
-                } catch {
-                    return {error: 9}
-                }
+                });
             }
+
+            return backend.helper
         },
 
-        writeLog(data, severity = 2, source = "api"){
-            // 0 = Debug (Verbose), 1 = Info (Verbose), 2 = Info, 3 = Warning, 4 = Error, 5 = Important
-
-            if(severity < (5 - Backend.logLevel)) return;
-            if(!Array.isArray(data)) data = [data];
-            if(devInspecting) data.unshift("color: aquamarine");
-            console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`${devInspecting? "%c": ""}[${source}]`, ...data)
+        types: {
+            json: "application/json; charset=utf-8",
+            js: "text/javascript; charset=utf-8",
+            css: "text/css; charset=utf-8",
+            html: "text/html; charset=utf-8",
         },
 
-        createLoggerContext(target){
-            let logger = function (...data){
-                Backend.writeLog(data, 2, target)
-            }
+        corsHeaders(req, res) {
+            res.cork(() => {
+                res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
 
-            logger.debug = function (...data){
-                Backend.writeLog(data, 0, target)
-            }
+                backend.helper.writeHeaders(res, req, no_cors_headers)
 
-            logger.verbose = function (...data){
-                Backend.writeLog(data, 1, target)
-            }
+                res.writeHeader("Origin", req.domain)
 
-            logger.info = function (...data){
-                Backend.writeLog(data, 2, target)
-            }
-
-            logger.warn = function (...data){
-                Backend.writeLog(data, 3, target)
-            }
-
-            logger.error = function (...data){
-                Backend.writeLog(data, 4, target)
-            }
-
-            logger.impotant = function (...data){
-                Backend.writeLog(data, 5, target)
-            }
-
-            return logger
-        },
-
-        addon(name, path){
-            // if(!fs.existsSync("./addons/"+name+".js")) return false;
-
-            path = path || `./${name.startsWith("core/") ? "" : "addons/"}${name}`;
-
-            if(!AddonCache[name]){
-                Backend.log("Loading addon; " + name);
-
-                AddonCache[name] = require(path);
-
-                AddonCache[name].log = Backend.createLoggerContext(name)
-
-                if(AddonCache[name].Initialize) AddonCache[name].Initialize(Backend);
-            }
-
-            return AddonCache[name]
-        },
-
-        mime: {
-            // My own mimetype checker since the current mimetype library for Node is meh.
-
-            types: null,
-            extensions: null,
-
-            load(){
-                Backend.mime.types = JSON.parse(fs.readFileSync(PATH + "/etc/mimetypes.json", "utf8"))
-                Backend.mime.extensions = {}
-
-                for(let extension in Backend.mime.types){
-                    Backend.mime.extensions[Backend.mime.types[extension]] = extension
-                }
-            },
-
-            getType(extension){
-                return Backend.mime.types[extension] || null
-            },
-
-            getExtension(mimetype){
-                return Backend.mime.extensions[mimetype] || null
-            }
-        },
-
-        Errors: {
-            0: "Unknown API version",
-            1: "Invalid API endpoint",
-            2: "Missing parameters in request body/query string.",
-            3: "Internal Server Error.",
-            4: "Access denied.",
-            5: "You do not have access to this endpoint.",
-            6: "User not found.",
-            7: "Username already taken.",
-            8: "Email address is already registered.",
-            9: "Your login session has expired. Please log-in again.",
-            10: "Incorrect verification code.", // FIXME: What does this even mean
-            11: "Invalid password.",
-            12: "Authentication failed.",
-            13: "Session/API token missing or expired.", // FIXME: Identical to 9
-            14: "This account is suspended.",
-            15: "Forbidden action.", // FIXME: Unclear
-            16: "Entity not found.",
-            17: "Request timed out.",
-            18: "Too many requests. Try again in a few seconds.", // FIXME: Identical to 34/36/429
-            19: "Service temporarily unavailable.",
-            20: "Service/Feature not enabled. It might first require setup from your panel, is not available (or is paid and you don't have access).",
-            21: "Unsupported media type.",
-            22: "Deprecated endpoint. Consult documentation for a replacement.",
-            23: "Not implemented.",
-            24: "Conflict.",
-            25: "Data already exist.",
-            26: "Deprecated endpoint. Consult documentation for a replacement.",
-            27: "This endpoint has been removed from this version of the API. Please migrate your code to the latest API version to keep using it.",
-            28: "Access blocked for the suspicion of fraudulent/illegal activity. Contact our support team to get this resolved.",
-            29: "This endpoint requires an additional parametter (cannot be called directly)",
-            30: "Invalid method.", // FIXME: Identical to 39
-            31: "Underlying host could not be resolved.",
-            32: "Underlying host could not resolve this request due to a server error.",
-            33: "Temporarily down due to high demand. Please try again in a few moments.",
-            34: "Global rate-limit has been reached. Please try again in a few moments.",
-            35: "This endpoint may handle sensitive data, so you must use HTTPS. Do not use unsecured connections to avoid your information being vulnerable to attacks.",
-            36: "Rate-Limited. Please try again in a few minutes.",
-            37: "Rate-Limited. You have used all of your requests for a given time period.",
-            38: "Rate-Limited. Please contact support for more information.",
-            39: "Invalid method for this endpoint.",
-            40: "This is a WebSocket-only endpoint. Use the ws:// or wss:// protocol instead of http.",
-            41: "Wrong protocol.",
-            42: "Internal error: Configured backend type doesn't have a driver for it. Please contact support.",
-            43: "File not found.",
-            44: "The request contains wrong data",
-            45: "Wrong data type",
-            46: "Invalid email address.",
-            47: "Username must be within 2 to 200 characters in range and only contain bare letters, numbers, and _, -, .",
-            48: "Weak password.",
-            49: "Sent data exceed maximum allowed size.",
-
-
-            // HTTP-compatible error codes, this does NOT mean this list is meant for HTTP status codes.
-            404: "Request Timed Out.",
-            408: "Not Found.",
-            409: "Conflict.",
-            429: "Too Many Requests",
-            500: "Internal Server Error."
-        },
-
-        exposeToDebugger(key, thing){
-            if(!devInspecting) return;
-
-            Object.defineProperty(global, key, {
-                get(){
-                    return thing
+                if(h3_enabled){
+                    // EXPERIMENTAL: add alt-svc header for HTTP3
+                    res.writeHeader("alt-svc", `h3=":${H3Port}"`)
                 }
             })
+                
+            return backend.helper
+        },
 
-            return thing
-        }
-    }
 
-    // Startup:
-    Backend.log = Backend.createLoggerContext("api")
-    Backend.refreshConfig()
+        // This helper should be avoided.
+        // Only use this if: 1) You are lazy; ...
+        send(req, res, data, headers = {}, status){
+            if(req.abort) return;
 
-    isDev = Backend.config.block("system").get("developmentMode", Boolean);
-    devInspecting = isDev && !!process.execArgv.find(v => v.startsWith("--inspect"));
+            if(Array.isArray(data) || (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof DataView) && !(data instanceof Buffer))) {
+                headers["content-type"] = types["json"];    
+                data = JSON.stringify(data);
+            }
 
-    Backend.isDev = isDev;
-    Backend.logLevel = (+ Backend.config.block("system").get("logLevel", Number)) || isDev? 5 : 3;
+            if(req.begin && headers) {
+                headers["server-timing"] = `generation;dur=${performance.now() - req.begin}`
+            }
 
-    if(isDev){
-        Backend.log("NOTE: API is running in development mode.")
+            res.cork(() => {
+                res.writeStatus(status? status + "": "200 OK")
+                backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers)
+                res.end(data)
+            });
+        },
 
-        if(devInspecting){
-            console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
-            console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
-        }
-    }
+        stream(req, res, stream, totalSize){
+            stream.on('data', (chunk) => {
+                let buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength), lastOffset = res.getWriteOffset();
 
-    Backend.exposeToDebugger("backend", Backend)
-    Backend.exposeToDebugger("addons", AddonCache)
-    Backend.exposeToDebugger("api", API)
+                res.cork(() => {
+                    // Try writing the chunk
+                    const [ok, done] = res.tryEnd(buffer, totalSize);
 
-    server_enabled = Backend.config.block("server").get("enable", Boolean);
-
-    Backend.mime.load()
+                    if (!done && !ok) {
+                        // Backpressure handling
+                        stream.pause();
     
-    process.on('uncaughtException', (error) => {
-        console.debug("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
-    })
+                        // Resume once the client is ready
+                        res.onWritable((offset) => {
+                            const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
+    
+                            if (done) {
+                                stream.close();
+                            } else if (ok) {
+                                stream.resume();
+                            }
+    
+                            return ok;
+                        });
+                    } else if (done) stream.close();
+                })
+                
+            });
 
-    process.on('exit', () => {
-        save_hits()
-        console.log(`[system] API is stopping.`);
-    })
+            stream.on('error', (err) => {
+                res.writeStatus('500 Internal Server Error').end();
+            });
 
-    initialize()
-})()
+            stream.on('end', () => {
+                res.end();
+            });
+
+            res.onAborted(() => {
+                stream.destroy();
+            });
+        },
+
+        parseBody(req, res, callback){
+            return {
+                get type(){
+                    return req.getHeader("content-type")
+                },
+
+                get length(){
+                    return req.getHeader("content-length")
+                },
+
+                upload(key = "file", hash){
+
+                    function done(){
+                        let parts = uws.getParts(req.fullBody, req.contentType);
+                        
+                        for(let part of parts){
+                            part.data = Buffer.from(part.data)
+                            if(hash) part.md5 = crypto.createHash('md5').update(part.data).digest('hex')
+                        }
+
+                        callback(parts)
+                    }
+
+                    if(req.hasFullBody) done(); else req.onFullData = done;
+
+                },
+
+                parts(){
+
+                    function done(){
+                        let parts = uws.getParts(req.fullBody, req.contentType);
+
+                        callback(parts)
+                    }
+
+                    if(req.hasFullBody) done(); else req.onFullData = done;
+
+                },
+
+                data(){
+                    function done(){
+                        req.body = {
+                            get data(){
+                                return req.fullBody
+                            },
+
+                            get string(){
+                                return req.fullBody.toString('utf8');
+                            },
+
+                            get json(){
+                                let data;
+
+                                try{
+                                    data = JSON.parse(req.fullBody.toString('utf8'));
+                                } catch {
+                                    return null
+                                }
+
+                                return data
+                            }
+                        }
+    
+                        callback(req.body)
+                    }
+
+
+                    if(req.hasFullBody) done(); else req.onFullData = done;
+                }
+            }
+        }
+    },
+
+    refreshConfig(){
+        backend.log("Refreshing configuration")
+
+        if(!fs.existsSync(PATH + "/config")){
+            backend.log("No main config file found in /config, creating a default config file.")
+            fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
+        }
+
+        let alreadyResolved = {}; // Prevent infinite loops
+
+        // TODO: Merge function must be updated
+
+        // function resolveImports(parsed, stack, referer){
+        //     let imports = [];
+
+            
+        //     configTools(parsed).forEach("import", (block, remove) => {
+        //         remove() // remove the block from the config
+
+        //         if(block.attributes.length !== 0){
+        //             let path = block.attributes[0].replace("./", PATH + "/");
+
+        //             if(path === stack) return Backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
+
+        //             if(!fs.existsSync(path)){
+        //                 Backend.log.warn("Failed import of \"" + path + "\", file not found")
+        //                 return;
+        //             }
+
+        //             imports.push(path)
+        //         }
+        //     })
+
+        //     alreadyResolved[stack] = imports;
+
+        //     for(let path of imports){
+        //         if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
+        //             Backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
+        //             continue
+        //         }
+
+        //         parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, stack))
+        //     }
+
+
+
+        //     return parsed
+        // }
+
+        let path = PATH + "/config";
+
+        // configRaw = Backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, null);
+
+        configRaw = backend.configRaw = parse({
+            content: fs.readFileSync(path, "utf8"),
+            strict: true,
+            asLookupTable: true
+        });
+
+        config = backend.config = configTools(configRaw);
+
+    },
+
+    compression: {
+
+        // Code compression with both disk and memory cache.
+        code(code, isCSS){
+            const hash = xxh32(code);
+
+            let compressed;
+            if(compressed = cache_db.memory_general_cache.get(hash)) return compressed;
+
+            let hasDiskCache = lmdb_exists(cache_db.txn, cache_db.compression, hash)
+
+            if(!hasDiskCache){
+                compressed = Buffer.from(isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code)
+                cache_db.txn.putBinary(cache_db.compression, hash, compressed);
+
+                cache_db.commit();
+            } else {
+                compressed = cache_db.txn.getBinary(cache_db.compression, hash)
+            }
+
+            cache_db.memory_compression_cache.set(hash, compressed)
+
+            return compressed || code;
+        }
+
+    },
+
+    cache: {
+        set(key, value){
+            if(!value instanceof Buffer) throw "Cache only accepts a buffer as a value";
+            cache_db.memory_general_cache.set(key, value)
+            cache_db.txn.putBinary(cache_db.general, key, value);
+        },
+
+        get(key){
+            return cache_db.memory_general_cache.get(key) || cache_db.txn.getBinary(cache_db.general, key)
+        },
+
+        commit(){
+            cache_db.commit();
+        }
+    },
+
+    jwt: {
+        verify(something, options){
+            return jwt.verify(something, jwt_key, options)
+        },
+
+        sign(something, options){
+            return jwt.sign(something, jwt_key, options)
+        }
+    },
+
+    get db(){
+        return db
+    },
+
+    uuid,
+    bcrypt,
+    fastJson,
+
+    app,
+    SSLApp,
+
+    API,
+    apiExtensions: {},
+
+    broadcast(topic, data, isBinary, compress){
+        if(backend.config.block("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
+    },
+
+    user: {
+        get(idList, callback, items = ["username", "displayname", "pfp", "email", "verified_email", "status", "id"]){
+            if(!Array.isArray(idList)) idList = [idList];
+
+            for(let i = 0; i < idList.length; i++){
+                if(typeof idList[i] === "object") idList[i] = idList[i].id;
+                if(typeof idList[i] === "string") idList[i] = +idList[i];
+            }
+
+            idList = idList.filter(id => typeof id === "number")
+            if(idList.length < 1) return callback(2);
+
+            items = items.map(item => item.replace(/[^a-zA-Z0-9_.\-]/g, '')).filter(nothing => nothing).join();
+            if(items.length < 1) return callback(2);
+
+            db.database("extragon").query(`SELECT ${items} FROM users WHERE id IN (${idList.join()}) LIMIT 300`,
+                function(err, results){
+                    if(err){
+                        return callback(err)
+                    }
+
+                    if(results.length < 1){
+                        return callback(6)
+                    }
+
+                    for(let result of results){
+                        if(result.verified_email) result.verified_email = !!result.verified_email.data
+                    }
+
+                    callback(null, results)
+                }
+            )
+        },
+
+        login(identification, password, callback, expiresIn = 5184000000, createToken = true){
+            db.database("extragon").query(
+                'SELECT hash, id, username FROM `users` WHERE `username` = ? OR `email` = ?',
+
+                [identification, identification],
+
+                async function(err, results) {
+                    if(err){
+                        return callback(err)
+                    }
+
+                    if(results.length < 1){
+                        return callback(6)
+                    }
+
+                    let user = results[0];
+
+                    bcrypt.compare(password, user.hash.replace("$2y$", "$2b$"), function(err, result){
+                        if(!err && result){
+
+                            let token;
+                            if(createToken) token = backend.jwt.sign(
+                                {
+                                    id: user.id
+                                },
+                                {
+                                    expiresIn: expiresIn < 1000 ? 1 : expiresIn / 1000
+                                }
+                            );
+
+                            callback(null, {
+                                token,
+                                id: user.id,
+                                legacy: user.hash.includes("$2y$")
+                            })
+
+                        } else callback(err ? 12 : 11);
+                    })
+                }
+            )
+        },
+
+        async createAccount(user, callback, ip){
+            let discord = user.discord? await backend.getDiscordUserInfo(user.discord): {};
+
+            if (!user.username || !user.email || !user.password) {
+                return callback("Missing required fields: username, email, or password.");
+            }
+
+            if (discord && !discord.id) {
+                return callback("Invalid Discord information.");
+            }
+
+            db.database("extragon").query(`SELECT username, email, discord_id FROM users WHERE username = ? OR email = ? OR discord_id = ?`,
+                [user.username, user.email, discord? +discord.id : 0],
+
+                async function(err, results) {
+                    if(err || results.length > 0){
+                        if(discord && results[0].discord_id == +discord.id){
+                            return callback("Some other account already has this same Discord account linked.")
+                        } else {
+                            return callback(err? 12 : (user.email == results[0].email? (user.username == results[0].username? "Both the email and username are": "This email is"): "This username is") +" already taken.")
+                        }
+                    }
+
+                    let finalUser = {
+
+                        // Profile
+                        displayname: user.username,
+                        ...user.profile || {},
+
+                        // User
+                        username: user.username,
+                        hash: await bcrypt.hash(user.password, 8),
+                        email: user.email,
+                        ip: ip || "",
+
+                        ...(discord && {
+                            discord_link: user.discord,
+                            discord_id: +discord.id,
+                            discord_raw: JSON.stringify(discord),
+                        })
+                    };
+
+                    db.database("extragon").table("users").insert(finalUser, (err, result) => {
+                        if(err){
+                            return callback(err)
+                        }
+
+                        if (user.generateToken) {
+                            backend.user.login(user.username, user.password, (err, data)=>{
+                                if(err){
+                                    return callback(null, {id: result.insertId, token: null, err})
+                                }
+
+                                callback(null, {id: result.insertId, ...data})
+                            }, 5184000000, true)
+                        } else {
+                            callback(null, {id: result.insertId})
+                        }
+
+                    })
+                }
+            )
+        },
+
+        getAuth(req){
+            if(req.User) return req.User;
+            // TODO: || req.cookies.token - parse cookies
+            let token = typeof req == "string"? req : decodeURIComponent(req.getHeader("authorization") || "").replace('Bearer ','').replace('APIKey ','');
+        
+            if(!token) return {error: 13};
+        
+            try{
+                return backend.jwt.verify(token, backend.testKey)
+            } catch {
+                return {error: 9}
+            }
+        }
+    },
+
+    writeLog(data, severity = 2, source = "api"){
+        // 0 = Debug (Verbose), 1 = Info (Verbose), 2 = Info, 3 = Warning, 4 = Error, 5 = Important
+
+        if(severity < (5 - backend.logLevel)) return;
+        if(!Array.isArray(data)) data = [data];
+        if(devInspecting) data.unshift("color: aquamarine");
+        console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`${devInspecting? "%c": ""}[${source}]`, ...data)
+    },
+
+    createLoggerContext(target){
+        let logger = function (...data){
+            backend.writeLog(data, 2, target)
+        }
+
+        logger.debug = function (...data){
+            backend.writeLog(data, 0, target)
+        }
+
+        logger.verbose = function (...data){
+            backend.writeLog(data, 1, target)
+        }
+
+        logger.info = function (...data){
+            backend.writeLog(data, 2, target)
+        }
+
+        logger.warn = function (...data){
+            backend.writeLog(data, 3, target)
+        }
+
+        logger.error = function (...data){
+            backend.writeLog(data, 4, target)
+        }
+
+        logger.impotant = function (...data){
+            backend.writeLog(data, 5, target)
+        }
+
+        return logger
+    },
+
+    addon(name, path){
+        // if(!fs.existsSync("./addons/"+name+".js")) return false;
+
+        path = path || `./${name.startsWith("core/") ? "" : "addons/"}${name}`;
+
+        if(!AddonCache[name]){
+            backend.log("Loading addon; " + name);
+
+            AddonCache[name] = require(path);
+
+            AddonCache[name].log = backend.createLoggerContext(name)
+
+            if(AddonCache[name].Initialize) AddonCache[name].Initialize(backend);
+        }
+
+        return AddonCache[name]
+    },
+
+    mime: {
+        // My own mimetype checker since the current mimetype library for Node is meh.
+
+        types: null,
+        extensions: null,
+
+        load(){
+            backend.mime.types = JSON.parse(fs.readFileSync(PATH + "/etc/mimetypes.json", "utf8"))
+            backend.mime.extensions = {}
+
+            for(let extension in backend.mime.types){
+                backend.mime.extensions[backend.mime.types[extension]] = extension
+            }
+        },
+
+        getType(extension){
+            if(!backend.mime.types) backend.mime.load();
+            return backend.mime.types[extension] || null
+        },
+
+        getExtension(mimetype){
+            if(!backend.mime.extensions) backend.mime.load();
+            return backend.mime.extensions[mimetype] || null
+        }
+    },
+
+    Errors: {
+        0: "Unknown API version",
+        1: "Invalid API endpoint",
+        2: "Missing parameters in request body/query string.",
+        3: "Internal Server Error.",
+        4: "Access denied.",
+        5: "You do not have access to this endpoint.",
+        6: "User not found.",
+        7: "Username already taken.",
+        8: "Email address is already registered.",
+        9: "Your login session has expired. Please log-in again.",
+        10: "Incorrect verification code.", // FIXME: What does this even mean
+        11: "Invalid password.",
+        12: "Authentication failed.",
+        13: "Session/API token missing or expired.", // FIXME: Identical to 9
+        14: "This account is suspended.",
+        15: "Forbidden action.", // FIXME: Unclear
+        16: "Entity not found.",
+        17: "Request timed out.",
+        18: "Too many requests. Try again in a few seconds.", // FIXME: Identical to 34/36/429
+        19: "Service temporarily unavailable.",
+        20: "Service/Feature not enabled. It might first require setup from your panel, is not available (or is paid and you don't have access).",
+        21: "Unsupported media type.",
+        22: "Deprecated endpoint. Consult documentation for a replacement.",
+        23: "Not implemented.",
+        24: "Conflict.",
+        25: "Data already exist.",
+        26: "Deprecated endpoint. Consult documentation for a replacement.",
+        27: "This endpoint has been removed from this version of the API. Please migrate your code to the latest API version to keep using it.",
+        28: "Access blocked for the suspicion of fraudulent/illegal activity. Contact our support team to get this resolved.",
+        29: "This endpoint requires an additional parametter (cannot be called directly)",
+        30: "Invalid method.", // FIXME: Identical to 39
+        31: "Underlying host could not be resolved.",
+        32: "Underlying host could not resolve this request due to a server error.",
+        33: "Temporarily down due to high demand. Please try again in a few moments.",
+        34: "Global rate-limit has been reached. Please try again in a few moments.",
+        35: "This endpoint may handle sensitive data, so you must use HTTPS. Do not use unsecured connections to avoid your information being vulnerable to attacks.",
+        36: "Rate-Limited. Please try again in a few minutes.",
+        37: "Rate-Limited. You have used all of your requests for a given time period.",
+        38: "Rate-Limited. Please contact support for more information.",
+        39: "Invalid method for this endpoint.",
+        40: "This is a WebSocket-only endpoint. Use the ws:// or wss:// protocol instead of http.",
+        41: "Wrong protocol.",
+        42: "Internal error: Configured backend type doesn't have a driver for it. Please contact support.",
+        43: "File not found.",
+        44: "The request contains wrong data",
+        45: "Wrong data type",
+        46: "Invalid email address.",
+        47: "Username must be within 2 to 200 characters in range and only contain bare letters, numbers, and _, -, .",
+        48: "Weak password.",
+        49: "Sent data exceed maximum allowed size.",
+
+
+        // HTTP-compatible error codes, this does NOT mean this list is meant for HTTP status codes.
+        404: "Request Timed Out.",
+        408: "Not Found.",
+        409: "Conflict.",
+        429: "Too Many Requests",
+        500: "Internal Server Error."
+    },
+
+    exposeToDebugger(key, thing){
+        if(!devInspecting) return;
+
+        Object.defineProperty(global, key, {
+            get(){
+                return thing
+            }
+        })
+
+        return thing
+    }
+}
+
+backend.log = backend.createLoggerContext("api")
+backend.refreshConfig()
+
+const server_enabled = backend.config.block("server").get("enable", Boolean);
+const ssl_enabled = backend.config.block("server").get("enableSSL", Boolean);
+const h3_enabled = backend.config.block("server").get("enableH3", Boolean);
+
+const HTTPort = backend.config.block("server").get("port", Number, 80);
+const SSLPort = backend.config.block("server").get("sslPort", Number, 443);
+const H3Port = backend.config.block("server").get("h3Port", Number, 443);
+
+const isDev = backend.config.block("system").get("developmentMode", Boolean);
+const devInspecting = isDev && !!process.execArgv.find(v => v.startsWith("--inspect"));
+
+
+for (const block of backend.config.blocks("route")) {
+    for(const name of block.attributes) {
+        domainRouter.set(name, {
+            cdn: 1,
+            api: 2
+        }[block.get("to", String)])
+    }
+}
+
+
+backend.isDev = isDev;
+backend.logLevel = backend.config.block("system").get("logLevel", Number) || isDev? 5 : 3;
+
+if(isDev){
+    backend.log("NOTE: API is running in development mode.")
+
+    if(devInspecting){
+        console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
+        console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
+    }
+}
+
+backend.exposeToDebugger("backend", backend)
+backend.exposeToDebugger("addons", AddonCache)
+backend.exposeToDebugger("api", API)
+
+process.on('uncaughtException', (error) => {
+    console.debug("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
+})
+
+process.on('exit', () => {
+    const buffer = Buffer.alloc(4);
+
+    buffer.writeUInt32LE(total_hits, 0);
+    fs.writeFileSync(PATH + "./etc/hits", buffer);
+
+    console.log(`[system] API is stopping.`);
+})
+
+initialize()
+
+module.exports = backend
 
 
 
 // Misc functions:
-
-
 function lmdb_exists(txn, db, key){
     let cursor;
     try {
@@ -1309,13 +1306,4 @@ function lmdb_exists(txn, db, key){
     } finally {
         if (cursor) cursor.close();
     }
-}
-
-
-async function save_hits(){
-    const buffer = Buffer.alloc(4);
-
-    buffer.writeUInt32LE(total_hits, 0);
-    fs.writeFileSync(PATH + "./etc/hits", buffer);
-    // saved_hits = total_hits
 }

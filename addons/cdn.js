@@ -115,23 +115,24 @@ function send(req, res, data = {}, cache = false, type = null, isFilePath){
 
             res.cork(() => {
                 // Begin stream with the proper headers
-                res.writeStatus('206').corsHeaders().writeHeaders({
+                res.writeStatus('206')
+
+                backend.helper.corsHeaders(req, res).writeHeaders(req, res, {
                     ...headers,
                     'Content-Range': `bytes ${start}-${end}/${fileSize}`,
                     'Accept-Ranges': 'bytes'
                 });
             })
 
-            res.stream(file, chunkSize);
+            backend.helper.stream(req, res, file, chunkSize);
         } else {
-            res.writeHeaders(headers).stream(fs.createReadStream(data), fs.statSync(data).size);
-            // fs.createReadStream(data).pipe(res);
+            backend.helper.writeHeaders(req, res, headers).stream(req, res, fs.createReadStream(data), fs.statSync(data).size);
         }
         return
     }
 
     // res[(!type && (Array.isArray(data) || (typeof data == "object" && Object.prototype.toString.call(data) === '[object Object]'))? "json" : "send")](data);
-    res.send(data, headers);
+    backend.helper.send(req, res, data, headers);
 }
 
 
@@ -204,7 +205,7 @@ api = {
                         // FIXME: This needs changes
 
                         if(!segments[0]){
-                            return res.send(`{"success":false,"error":"This endpoint is currently not supported directly as for unstable behavior. Use /file/[hash][.format][?options] instead."}`, {'cache-control': "no-cache"}, 400)
+                            return backend.helper.send(req, res, `{"success":false,"error":"This endpoint is currently not supported directly as for unstable behavior. Use /file/[hash][.format][?options] instead."}`, {'cache-control': "no-cache"}, 400)
                         }
 
                         let fileName = segments[segments[0].length < 32? 1 : 0] || "";
@@ -218,19 +219,19 @@ api = {
                         ;
                         
                         if(segments[0] == "check"){
-                            return res.send(`{"exists":${exists}}`, {'cache-control': "no-cache"})
+                            return backend.helper.send(req, res, `{"exists":${exists}}`, {'cache-control': "no-cache"})
                         }
 
                         if(segments[0] == "info"){
                             if(fileMetadataCache[file[0]]){
-                                return res.send({
+                                return backend.helper.send(req, res, {
                                     ...fileMetadataCache[file[0]],
                                     likelyMimeType: mostCommonItem(fileMetadataCache[file[0]].mimeTypeHistory),
                                     likelyName: mostCommonItem(fileMetadataCache[file[0]].nameHistory),
                                     likelyExtension: mostCommonItem(fileMetadataCache[file[0]].extensionHistory),
                                 }, {'cache-control': "no-cache"})
                             } else {
-                                return res.send({
+                                return backend.helper.send(req, res, {
                                     success: false,
                                     code: 43,
                                     error: "File metadata not found.",
@@ -330,7 +331,7 @@ api = {
             case "POST":
                 switch(first){
                     case "upload": case "file":
-                        req.parseBody(async (data, fail) => {
+                        backend.helper.parseBody(req, res, async (data, fail) => {
                             if(fail){
                                 return error(fail)
                             }

@@ -199,55 +199,6 @@ main = {
                 res.end("pong");
             break;
 
-            case "test":
-                backend.pockets.transaction(0, "5BATGBHQ2UvUNzzw6YKcz7NY6317VetyJER5BGb9UYdihhvwLt7W4FwPf0jK", "WUcjYxTQEiAwmieH8kE2tdWXk9UCAq7H", value = 1000, {}, (error, id) => {
-                    console.log(error, id);
-                })
-            break;
-
-            case "new":
-                backend.pockets.createWallet(0, 0, {}, (error, id) => {
-                    console.log(error, id);
-                })
-            break;
-
-            case "start":
-                backend.dispatch("start", ["635", "minecraft", "start", "-", "52000"])
-
-                backend.HostSocket.on("app.stdout.636", function(data){
-                    console.log("MINECRAFT > ",data);
-                })
-            break;
-
-            case "status":
-                res.send(
-                    await backend.ask("status", 635)
-                )
-            break;
-
-            case "say":
-                req.parseBody(async (data, fail) => {
-                    if(fail){
-                        return error(fail)
-                    }
-
-                    data = data.string;
-
-                    if(typeof data !== "string"){
-                        return error(2)
-                    }
-
-                    res.send(
-                        await backend.dispatch("stdin", [635, data + "\n"])
-                    )
-                }).data()
-            break;
-
-            case "latest": case "version":
-                res.type("json")
-                res.send(`{"current":2,"default":${backend.API._default},"latest":${backend.API._latest}}`)
-            break;
-
             case "apps":
                 // User = backend.user.getAuth(req) // Used in case of private apps
 
@@ -260,7 +211,7 @@ main = {
                         // let globalCache = backend.cache.get("apps.list")
 
                         // if(globalCache) {
-                        //     return res.type("json").cache("10").send(globalCache)
+                        //     return res.writeHeader("content-type", backend.types.json).writeHeader("cache-control", "public, max-age=10").end(globalCache)
                         // }
 
                         backend.db.database("extragon").query(`SELECT id, name, displayname, icon, banner, accent, description, owner, tags, type FROM \`lstv.apps\`${filter == "store"? " where show_in_store = true": filter == "home"? " where show_in_homepage": ""} LIMIT ? OFFSET ?`,
@@ -273,7 +224,7 @@ main = {
 
                                 // backend.cache.set("apps.list", data, 10)
 
-                                res.type("json").cache("15").send(data)
+                                res.writeHeader("content-type", backend.types.json).writeHeader("cache-control", "public, max-age=15").end(data)
                             }
                         )
                     break;
@@ -296,7 +247,7 @@ main = {
                         // let globalCache = backend.getCache(req);
 
                         // if(globalCache.data){
-                        //     return res.type("json").cache("2").send(globalCache.data)
+                        //     return res.writeHeader("content-type", backend.types.json).writeHeader("cache-control", "public, max-age=4").send(globalCache.data)
                         // }
 
                         backend.user.get(users, (err, users) => {
@@ -308,7 +259,9 @@ main = {
 
                             // backend.setCache(globalCache.id, data, 2)
 
-                            res.type("json").send(data)
+                            res.cork(() => {
+                                res.writeHeader("content-type", backend.types.json).end(data)
+                            })
                         })
                     break;
 
@@ -320,7 +273,7 @@ main = {
                                 return error(err)
                             }
 
-                            res.send({...User, ...users[0], success: true})
+                            backend.helper.send(req, res, {...User, ...users[0], success: true})
                         })
                     break;
 
@@ -328,7 +281,7 @@ main = {
                         if(!req.secured) return error(35);
                         if(req.method != "POST") return error(30);
 
-                        req.parseBody((data, fail) => {
+                        backend.helper.parseBody(req, res, (data, fail) => {
                             let type = shift();
 
                             if(fail){
@@ -351,7 +304,7 @@ main = {
 
                                 token.success = true;
 
-                                res.send(token)
+                                backend.helper.send(req, res, token)
                             }, 5184000000, type !== "verify")
                         }).data()
                     break;
@@ -360,7 +313,7 @@ main = {
                         if(!req.secured) return error(35);
                         if(req.method != "POST") return error(30);
 
-                        req.parseBody((data, fail) => {
+                        backend.helper.parseBody(req, res, (data, fail) => {
                             if(fail){
                                 return error(fail)
                             }
@@ -386,7 +339,7 @@ main = {
 
                                     // delete result[0].auth_uri;
 
-                                    res.send({
+                                    backend.helper.send(req, res, {
                                         success: true,
                                         app: result[0],
                                         permissions
@@ -402,7 +355,7 @@ main = {
                         if(!req.secured) return error(35);
                         if(req.method != "POST") return error(30);
 
-                        req.parseBody((data, fail) => {
+                        backend.helper.parseBody(req, res, (data, fail) => {
                             if(fail){
                                 return error(fail)
                             }
@@ -424,7 +377,7 @@ main = {
                                         return error("Application not found")
                                     }
 
-                                    res.send({
+                                    backend.helper.send(req, res, {
                                         success: true,
                                         token: backend.jwt.sign(
                                             {
@@ -497,11 +450,11 @@ main = {
                     //         console.log(generateJWT());
                     //     }
                     //     const endTime = performance.now();
-                        
+
                     //     // Calculate the elapsed time
                     //     const elapsedTime = endTime - startTime;
                         
-                    //     res.send(`Time taken to generate ${numTokens} JWT tokens: ${elapsedTime} milliseconds`);
+                    //     res.end(`Time taken to generate ${numTokens} JWT tokens: ${elapsedTime} milliseconds`);
                     // break;
 
                     case "create":
@@ -511,7 +464,7 @@ main = {
                         let origin = req.getHeader("origin"), ip = decoder.decode(res.getRemoteAddressAsText());
                         
                         await new Promise(resolve => {
-                            req.parseBody((data, fail) => {
+                            backend.helper.parseBody(req, res, (data, fail) => {
                                 if(fail){
                                     return error(fail)
                                 }
@@ -541,7 +494,7 @@ main = {
     
                                     token.success = true;
 
-                                    res.send(JSON.stringify(token))
+                                    backend.helper.send(req, res, JSON.stringify(token))
 
                                     resolve()
                                 }, ip)
@@ -553,10 +506,6 @@ main = {
                         error(1)
                 }
             break;
-            
-            // case"api_errors":
-            //     res.send({data: backend.Errors})
-            // break;
 
             default:
                 // Custom router handles!
