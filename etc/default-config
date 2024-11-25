@@ -1,4 +1,4 @@
-# This is the default config that will get created after you first launch the server.
+# This is the default config. You can change it to fit your needs or use it as an example of how a config may look like.
 
 
 system {
@@ -23,9 +23,10 @@ server {
     enable;
 }
 
+# Webserver configuration
 web {
     locations:
-        # Website locations - /* searches all subdirectories as individual locations.
+        # Website locations - * searches all subdirectories as individual locations.
         "/var/www/akeno/*",
         "/var/lib/akeno/examples/hello-world-website",
         "/var/lib/akeno/core/gui"
@@ -60,25 +61,14 @@ sslRouter {
         *.example2.com, # example2.com + all subdomains
         another.example3.com # Only another.example3.com
     ;
-
-    autoAddDomains;
-    subdomainWildcard;
 }
 
 # If you intend to use a SQL database, eg. for user management
-database {
+database.sql {
     db: "...";
     host: "...";
     user: "...";
     password: "...";
-}
-
-
-# More info on libraries is in /cdn/lib
-cdn.libraries {
-    locations:
-        "./cdn/lib/*",
-    ;
 }
 
 
@@ -88,6 +78,10 @@ performance {
 
     # Cache to both disk and memory
     cache-to: disk, memory;
+
+    # Performance = Prioritize speed over resource efficiency
+    # Efficiency = Prioritize resource efficiency over speed
+    mode: performance;
 
     # Enable the ?mtime query to be added to requests, automatically refreshing files that have been changed while caching still works.
     mtime-query;
