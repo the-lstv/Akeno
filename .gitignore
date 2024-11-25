@@ -10,7 +10,7 @@ cdn/*
 !cdn/lib/example
 
 api/*
-!api/v1.js
+!api/v1.example.js
 
 addons/*
 !addons/cdn.js
