@@ -1077,7 +1077,7 @@ const backend = {
             }
 
             if(!lsdb) lsdb = require("./addons/lsdb_mysql");
-            if(backend.db.sql_connections[db]) return backend.db.sqlDb;
+            if(backend.db.sql_connections[db]) return backend.db.sql_connections[db];
             return backend.db.sql_connections[db] = lsdb.Server(host, user, password)
         }
     }
