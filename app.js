@@ -867,13 +867,34 @@ const backend = {
 
     cache: {
         set(key, value){
-            if(!value instanceof Buffer) throw "Cache only accepts a buffer as a value";
+            switch (true) {
+                case value instanceof Buffer:
+                    cache_db.txn.putBinary(cache_db.general, key, value);
+                    break;
+                case typeof value === "boolean":
+                    cache_db.txn.putBoolean(cache_db.general, key, value);
+                    break;
+                case typeof value === "string":
+                    cache_db.txn.putString(cache_db.general, key, value);
+                    break;
+                case typeof value === "number":
+                    cache_db.txn.putNumber(cache_db.general, key, value);
+                    break;
+                default:
+                    throw new Error("Unsupported value type");
+            }
+            
             cache_db.memory_general_cache.set(key, value)
-            cache_db.txn.putBinary(cache_db.general, key, value);
         },
 
-        get(key){
-            return cache_db.memory_general_cache.get(key) || cache_db.txn.getBinary(cache_db.general, key)
+        get(key, type){
+            type = {Buffer: "getBinary", Boolean: "getBoolean", Number: "getNumber", String: "getString"}[type] || "getBinary";
+            return cache_db.memory_general_cache.get(key) || cache_db.txn[type](cache_db.general, key)
+        },
+
+        delete(key){
+            cache_db.memory_general_cache.delete(key)
+            cache_db.txn.del(cache_db.general, key);
         },
 
         commit(){

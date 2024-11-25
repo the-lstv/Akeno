@@ -477,7 +477,9 @@ function configTools(parsed){
     if(!(parsed instanceof Map)) throw new Error("You must provide a parsed config as a lookup table.");
 
     function block_proxy(block){
-        return new Proxy(block, {
+        if(block.__proxy) return block.__proxy;
+
+        return block.__proxy = new Proxy(block, {
             get(target, prop) {
                 if (prop === "get") {
                     return function (key, type, default_value = null){
@@ -520,9 +522,14 @@ function configTools(parsed){
             return block_proxy(list[0])
         },
 
-        blocks(name){
+        *blocks(name){
             const blocks = parsed.get(name);
-            return blocks? blocks.map(block_proxy): []
+
+            if (blocks) {
+                for (const block of blocks) {
+                    yield block_proxy(block);
+                }
+            }
         },
 
         add(name, attributes, properties){
