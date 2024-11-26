@@ -404,7 +404,7 @@ function parse_html_content(options){
         onclosetag(name) {
             if(parser_regex.singleton.indexOf(name) !== -1) return;
 
-            push(`</${name}>`);
+            push(`</${currentTag}>`);
         }
     }, {
         lowerCaseAttributeNames: false
