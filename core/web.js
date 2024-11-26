@@ -143,6 +143,11 @@ function map_resource(link, local_path){
 }
 
 
+const html_element_alias = new Map;
+
+html_element_alias.set("page", "body") // Backwards-compatibility with the old, outdated parser
+html_element_alias.set("shader", "script")
+
 function parse_html_content(options){
     const htmlContent = options.content? options.content: options.file? fs.readFileSync(options.file, "utf8"): "";
 
@@ -314,24 +319,14 @@ function parse_html_content(options){
         onopentag(name, attribs) {
             let result = "<";
 
-            if(name === "page") name = "body"; // Backwards-compatibility with the old, outdated parser
+            if(html_element_alias.has(name)) name = html_element_alias.get(name);
 
-            // I hope I wont regret this random helper later
-            else if(name === "shader") {name = "script"; if(!attribs.type) attribs.type = "x-shader/x-fragment"}
+            if(name === "shader" && !attribs.type) attribs.type = "x-shader/x-fragment";
 
             script_type = name === "script" && attribs.type? attribs.type: null;
-
             currentTag = name;
 
             if(attribs.class) attribs.class; else attribs.class = "";
-
-            if (name.includes('%')) [name, attribs.id] = name.split('%'); else if (name.includes('#')) [name, attribs.id] = name.split('#');
-
-            if (name.includes('.')) {
-                const parts = name.split('.');
-                name = parts[0];
-                attribs.class += " " + parts.slice(1).join(' ');
-            }
 
             result += name;
 
@@ -403,9 +398,10 @@ function parse_html_content(options){
         },
 
         onclosetag(name) {
-            if(parser_regex.singleton.indexOf(name) !== -1) return;
+            if(html_element_alias.has(name)) name = html_element_alias.get(name);
 
-            push(`</${currentTag}>`);
+            if(parser_regex.singleton.indexOf(name) !== -1) return;
+            push(`</${name}>`);
         }
     }, {
         lowerCaseAttributeNames: false
