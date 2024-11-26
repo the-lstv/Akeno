@@ -150,7 +150,7 @@ function parse_html_content(options){
 
     let head_string_index = null, head = options.head || '<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
 
-    let currentTag = null;
+    let currentTag = null, script_type = null;
 
     if(!options.app) options.app = {};
 
@@ -314,7 +314,12 @@ function parse_html_content(options){
         onopentag(name, attribs) {
             let result = "<";
 
-            if(name === "page") name = "body"; // Backwards-compatibility with old, outdated parser
+            if(name === "page") name = "body"; // Backwards-compatibility with the old, outdated parser
+
+            // I hope I wont regret this random helper later
+            else if(name === "shader") {name = "script"; if(!attribs.type) attribs.type = "x-shader/x-fragment"}
+
+            script_type = name === "script" && attribs.type? attribs.type: null;
 
             currentTag = name;
 
@@ -380,6 +385,7 @@ function parse_html_content(options){
             // Inline script/style compression
             switch (currentTag){
                 case "script":
+                    if(script_type !== null || script_type !== "text/javascript") break;
                     if(text) {
                         push(options.compress? backend.compression.code(text) : text)
                     }
