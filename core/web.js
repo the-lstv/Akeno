@@ -385,7 +385,8 @@ function parse_html_content(options){
             // Inline script/style compression
             switch (currentTag){
                 case "script":
-                    if(script_type !== null || script_type !== "text/javascript") break;
+                    if(script_type && script_type !== "text/javascript") break;
+
                     if(text) {
                         push(options.compress? backend.compression.code(text) : text)
                     }
