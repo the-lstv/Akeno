@@ -319,9 +319,9 @@ function parse_html_content(options){
         onopentag(name, attribs) {
             let result = "<";
 
-            if(html_element_alias.has(name)) name = html_element_alias.get(name);
-
             if(name === "shader" && !attribs.type) attribs.type = "x-shader/x-fragment";
+
+            if(html_element_alias.has(name)) name = html_element_alias.get(name);
 
             script_type = name === "script" && attribs.type? attribs.type: null;
             currentTag = name;
