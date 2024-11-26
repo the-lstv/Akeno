@@ -730,7 +730,7 @@ server = {
 
             // HTTPS Redirect
             if(app.config.block("server").get("redirect_https", Boolean) && !backend.isDev && !req.secured){
-                res.redirect(301, `https://${req.getHeader("host")}${req.path}`);
+                res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`);
                 return
             }
 
