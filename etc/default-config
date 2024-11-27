@@ -50,17 +50,13 @@ route ("api.example.com") { to: api }
 
 
 sslRouter {
-    # Currently the options for sslRouter are very limited and only suited for a thin range of configurations
     # To allow multiple certificates, you add server names below.
+    # Wildcard certificates are supported!
 
     certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
     keyBase: "/etc/letsencrypt/live/{domain}/privkey.pem";
 
-    domains:
-        example.com, # Only example.com
-        *.example2.com, # example2.com + all subdomains
-        another.example3.com # Only another.example3.com
-    ;
+    domains: example.com;
 }
 
 # If you intend to use a SQL database, eg. for user management
