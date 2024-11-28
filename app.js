@@ -847,16 +847,18 @@ const backend = {
             let compressed;
             if(compressed = cache_db.memory_general_cache.get(hash)) return compressed;
 
-            let hasDiskCache = lmdb_exists(cache_db.txn, cache_db.compression, hash)
+            let hasDiskCache = false // lmdb_exists(cache_db.txn, cache_db.compression, hash)
 
             if(!hasDiskCache){
                 compressed = Buffer.from(isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code)
-                cache_db.txn.putBinary(cache_db.compression, hash, compressed);
+                // cache_db.txn.putBinary(cache_db.compression, hash, compressed);
 
-                cache_db.commit();
-            } else {
-                compressed = cache_db.txn.getBinary(cache_db.compression, hash)
+                // cache_db.commit();
             }
+            
+            // else {
+            //     compressed = cache_db.txn.getBinary(cache_db.compression, hash)
+            // }
 
             cache_db.memory_compression_cache.set(hash, compressed)
 
