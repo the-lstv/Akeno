@@ -23,7 +23,7 @@ let
 
     // Config parser
     { parse, stringify, merge, configTools } = require("./core/parser"),
-    { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy"),
+    // { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy"),
 
     { xxh32 } = require("@node-rs/xxhash"),
 
@@ -235,17 +235,8 @@ function build(){
 
 
             // Handle proxied websockets when needed
-            if(shouldProxy(req, res, true, true, context)) return;
+            // if(shouldProxy(req, res, true, true, context)) return;
 
-
-            // FIXME: This should not be in the main branch
-            if(req.domain.startsWith("ssh.")) {
-                return proxySFTP(req, res, context, "will-provide")
-            }
-
-            if(req.domain.startsWith("node.")) {
-                return remoteNodeShell(req, res, context)
-            }
 
             let segments = req.getUrl().split("/").filter(garbage => garbage), continueUpgrade = true;
             
@@ -317,7 +308,7 @@ function build(){
 
 
             // Handle proxied requests
-            if(shouldProxy(req, res, flags)) return;
+            // if(shouldProxy(req, res, flags)) return;
 
 
             // Handle preflight requests
@@ -412,7 +403,7 @@ function build(){
 
     backend.exposeToDebugger("router", resolve)
 
-    backend.exposeToDebugger("proxyRouter", proxyReq)
+    // backend.exposeToDebugger("proxyRouter", proxyReq)
 
     // Create server instances
     app = uws.App()
@@ -523,63 +514,63 @@ function build(){
 
 
 // TODO:
-function shouldProxy(req, res, flags = {}, ws = false, wsContext){
+// function shouldProxy(req, res, flags = {}, ws = false, wsContext){
 
-    if(!req.domain) req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
+//     if(!req.domain) req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
 
-    if(req.domain == "upedie.online"){
-        // Redirect to a diferent server on a specific port
+//     if(req.domain == "upedie.online"){
+//         // Redirect to a diferent server on a specific port
 
-        if(!ws) return proxyReq(req, res, {port: 42069}), true;
-    }
+//         if(!ws) return proxyReq(req, res, {port: 42069}), true;
+//     }
 
-    if(req.domain.startsWith("proxy.") || req.domain.startsWith("gateway_") || req.domain.startsWith("gateway.") || req.domain.startsWith("discord.")){
-        let url,
-            subdomain = req.domain.split(".")[0],
-            query = req.getQuery(),
-            reportedUrl = decodeURIComponent(req.getUrl()).substring(1) + (query? `?${query}`: "")
-        ;
+//     if(req.domain.startsWith("proxy.") || req.domain.startsWith("gateway_") || req.domain.startsWith("gateway.") || req.domain.startsWith("discord.")){
+//         let url,
+//             subdomain = req.domain.split(".")[0],
+//             query = req.getQuery(),
+//             reportedUrl = decodeURIComponent(req.getUrl()).substring(1) + (query? `?${query}`: "")
+//         ;
 
-        // Handle special cases
-        if(subdomain.startsWith("gateway_")){
-            reportedUrl = `http${(flags && flags.secured)? "s": ""}://${subdomain.replace("gateway_", "").replaceAll("_", ".")}/${reportedUrl}`
-        } else if(subdomain === "discord"){
-            reportedUrl = `https://discord.com/${reportedUrl}`
-        }
+//         // Handle special cases
+//         if(subdomain.startsWith("gateway_")){
+//             reportedUrl = `http${(flags && flags.secured)? "s": ""}://${subdomain.replace("gateway_", "").replaceAll("_", ".")}/${reportedUrl}`
+//         } else if(subdomain === "discord"){
+//             reportedUrl = `https://discord.com/${reportedUrl}`
+//         }
 
-        try {
-            url = new URL(decodeURIComponent(reportedUrl));
-        } catch {
-            return res.writeStatus("400 Bad Request").end("Proxy error: Invalid URL")
-        }
+//         try {
+//             url = new URL(decodeURIComponent(reportedUrl));
+//         } catch {
+//             return res.writeStatus("400 Bad Request").end("Proxy error: Invalid URL")
+//         }
 
-        if(ws){
-            let headers = {};
+//         if(ws){
+//             let headers = {};
 
-            req.forEach((key, value) => {
-                if(key.toLowerCase() === "host") return;
+//             req.forEach((key, value) => {
+//                 if(key.toLowerCase() === "host") return;
 
-                headers[key] = key.toLowerCase() === "origin"? "https://remote-auth-gateway.discord.gg" : value;
-            });
+//                 headers[key] = key.toLowerCase() === "origin"? "https://remote-auth-gateway.discord.gg" : value;
+//             });
 
-            return proxyWebSocket(req, res, wsContext, {
-                url: decodeURIComponent(reportedUrl), parsedUrl: url, headers
-            }), true
-        }
+//             return proxyWebSocket(req, res, wsContext, {
+//                 url: decodeURIComponent(reportedUrl), parsedUrl: url, headers
+//             }), true
+//         }
 
-        return proxyReq(req, res, {
-            overwriteHeaders: no_cors_headers,
-            hostname: url.hostname,
-            protocol: url.protocol,
-            path: url.pathname + url.search
-        }, {
-            mode: subdomain === "proxy"? "normal": "web",
-            subdomainMode: subdomain !== "proxy" && subdomain !== "gateway"
-        }), true
-    }
+//         return proxyReq(req, res, {
+//             overwriteHeaders: no_cors_headers,
+//             hostname: url.hostname,
+//             protocol: url.protocol,
+//             path: url.pathname + url.search
+//         }, {
+//             mode: subdomain === "proxy"? "normal": "web",
+//             subdomainMode: subdomain !== "proxy" && subdomain !== "gateway"
+//         }), true
+//     }
 
-    return false
-}
+//     return false
+// }
 
 
 
