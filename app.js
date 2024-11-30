@@ -511,69 +511,6 @@ function build(){
     if(backend.config.block("server").properties.preloadWeb) backend.addon("core/web");
 }
 
-
-
-// TODO:
-// function shouldProxy(req, res, flags = {}, ws = false, wsContext){
-
-//     if(!req.domain) req.domain = req.getHeader("host").replace(/:([0-9]+)/, "");
-
-//     if(req.domain == "upedie.online"){
-//         // Redirect to a diferent server on a specific port
-
-//         if(!ws) return proxyReq(req, res, {port: 42069}), true;
-//     }
-
-//     if(req.domain.startsWith("proxy.") || req.domain.startsWith("gateway_") || req.domain.startsWith("gateway.") || req.domain.startsWith("discord.")){
-//         let url,
-//             subdomain = req.domain.split(".")[0],
-//             query = req.getQuery(),
-//             reportedUrl = decodeURIComponent(req.getUrl()).substring(1) + (query? `?${query}`: "")
-//         ;
-
-//         // Handle special cases
-//         if(subdomain.startsWith("gateway_")){
-//             reportedUrl = `http${(flags && flags.secured)? "s": ""}://${subdomain.replace("gateway_", "").replaceAll("_", ".")}/${reportedUrl}`
-//         } else if(subdomain === "discord"){
-//             reportedUrl = `https://discord.com/${reportedUrl}`
-//         }
-
-//         try {
-//             url = new URL(decodeURIComponent(reportedUrl));
-//         } catch {
-//             return res.writeStatus("400 Bad Request").end("Proxy error: Invalid URL")
-//         }
-
-//         if(ws){
-//             let headers = {};
-
-//             req.forEach((key, value) => {
-//                 if(key.toLowerCase() === "host") return;
-
-//                 headers[key] = key.toLowerCase() === "origin"? "https://remote-auth-gateway.discord.gg" : value;
-//             });
-
-//             return proxyWebSocket(req, res, wsContext, {
-//                 url: decodeURIComponent(reportedUrl), parsedUrl: url, headers
-//             }), true
-//         }
-
-//         return proxyReq(req, res, {
-//             overwriteHeaders: no_cors_headers,
-//             hostname: url.hostname,
-//             protocol: url.protocol,
-//             path: url.pathname + url.search
-//         }, {
-//             mode: subdomain === "proxy"? "normal": "web",
-//             subdomainMode: subdomain !== "proxy" && subdomain !== "gateway"
-//         }), true
-//     }
-
-//     return false
-// }
-
-
-
 const jwt_key = process.env.AKENO_KEY;
 const devInspecting = !!process.execArgv.find(v => v.startsWith("--inspect"));
 

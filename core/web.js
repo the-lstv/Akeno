@@ -22,7 +22,7 @@ let
     { xxh32 } = require("@node-rs/xxhash"),
 
     // Local libraries
-    { parse, parser_regex, configTools } = require("./parser"),
+    { parse, configTools } = require("./parser"),
 
     // Globals
     server,
@@ -147,6 +147,28 @@ const html_element_alias = new Map;
 
 html_element_alias.set("page", "body") // Backwards-compatibility with the old, outdated parser
 html_element_alias.set("shader", "script")
+
+const voidElements = new Set([
+    "area",
+    "base",
+    "basefont",
+    "br",
+    "col",
+    "command",
+    "embed",
+    "frame",
+    "hr",
+    "img",
+    "input",
+    "isindex",
+    "keygen",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+]);
 
 function parse_html_content(options){
     const htmlContent = options.content? options.content: options.file? fs.readFileSync(options.file, "utf8"): "";
@@ -400,7 +422,8 @@ function parse_html_content(options){
         onclosetag(name) {
             if(html_element_alias.has(name)) name = html_element_alias.get(name);
 
-            if(parser_regex.singleton.indexOf(name) !== -1) return;
+            if(voidElements.has(name)) return;
+
             push(`</${name}>`);
         }
     }, {

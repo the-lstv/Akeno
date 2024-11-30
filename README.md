@@ -1,4 +1,4 @@
-<p align="center"><img src="https://github.com/the-lstv/Akeno/assets/62482747/d29fb374-aef6-444f-88b1-43aede48fe41" alt="Akeno icon"></p>
+<img src="https://cdn.extragon.cloud/file/a6ee0da416b4eebcd4c9899fa9caa0d7.png" alt="Akeno icon"> <br>
 
 Akeno is a really fast, modular server, primarily intended for:<br>
 - Efficient APIs
@@ -14,15 +14,15 @@ It also has a built-in webserver, which is extremely optimized and has some very
 <br><br>**NOTE:** At this time Akeno only works on Linux. Windows support is not planned yet due to no interest. Note that thanks to the modular nature of Akeno, some features may work on Windows just fine.<br>
 
 ---
-Quick installation (Linux) - requires node, npm, git, gcc, g++, and python (will install automatically if not found)<br>
+Quick installation (on Linux) - requires node, npm, git, gcc, g++, and python (attempts to install automatically if not found)<br>
 ```sh
 curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
 ```
-You can quickly start Akeno with
+You can start Akeno with
 ```sh
 akeno start
 ```
-To run under a package manager (recommended):
+To run under a process manager (recommended):
 ```sh
 sudo pm2 start /usr/lib/akeno/app.js --name Akeno
 ```
@@ -33,22 +33,18 @@ sudo pm2 start /usr/lib/akeno/app.js --name Akeno
 ![🚀 Fast](https://github.com/the-lstv/Akeno/assets/62482747/d7f3466c-c833-4fca-a57b-e93f7aca0882)
 ---
 
-Akeno is performance, scalability and efficiency focused.
-
-By default, Akeno operates in speed-first mode, where it prioritizes quick operations over memory consumption. You can also enable an efficiency mode where memory consumption will be lower at the cost of speed.
-Either way, Akeno is built to consume the least amount of memory possible.
-
-Akeno is also built to scale. It minimizes bandwidth consumption to the minimum and has a smart caching system.
+Akeno is focused on speed and efficiency.
 
 The entire server is started and ready in **10ms** on average, depending on added modules (making it faster than most modern large servers), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
 
-On top of that, Akeno has an automatic cache header, automatic ?mtime query parametter for file changes, and much more.
+Even with a full setup with routing and caching, it is still multiple times faster than even the most minimal express server, out of the box. 
+
+On top of that, Akeno automatically handles cache, and adds an ?mtime query parametter for file changes for your static JS/CSS resources with no code changes required, so you dont have to worry about your clients getting outdated content, while still utilizing caching to the fullest.
 
 Akeno can also automatically compresses all of your HTML, CSS and JS code on the fly - saving you the hassle of having to make copies or compress yourself.<br>
 Just write the code and watch the magic happen in real time.<br><br>
 
 Akeno is also faster than popular servers like Nginx for both static and dynamic content.<br>
-(It may possibly also be faster than LiteSpeed, but testing needs to be done in order to confirm that claim).
 
 
 <br><br>
@@ -56,7 +52,7 @@ Akeno is also faster than popular servers like Nginx for both static and dynamic
 
 ![🗃️ Modular](https://github.com/the-lstv/Akeno/assets/62482747/dceb9b55-d46d-468b-9338-95369bb568d7)
 ---
-Akeno is also fully modular. On first startup, it only loads what is necesarry. Everything else is loaded as requested, on the fly.
+Akeno is fully modular. On first startup, it only loads what is necesarry. Everything else is loaded as requested, on the fly.
 This includes API extensions - simply create a JS file with your server-side API in your web app's directory, hot-reload the config and your API is ready to use.
 
 
@@ -65,36 +61,35 @@ This includes API extensions - simply create a JS file with your server-side API
 
 ![🖥️ CLI](https://github.com/the-lstv/Akeno/assets/62482747/924f2a21-91f4-4a42-9c22-bbe25f44ec48)
 ---
-Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats, manage apps, or interact with its API.
+Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats and manage apps.
 
 <br>
 
-## Updates: New in 1.5.2
-- Fast and efficient global code compression cache - disk-based, memory-mapped.
-- Removed old code, old extensions and some light refactoration
-- Deprecated request helpers - backend.request shoud now be used for clarity and efficiency
-- The server is now even faster and more efficient
-- Moved LS handler to its own repo
+## Updates: New in 1.5.4
+- Parser performance increased over 32x 🚀
+- Moved the parser to a separate [repo](https://github.com/the-lstv/Atrium) and now included as a submodule
 <br><br>
 
 ## Examples
 - ### Creating a simple web app (minimal example, 4 steps)
-1. Create a new directory for your app in a directory defined in your config
-2. Create an `app.conf` file and an `index.html` file
-3. Place this in app.conf:
-   ```
+1. Create a new directory for your app in a directory that is defined in your config.
+2. In your terminal, go to that directory and run `akeno init website .`
+3. Optionally, edit the newly created app.conf file and add the domains you want to use:
+   ```nginx
    server {
-     domains: your.domain.name, ...;
+      domains: *; # Place the domains you want to use
    }
+
+   # ...
    ```
-4. Restart akeno (either `akeno relodad --web` or `akeno restart` for full reload)<br>
+4. Reload akeno (either `akeno reload --hot` or `akeno reload` for full reload)<br>
 And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP. No further configuration needed.
 
 
 <br>
 
 
-### 2 - Say hello to the builtin custom dynamic syntax
+- ### Say hello to the builtin custom dynamic syntax
 Tired of the repetetive and long HTML templates? How about doing it the Akeno way instead!<br>
 Let's say that you want to make a simple site with a title, favicon and a font from Google fonts, and a script:
 ```html
@@ -118,16 +113,14 @@ Let's say that you want to make a simple site with a title, favicon and a font f
 ```
 That's it! All the repetetive work is done for you. Akeno even cleans and compresses the code for you (HTML, CSS, and JS).<br>
 Also, Akeno will automatically check for local changes and assign a `?mtime` query which, to efficiently keep cache functional while making sure the content is always up-to-date for your users.
-
-![Syntax](https://cdn.extragon.cloud/file/ef25afa3bf73cc5aa2f3f4ca2327ba15.png)
 <br>
 
 
 
 <br><br>
-## New in v1.5: Debug Akeno easily with DevTools (or other inspectors)! 
+## Debug Akeno easily with DevTools (or other inspectors)! 
 ![Debugger](https://github.com/user-attachments/assets/c659ef12-eb18-4679-a94c-6bc1f7ff4bbd) <br>
-Starting version 1.5, Akeno is compatible with the node `--inspect` flag and allows you to debug or test your server with DevTools!<br><br>
+Starting with version 1.5, Akeno is compatible with the node `--inspect` flag and allows you to debug or test your server with DevTools!<br><br>
 ### How to enable:
 1. Open chrome://inspect/ and click "Open dedicated DevTools for Node"
 2. Start Akeno in dev mode and with the `--inspect` flag (`akeno start --inspect`)

@@ -90,7 +90,8 @@ if [ ! -d "/usr/lib/akeno" ]; then
     mkdir -p /usr/lib/akeno/ || { echo "Failed to create directory /usr/lib/akeno/. Aborting."; exit 1; }
 
     cd /usr/lib/akeno
-    git clone https://github.com/the-lstv/Akeno.git . || { echo "Git clone failed. Please check your internet connection or the repository URL."; exit 1; }
+    git clone --recurse-submodules https://github.com/the-lstv/Akeno.git . || { echo "Git clone failed. Please check your internet connection or the repository URL."; exit 1; }
+    git config --global --add safe.directory /usr/lib/akeno
 else
     if [ ! -d "/usr/lib/akeno/core/" ]; then
         echo "ERROR: /usr/lib/akeno/ already exists but does but appears to be broken. Please verify the contents of /usr/lib/akeno/ and try again later."

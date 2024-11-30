@@ -1,0 +1,3 @@
+[submodule "core/parser"]
+	path = core/parser
+	url = https://github.com/the-lstv/Atrium
