@@ -385,7 +385,7 @@ function build(){
             const handler = API.handlers.get(version || API.default);
     
             if(handler){
-                handler.HandleRequest({segments, shift, error, req, res})
+                return handler.HandleRequest({segments, shift, error, req, res})
             } else return error(0)
         }
 
