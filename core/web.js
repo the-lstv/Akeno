@@ -416,7 +416,7 @@ function parse_html_content(options){
                     return;
             }
 
-            parse({ content: text, onText: push, onBlock: process_block, embedded: true, strict: false })
+            parse(text, { onText: push, onBlock: process_block, embedded: true, strict: false })
         },
 
         onclosetag(name) {
@@ -617,8 +617,7 @@ server = {
 
             enabled: null,
 
-            config: configTools(parse({
-                content: fs.readFileSync(configPath, "utf8"),
+            config: configTools(parse(fs.readFileSync(configPath, "utf8"), {
                 strict: true,
                 asLookupTable: true
             })),

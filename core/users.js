@@ -59,7 +59,7 @@ const addon = module.exports = {
 
                 let user = results[0];
 
-                bcrypt.compare(password, user.hash.replace("$2y$", "$2b$"), function(err, result){
+                backend.bcrypt.compare(password, user.hash.replace("$2y$", "$2b$"), function(err, result){
                     if(!err && result){
 
                         let token;
@@ -115,7 +115,7 @@ const addon = module.exports = {
 
                     // User
                     username: user.username,
-                    hash: await bcrypt.hash(user.password, 8),
+                    hash: await backend.bcrypt.hash(user.password, 8),
                     email: user.email,
                     ip: ip || "",
 

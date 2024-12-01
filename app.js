@@ -272,14 +272,13 @@ function build(){
         }
     };
 
-    function resolve(res, req, flags, virtual) {
-        // total_hits++
 
-        // if(flags && flags.h3){
-        //     return res.end("Hi")
-        // }
+    const web_handler = backend.addon("core/web").HandleRequest;
 
-        // Virtual requests
+    function resolve(res, req, flags, virtual = null) {
+        req.begin = performance.now()
+
+        // Virtual requests for whatever reason
         if(virtual){
             if(virtual.method) req.getMethod = () => virtual.method
             if(virtual.path) req.getUrl = () => virtual.path
@@ -318,7 +317,6 @@ function build(){
                 return
             }
 
-
             // Receive POST body
             if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
                 req.fullBody = Buffer.from('');
@@ -336,6 +334,7 @@ function build(){
                 })
             }
 
+
             // Default 15s timeout when the request doesnt get answered
             res.timeout = setTimeout(() => {
                 try {
@@ -346,10 +345,10 @@ function build(){
             }, res.timeout || 15000)
         }
 
+
         // Finally, lets route the request.
 
         let index = -1, segments = decodeURIComponent(req.path).split("/").filter(Boolean)
-        req.begin = performance.now()
 
         function error(error, code){
             if(req.abort) return;
@@ -375,11 +374,6 @@ function build(){
         // TODO: improve
         const target = domainRouter.get(req.domain);
 
-        // Handle the builtin CDN
-        if(target === 1){
-            return backend.addon("cdn").HandleRequest({segments, shift, error, req, res})
-        }
-
         // Handle the builtin API
         if(target === 2){
             let version = segments[0] && +(segments[0].slice(1));
@@ -395,9 +389,14 @@ function build(){
             } else return error(0)
         }
 
+        // Handle the builtin CDN
+        if(typeof target === "function"){
+            return target({segments, shift, error, req, res})
+        }
+
         else {
             // Let's handle it by the webserever addon by default
-            backend.addon("core/web").HandleRequest({segments, req, res})
+            web_handler({segments, req, res})
         }
     }
 
@@ -756,8 +755,7 @@ const backend = {
 
         // configRaw = Backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, null);
 
-        configRaw = backend.configRaw = parse({
-            content: fs.readFileSync(path, "utf8"),
+        configRaw = backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
             strict: true,
             asLookupTable: true
         });
@@ -1053,7 +1051,7 @@ const isDev = backend.config.block("system").get("developmentMode", Boolean);
 for (const block of backend.config.blocks("route")) {
     for(const name of block.attributes) {
         domainRouter.set(name, {
-            cdn: 1,
+            cdn: backend.addon("cdn").HandleRequest,
             api: 2
         }[block.get("to", String)])
     }
