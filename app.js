@@ -61,15 +61,6 @@ let
 
 
 
-// For requests that shouldn't have CORS restrictions (should be used responsibly)
-const no_cors_headers = {
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,HEAD,POST,PUT,DELETE",
-    "access-control-allow-credentials": "true",
-    "access-control-allow-headers": "Authorization, *"
-}
-
-
 
 const cache_db = {
     env: new lmdb.Env(),
@@ -548,13 +539,22 @@ const backend = {
             html: "text/html; charset=utf-8",
         },
 
-        corsHeaders(req, res) {
+        corsHeaders(req, res, credentials = false) {
             res.cork(() => {
                 res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
 
-                backend.helper.writeHeaders(req, res, no_cors_headers)
+                if(credentials){
+                    const origin = req.getHeader('origin');
+                    res.writeHeader("Origin", req.domain);
+                    res.writeHeader("Access-Control-Allow-Credentials", origin);
+                    res.writeHeader("Access-Control-Allow-Origin", "true");
+                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+                } else {
+                    res.writeHeader('Access-Control-Allow-Origin', '*');
+                    res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");
+                }
 
-                res.writeHeader("Origin", req.domain)
+                res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,DELETE,OPTIONS");
 
                 if(h3_enabled){
                     // EXPERIMENTAL: add alt-svc header for HTTP3
@@ -1027,7 +1027,7 @@ const backend = {
 
             if(!lsdb) lsdb = require("./addons/lsdb_mysql");
             if(backend.db.sql_connections[db]) return backend.db.sql_connections[db];
-            return backend.db.sql_connections[db] = lsdb.Server(host, user, password)
+            return backend.db.sql_connections[db] = lsdb.Server(host, user, password, db)
         }
     }
 }
