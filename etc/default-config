@@ -51,7 +51,7 @@ route ("api.example.com") { to: api }
 
 sslRouter {
     # To allow multiple certificates, you add server names below.
-    # Wildcard certificates are supported!
+    # Wildcard certificates are supported (add *. before your domain)!
 
     certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
     keyBase: "/etc/letsencrypt/live/{domain}/privkey.pem";

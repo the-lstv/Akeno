@@ -151,18 +151,18 @@ api = {
             backend.refreshConfig()
         }
     
-        let libConfig = backend.config.block("cdn.libraries");
+        // let libConfig = backend.config.block("cdn.libraries");
     
-        libLocations = libConfig && libConfig.properties.locations? libConfig.properties.locations : [cdn_path + "/lib/*"]
+        // libLocations = libConfig && libConfig.properties.locations? libConfig.properties.locations : [cdn_path + "/lib/*"]
 
-        await api.LoadLibraries();
+        // await api.LoadLibraries();
     },
 
 
     async LoadLibraries(){
 
         function load(path){
-            console.log("loading ", path);
+            // console.log("loading ", path);
         }
 
         for(let location of libLocations){

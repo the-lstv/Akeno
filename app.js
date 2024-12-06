@@ -1,5 +1,7 @@
 let
-    version = "1.5.4",
+    version = "1.5.5",
+
+    since_startup = performance.now(),
 
     // Modules
     uws = require('uWebSockets.js'),
@@ -43,7 +45,6 @@ try {
 
 let
     // Globals
-    initialized = false,
     AddonCache = {},
 
     config,
@@ -54,11 +55,12 @@ let
     PATH = __dirname + "/",
     
     total_hits,
-    since_startup = performance.now(),
 
-    domainRouter = new Map
+    domainRouter = new Map,
+
+    // TODO: you know what to do :sob:
+    allowedOriginDomains = new Set(["lstv.space", "lstv.test", "dev.lstv.test", "dev.lstv.space"])
 ;
-
 
 
 
@@ -188,15 +190,7 @@ function initialize(){
         console.log(`[system] IPC socket is listening on ${socketPath}`)
     })
 
-    if (server_enabled) build();
-}
-
-
-
-// The init fucntion that initializes and starts the server.
-function build(){
-    if(initialized) return;
-    initialized = true;
+    if (!server_enabled) return;
 
     backend.log("Initializing the server...")
 
@@ -204,8 +198,9 @@ function build(){
         if(version.Initialize) version.Initialize(backend)
     }
 
+
     // Websocket handler
-    let wss = {
+    const wss = {
 
         // idleTimeout: 32,
         // maxBackpressure: 1024,
@@ -387,13 +382,11 @@ function build(){
 
         else {
             // Let's handle it by the webserever addon by default
-            web_handler({segments, req, res})
+            web_handler({ segments, req, res })
         }
     }
 
     backend.exposeToDebugger("router", resolve)
-
-    // backend.exposeToDebugger("proxyRouter", proxyReq)
 
     // Create server instances
     app = uws.App()
@@ -408,7 +401,7 @@ function build(){
     
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
-            console.log(`[system] The Akeno server has started and is listening on port ${HTTPort}! Total hits so far: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
+            console.log(`[system] Akeno server v${version} has started and is listening on port ${HTTPort}! Total hits: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
 
             // Configure SSL
             if(ssl_enabled) {
@@ -443,11 +436,8 @@ function build(){
     
                     if(SNIDomains){
 
-                        if(!backend.config.block("sslRouter").properties.certBase){
-                            return backend.log.error("Could not start SSL server - you are missing certBase in your sslRouter block.")
-                        }
-                        if(!backend.config.block("sslRouter").properties.certBase){
-                            return backend.log.error("Could not start SSL server - you are missing keyBase in your sslRouter block.")
+                        if(!backend.config.block("sslRouter").properties.certBase || !backend.config.block("sslRouter").properties.keyBase){
+                            return backend.log.error("Could not start server with SSL - you are missing your certificate files (either base or key)!")
                         }
 
                         function addSNIRoute(domain) {
@@ -455,7 +445,7 @@ function build(){
                                 key_file_name:  backend.config.block("sslRouter").properties.keyBase[0].replace("{domain}", domain.replace("*.", "")),
                                 cert_file_name: backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", domain.replace("*.", ""))
                             })
-    
+
                             // For some reason we still have to include a separate router like so:
                             SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, {secured: true})).ws("/*", wss)
                             // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
@@ -464,14 +454,15 @@ function build(){
 
                         for(let domain of SNIDomains) {
                             addSNIRoute(domain)
-                            if(backend.config.block("sslRouter").properties.subdomainWildcard){
-                                addSNIRoute("*." + domain)
+
+                            if(domain.startsWith("*.")){
+                                addSNIRoute(domain.replace("*.", ""))
                             }
                         }
 
-                        // if(Backend.config.block("sslRouter").properties.autoAddDomains){
+                        // if(backend.config.block("sslRouter").properties.autoAddDomains){
                         //     SSLApp.missingServerName((hostname) => {
-                        //         Backend.log.warn("You are missing a SSL server name <" + hostname + ">! Trying to use a certificate on the fly.");
+                        //         backend.log.warn("You are missing a SSL server name <" + hostname + ">! Trying to use a certificate on the fly.");
 
                         //         addSNIRoute(hostname)
                         //     })
@@ -493,12 +484,12 @@ function build(){
                     });
                 }
             }
-        } else backend.log.error("[error] Could not start the server on port " + HTTPort + "!")
+        } else backend.log.error("[fatal error] Could not start the server on port " + HTTPort + "!")
     });
 
     backend.resolve = resolve;
 
-    if(backend.config.block("server").properties.preloadWeb) backend.addon("core/web");
+    if(backend.config.block("server").get("preloadWeb", Boolean)) backend.addon("core/web");
 }
 
 const jwt_key = process.env.AKENO_KEY;
@@ -571,19 +562,21 @@ const backend = {
         send(req, res, data, headers = {}, status){
             if(req.abort) return;            
 
-            if(Array.isArray(data) || (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof DataView) && !(data instanceof Buffer))) {
+            if(data !== undefined && (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof Buffer)) || Array.isArray(data)) {
                 headers["content-type"] = backend.helper.types["json"];    
                 data = JSON.stringify(data);
             }
 
-            if(req.begin && headers) {
-                headers["server-timing"] = `generation;dur=${performance.now() - req.begin}`
-            }
-
             res.cork(() => {
-                res.writeStatus(status? status + "": "200 OK")
+                res.writeStatus(status || "200 OK")
+
+                if(req.begin) {
+                    res.writeHeader("server-timing", `generation;dur=${performance.now() - req.begin}`)
+                }
+
                 backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers)
-                res.end(data)
+
+                if(data !== undefined) res.end(data)
             });
         },
 
@@ -714,51 +707,57 @@ const backend = {
 
         // TODO: Merge function must be updated
 
-        // function resolveImports(parsed, stack, referer){
-        //     let imports = [];
+        function resolveImports(parsed, stack, referer){
+            let imports = [];
 
             
-        //     configTools(parsed).forEach("import", (block, remove) => {
-        //         remove() // remove the block from the config
+            configTools(parsed).forEach("import", (block, remove) => {
+                remove() // remove the block from the config
 
-        //         if(block.attributes.length !== 0){
-        //             let path = block.attributes[0].replace("./", PATH + "/");
+                if(block.attributes.length !== 0){
+                    let path = block.attributes[0].replace("./", PATH + "/");
 
-        //             if(path === stack) return Backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
+                    if(path === stack) return backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
 
-        //             if(!fs.existsSync(path)){
-        //                 Backend.log.warn("Failed import of \"" + path + "\", file not found")
-        //                 return;
-        //             }
+                    if(!fs.existsSync(path)){
+                        backend.log.warn("Failed import of \"" + path + "\", file not found")
+                        return;
+                    }
 
-        //             imports.push(path)
-        //         }
-        //     })
+                    imports.push(path)
+                }
+            })
 
-        //     alreadyResolved[stack] = imports;
+            alreadyResolved[stack] = imports;
 
-        //     for(let path of imports){
-        //         if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
-        //             Backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
-        //             continue
-        //         }
+            for(let path of imports){
+                if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
+                    backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
+                    continue
+                }
 
-        //         parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, stack))
-        //     }
+                parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), {
+                    strict: true,
+                    asLookupTable: true
+                }), path, stack))
+            }
 
 
 
-        //     return parsed
-        // }
+            return parsed
+        }
 
         let path = PATH + "/config";
 
-        // configRaw = Backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, null);
-
-        configRaw = backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
+        configRaw = backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), {
             strict: true,
             asLookupTable: true
-        });
+        }), path, null);
+
+        // configRaw = backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
+        //     strict: true,
+        //     asLookupTable: true
+        // });
 
         config = backend.config = configTools(configRaw);
 
@@ -1047,15 +1046,18 @@ const H3Port = backend.config.block("server").get("h3Port", Number, 443);
 const isDev = backend.config.block("system").get("developmentMode", Boolean);
 
 
+const handlers = {
+    cdn: backend.addon("cdn").HandleRequest,
+    api: 2
+}
+
 
 for (const block of backend.config.blocks("route")) {
     for(const name of block.attributes) {
-        domainRouter.set(name, {
-            cdn: backend.addon("cdn").HandleRequest,
-            api: 2
-        }[block.get("to", String)])
+        domainRouter.set(name, handlers[block.get("to", String)])
     }
 }
+
 
 // Setup API versions/modules
 API.default = backend.config.block("api").get("default", Number, 1)

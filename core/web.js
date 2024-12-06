@@ -18,8 +18,9 @@ let
     nodePath = require("path"),
 
     { Parser } = require('htmlparser2'),
+    picomatch = require('picomatch'),
 
-    { xxh32 } = require("@node-rs/xxhash"),
+    // { xxh32 } = require("@node-rs/xxhash"),
 
     // Local libraries
     { parse, configTools } = require("./parser"),
@@ -30,7 +31,7 @@ let
     applications = new Map,
     applicationCache = [], // debug purposes
 
-    // backend object
+    // Backend object
     backend,
 
     // Cache && optimisation helpers
@@ -51,6 +52,415 @@ let
 
 
 
+server = {
+    Initialize(_backend){
+        backend = _backend;
+
+        ls_url = `http${backend.isDev? "" : "s"}://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
+
+        html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`)
+        notfound_error = Buffer.concat([html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)])
+
+        server.Reload(true)
+    },
+
+
+    async Reload(server_initiated, specific_app){
+        if(!server_initiated){
+            backend.refreshConfig()
+        }
+
+        if(specific_app){
+            return server.load(specific_app)
+        }
+
+        let webConfig = backend.config.block("web");
+
+        // Directories with web apps
+        locations = webConfig.get("locations")
+
+        await server.LoadAppliactions();
+    },
+
+
+    async LoadAppliactions(){
+        const start = performance.now();
+
+        // Looks for valid application locations
+        for(let location of locations){
+            if(location.startsWith("./")) location = backend.path + location.replace("./", "/");
+
+            if(!fs.existsSync(location.replace("/*", ""))) {
+                server.log.warn("Web application (at " + location + ") does not exist - skipped.");
+                continue
+            }
+
+            // Handle wildcard (multi) locations
+            if(location.endsWith("*")){
+                let path = nodePath.normalize(location.slice(0, -1) + "/");
+
+                for(let new_location of fs.readdirSync(path)){
+                    new_location = path + new_location;
+                    if(!fs.statSync(path).isDirectory()) continue;
+                    locations.push(new_location)
+                }
+                continue
+            }
+
+            if(!fs.statSync(location).isDirectory()) {
+                return server.log.warn("Web application (at " + location + ") is a file - skipped.")
+            }
+
+            server.load(location)
+        }
+
+        server.log(`Loaded ${locations.length} web application${locations.length > 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
+    },
+
+
+    load(path){
+
+        // TODO: Hot reloading is almost functional, but needs config validation and re-parsing to be finished
+        if(applications.has(path)) return;
+
+        let app = applications.get(path);
+
+        if(!app) {
+            app = server._createApp(path)
+            if(!app) return;
+        } else server.log.verbose("Hot-reloading web application (at " + path + ")");
+
+        const is_enabled = backend.cache.get(`web.${path}.enabled`, Boolean)
+        app.enabled = is_enabled === null? true: is_enabled
+
+        const domains = app.config.block("server").get("domains");
+
+        for(let domain of domains){
+            assignedDomains.set(domain, app);
+        }
+
+        for(let api of app.config.blocks("api")){
+            backend.apiExtensions[api.attributes[0]] = app.path + "/" + api.attributes[1]
+        }
+
+    },
+
+
+    _createApp(path){
+        if(applications.has(path)) return;
+
+        let configPath = files_try(path + "/app.conf", path + "/app.manifest");
+
+        if(!configPath){
+            server.log.warn("Web application (at " + path + ") failed to load - no config file found - skipped.");
+            return
+        }
+
+        const app = {
+            path,
+
+            basename: nodePath.basename(path),
+
+            enabled: null,
+
+            config: configTools(parse(fs.readFileSync(configPath, "utf8"), {
+                strict: true,
+                asLookupTable: true
+            }))
+        }
+
+        applications.set(app.path, app)
+
+        // Only for quick retrieval of website information
+        applicationCache.push({
+            basename: app.basename,
+            path,
+            get enabled(){
+                return app.enabled
+            }
+        })
+
+        return app
+    },
+
+
+    async HandleRequest({ segments, req, res }){
+        // This is the main handler/router for websites/webapps.
+
+        if(req.domain.startsWith("www.")) req.domain = req.domain.slice(4);
+
+        const app = assignedDomains.get(req.domain) ?? assignedDomains.get(":default");
+
+        if(!app) return res.cork(() => {
+            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(notfound_error)
+        })
+
+        // HTTPS Redirect
+        if(!req.secured && !backend.isDev && app.config.block("server").get("redirect_https", Boolean)){
+            res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
+            return
+        }
+
+        // When the app is disabled
+        if(!app.enabled){
+            backend.helper.send(req, res, app.config.block("server").get("disabled_message", String, "This website is temporarily disabled."), null, 422)
+            return
+        }
+
+        if(app.config.data.has("browserSupport")){
+            let browserRequirements = app.config.block("browserSupport");
+
+            if(!checkSupportedBrowser(req.getHeader('user-agent'), browserRequirements.properties)){
+                res.cork(() => {
+                    res.writeHeader('Content-Type', browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${browserRequirements.chrome && browserRequirements.chrome[0]} and up, Firefox ${browserRequirements.firefox && browserRequirements.firefox[0]} and up.`))
+                })
+                return
+            }
+        }
+
+
+
+        let url = `/${segments.join("/")}`;
+
+        // Redirects
+        for(const handle of app.config.blocks("redirect")){
+            const target = handle.get("to", String);
+
+            if(target && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
+                res.writeStatus('302 Found').writeHeader('Location', target).end();
+                return
+            }
+        }
+
+
+        // Redirect handles
+        for(const handle of app.config.blocks("handle")){
+            const target = handle.get("path", String);
+            const domain = handle.get("as", String);
+
+            if(target && domain && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
+                return backend.resolve(res, req, { secured: req.secured }, {
+                    domain,
+                    path: `/${target}${handle.get("appendPath", Boolean)? `/${segments.join("/")}`: ""}`,
+                    virtual: true
+                })
+            }
+        }
+
+
+        // Redirect routes
+        for(const route of app.config.blocks("route")){
+            if((route.picomatchCache || (route.picomatchCache = picomatch(route.attributes)))(url)){
+                url = `/${route.get("to", String)}`
+                break
+            }
+        }
+
+
+        // Finally, handle content
+        try {
+
+            let file = files_try(app.path + url + ".html", app.path + url + "/index.html", app.path + url);
+
+            if(!file){
+                file = app.config.block("errors").get("code", String) || app.config.block("errors").get("default", String)
+
+                if(!file){
+                    return backend.helper.send(req, res, url + " not found", null, 404);
+                } else file = app.path + file
+            }
+            
+            file = nodePath.normalize(file);
+
+            if(fs.statSync(file).isDirectory()){
+
+                backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
+
+            } else {
+                // TODO: Once uWS implements low-level cache, add support for it
+
+
+                // Check if the file has not been changed since
+                const cache = requestCachedFile(file);
+
+                if(!cache.refresh) {
+                    // Great, content is cached and up to date, lets send the cache directly:
+
+                    // Dynamic content
+                    if(Array.isArray(cache.content)){
+                        return server.ServeDynamicContent(req, res, cache.content, cache.headers)
+                    }
+
+                    return backend.helper.send(req, res, cache.content, cache.headers)
+                }
+
+
+                const file_name = nodePath.basename(file);
+
+                let extension, lastIndex = file_name.lastIndexOf('.');
+
+                if (lastIndex !== -1) {
+                    extension = file_name.slice(lastIndex + 1);
+                } else extension = file_name;
+
+                let mimeType = backend.mime.getType(extension) || "text/plain";
+
+                const headers = {
+                    "Content-Type": `${mimeType}; charset=UTF-8`,
+                    "Cache-Control": `public, max-age=${cacheByFile[extension] || cacheByFile.default}`,
+                    "X-Content-Type-Options": "nosniff",
+                    "ETag": `"${cache.lastModifyTime.toString(36)}"`,
+                }
+
+                server.log.verbose(`[${app.basename}] Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
+
+
+                let content;
+
+                switch(extension){
+                    case "html":
+                        content = parse_html_content({ url, file, app, compress: true })
+                    break;
+
+                    case "js": case "css":
+                        content = fs.readFileSync(file, "utf8");
+                        content = content && (backend.compression.code(content, extension === "css") || content)
+                    break;
+
+                    default:
+                        content = fs.readFileSync(file);
+                }
+
+                if(content) {
+                    if(Array.isArray(content)){
+                        // Dynamic content!
+                        server.ServeDynamicContent(req, res, content, headers)
+                    } else backend.helper.send(req, res, content, headers);
+
+                    if(content.length <= max_cache_size) updateCache(file, content, headers);
+                } else res.end();
+            }
+
+
+        } catch(error) {
+            server.log.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ")
+            console.error(error)
+
+            try {
+                backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500)
+            } catch {}
+        }
+    },
+
+
+    /*
+        Optimized handler for dynamic server-side content generation, for when you need to generate data on every request.
+        Parsing is only done once and is fully cached for all dynamic requests - you only fill in the data.
+        Still, use with caution. Is still much slower than regular static files, and if you only need to update dynamic data
+        once in a while and they otherwise are the same for all requests, please avoid using it.
+    */
+    ServeDynamicContent(req, res, content, headers){
+        res.cork(() => {
+            // undefined will delay sending
+            backend.helper.send(req, res, undefined, headers);
+
+            for(let chunk of content){
+                if(!(chunk instanceof Buffer)){
+
+                    // Dynamic content can be generated here...
+                    res.write("Hello world :)")
+
+                } else res.write(chunk)
+            }
+
+            res.end()
+        })
+    },
+
+
+    util: {
+        getApp(path_or_name){
+            if(!path_or_name) return null;
+            if(path_or_name.includes("/") && fs.existsSync(path_or_name)) return path_or_name;
+
+            const found = applicationCache.find(app => app.basename === path_or_name);
+
+            return found && found.path
+        },
+        
+        list(){
+            for(let app of applicationCache){
+                app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain).path === app.path)
+            }
+
+            return applicationCache
+        },
+
+        enable(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
+            
+            for(let application of applications.values()) {
+                if(application.path === app_path) {
+                    application.enabled = true
+                    return true
+                }
+            }
+
+            return false
+        },
+
+        disable(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
+        
+            for(let application of applications.values()) {
+                if(application.path === app_path) {
+                    application.enabled = false
+                    return true
+                }
+            }
+
+            return false
+        },
+
+        listDomains(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
+
+            let list = [];
+
+            for(domain in assignedDomains.keys()){
+                if(assignedDomains.get(domain).path === app_path) list.push(domain);
+            }
+
+            return list;
+        },
+
+        reload(app_path = null){
+            if(app_path && !(app_path = server.util.getApp(app_path))) return false;
+            server.Reload(null, app_path || null)
+        },
+
+        getDomain(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
+
+            for(domain in assignedDomains.keys()){
+                if(assignedDomains.get(domain).path === req.getQuery(app_path)) return domain;
+            }
+
+            return "";
+        },
+
+        tempDomain(app_path){
+            if(!(app_path = server.util.getApp(app_path))) return false;
+
+            let random = backend.uuid();
+            assignedDomains.set(random, applications.get(app_path));
+
+            return random;
+        }
+    }
+}
+
+
 let locations;
 
 // Section: utils
@@ -62,58 +472,63 @@ function files_try(...files){
     }
 }
 
-function cachedFile(file){
-    file = nodePath.normalize(file);
+function requestCachedFile(file){
+    // file = nodePath.normalize(file);
 
-    if(!fs.existsSync(file)){
-        return 0
-    }
+    // Should never happen since this is checked before requesting cache
+    // if(!fs.existsSync(file)){
+    //     return 0
+    // }
 
-    let cachedFile = cache.get(file);
+    let cachedFile = cache.get(file), mtime = fs.statSync(file).mtimeMs;
 
     if(cachedFile
         && (
-            ((Date.now() - cachedFile.updateTimer) < 1000) ||
-            (fs.statSync(file).mtimeMs <= cachedFile.lastModifyTime)
+            // ((Date.now() - cachedFile.updateTimer) < 1000) ||
+            mtime <= cachedFile.lastModifyTime
         )
     ) {
-        cachedFile.updateTimer = Date.now()
-        return cachedFile.content
+        // cachedFile.updateTimer = Date.now()
+        return cachedFile
     }
-
-    server.log.debug("File '" + file + "' has been updated; refreshing cache!");
 
     if(!cachedFile) {
         cachedFile = {}
         cache.set(file, cachedFile)
     }
 
-    cachedFile.lastModifyTime = fs.statSync(file).mtimeMs,
-    cachedFile.updateTimer = Date.now()
+    cachedFile.lastModifyTime = mtime;
+    cachedFile.refresh = true;
+    // cachedFile.updateTimer = Date.now();
 
-    return 1
+    return cachedFile
 }
 
-function updateCache(file, content){
-    file = nodePath.normalize(file);
+function updateCache(file, content, headers){
+    let cached = cache.get(file);
 
-    if(!cache.has(file)) cachedFile(file);
+    if(!cached) {
+        requestCachedFile(file)
+        cached = cache.get(file);
+    }
 
-    cache.get(file).content = content;
-    // cache.get(file).headers = headers;
+    cached.content = content;
+    cached.refresh = false;
+    cached.headers = headers;
 }
 
 
 function checkSupportedBrowser(userAgent, properties) {
     const ua = userAgent.toLowerCase();
 
-    if (ua.includes('chrome') && properties.chrome) {
+    if (properties.chrome && ua.includes('chrome')) {
         const match = ua.match(/chrome\/(\d+)/);
 
         if(properties.disableChrome) return false;
 
         if (match && parseInt(match[1], 10) < +properties.chrome[0]) return false;
-    } else if (ua.includes('firefox') && properties.firefox) {
+
+    } else if (properties.firefox && ua.includes('firefox')) {
         const match = ua.match(/firefox\/(\d+)/);
 
         if(properties.disableFirefox) return false;
@@ -126,11 +541,13 @@ function checkSupportedBrowser(userAgent, properties) {
 }
 
 
+// sorry, more of a personal helper :P
 let latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "4.0.0",
 
     // Is set in initialization
-    ls_url = null,
-    html_header = null
+    html_header = null,
+    notfound_error = null,
+    ls_url = null
 ;
 
 function map_resource(link, local_path){
@@ -245,7 +662,6 @@ function parse_html_content(options){
                 for(let item of block.attributes){
                     try {
                         let content = fs.readFileSync(options.app.path + "/" + item, "utf8");
-
                         push(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
                     } catch (error) {
                         console.warn("Failed to import (raw): importing " + item, error.toString())
@@ -334,7 +750,6 @@ function parse_html_content(options){
             default:
                 if(options.dynamic) push(block)
         }
-
     }
 
     const parser = new Parser({
@@ -439,7 +854,7 @@ function parse_html_content(options){
         if(head){
             if(head_string_index !== null) output[head_string_index] = Buffer.from(head); else output[0] = Buffer.concat([output[0], Buffer.from(`<head>${head}</head>`)]);
         }
-    
+
         push("</html>");
     }
 
@@ -516,372 +931,6 @@ function condense_parsed_output(data, allow_dynamic_content) {
 
 
 
-server = {
-    Initialize(_backend){
-        backend = _backend;
-
-        ls_url = `http${backend.isDev? "" : "s"}://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
-        html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`)
-
-        server.Reload(true)
-    },
-
-
-    async Reload(server_initiated, specific_app){
-        if(!server_initiated){
-            backend.refreshConfig()
-        }
-
-        if(specific_app){
-            return server.load(specific_app)
-        }
-
-
-        let webConfig = backend.config.block("web");
-
-        // Directories with web apps
-        locations = webConfig.get("locations")
-
-        await server.LoadAppliactions();
-    },
-
-
-    async LoadAppliactions(){
-        // Looks for valid application locations
-        for(let location of locations){
-            if(location.startsWith("./")) location = backend.path + location.replace("./", "/");
-
-            if(!fs.existsSync(location.replace("/*", ""))) {
-                server.log.warn("Web application directory (" + location + ") does not exist");
-                continue
-            }
-
-            // Handle wildcard (multi) locations
-            if(location.endsWith("*")){
-                let path = (location.replace("*", "") + "/").replaceAll("//", "/");
-                locations.push(...fs.readdirSync(path).map(location => path + location).filter(path => fs.statSync(path).isDirectory()))
-                continue
-            }
-
-            if(fs.statSync(location).isDirectory()){
-
-                server.load(location)
-
-            } else server.log.warn("Web application (at " + location + ") is a file - skipped.");
-        }
-    },
-
-
-    load(path){
-
-        // TODO: Hot reloading is almost functional, but needs config validation and re-parsing to be finished
-        if(applications.has(path)) return;
-
-        let app = applications.get(path);
-
-        if(!app) {
-            app = server._createApp(path)
-            if(!app) return;
-        } else server.log.verbose("Hot-reloading web application (at " + path + ")");
-
-        const is_enabled = backend.cache.get(`web.${path}.enabled`, Boolean)
-        app.enabled = is_enabled === null? true: is_enabled
-
-        const domains = app.config.block("server").get("domains");
-        for(let domain of domains){
-            assignedDomains.set(domain, app.path);
-        }
-
-        for(let api of app.config.blocks("api")){
-            backend.apiExtensions[api.attributes[0]] = app.path + "/" + api.attributes[1]
-        }
-    },
-
-
-    _createApp(path){
-        if(applications.has(path)) return;
-
-        server.log.verbose("Loading web application (at " + path + ")");
-
-        let configPath = files_try(path + "/app.conf", path + "/app.manifest");
-
-        if(!configPath){
-            server.log.debug("Web application (at " + path + ") was not loaded (no config file found)");
-            return
-        }
-
-        const app = {
-    
-            path,
-            basename: nodePath.basename(path),
-
-            enabled: null,
-
-            config: configTools(parse(fs.readFileSync(configPath, "utf8"), {
-                strict: true,
-                asLookupTable: true
-            })),
-
-            serve({ req, res, url }){
-                try {
-
-                    for(const route of app.config.blocks("route")){
-                        if(route.attributes.some(route => url.startsWith(route))){
-                            if(route.properties.not && route.properties.not.some(path => url.startsWith(path))){
-                                continue
-                            }
-
-                            url = `/${route.get("to", String)}`
-                            break
-                        }
-                    }
-
-
-                    let file = files_try(path + url + ".html", path + url + "/index.html", path + url);
-
-
-                    server.log.verbose(`[${app.basename}] Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
-
-                    if(!file){
-                        file = app.config.block("errors").get("code", String) || app.config.block("errors").get("default", String)
-
-                        if(!file){
-                            return backend.helper.send(req, res, url + " not found", null, 404);
-                        } else file = path + file
-                    }
-                    
-                    file = nodePath.normalize(file);
-
-                    if(fs.statSync(file).isDirectory()){
-
-                        backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
-
-                    } else {
-                        // TODO: Once uWS implements low-level cache, add support for it
-
-                        // Check if the file exists in cache and has not been changed since
-                        const cache = cachedFile(file);
-                        const file_name = nodePath.basename(file);
-
-                        let extension, lastIndex = file_name.lastIndexOf('.');
-
-                        if (lastIndex !== -1) {
-                            extension = file_name.slice(lastIndex + 1);
-                        } else extension = file_name;
-
-                        let mimeType = backend.mime.getType(extension) || "text/plain";
-
-                        const headers = {
-                            "content-type": `${mimeType}; charset=UTF-8`,
-                            "cache-control": `public, max-age=${cacheByFile[extension] || cacheByFile.default}`,
-                            "x-content-type-options": "nosniff"
-                        }
-                        
-                        if(cache instanceof Buffer || typeof cache === "string") {
-                            // Great, content is cached and up to date, lets send the cache directly:
-                            return backend.helper.send(req, res, cache, headers)
-                        }
-
-                        if(cache !== 1) server.log.warn("Cached data were wrong or empty (serving \""+file+"\"), did you update them correctly? Note: forcing cache reload!");
-
-                        let content;
-
-                        switch(extension){
-                            case "html":
-                                content = parse_html_content({ url, file, app, compress: true })
-                            break;
-
-                            case "css":
-                                content = fs.readFileSync(file, "utf8");
-                                content = content && (backend.compression.code(content, true) || content)
-                            break;
-
-                            case "js":
-                                content = fs.readFileSync(file, "utf8");
-                                content = content && (backend.compression.code(content) || content)
-                            break;
-
-                            default:
-                                content = fs.readFileSync(file);
-                        }
-
-                        if(content) {
-                            backend.helper.send(req, res, content, headers);
-
-                            if(content.length < max_cache_size) updateCache(file, content)
-                        } else res.end();
-                    }
-
-
-                } catch(error) {
-                    server.log.error("Error when serving app \"" + path + "\", requesting \"" + req.path + "\": ")
-                    console.error(error)
-
-                    try {
-                        backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500)
-                    } catch {}
-                }
-            }
-        }
-
-        applications.set(app.path, app)
-    
-        // Only for quick retrieval of website information
-        applicationCache.push({
-            basename: app.basename,
-            path,
-            get enabled(){
-                return app.enabled
-            }
-        })
-
-        return app
-    },
-
-
-    async HandleRequest({ segments, req, res }){
-        // This is the main handler/router for websites/webapps.
-
-        if(req.domain.startsWith("www.")) req.domain = req.domain.slice(4);
-
-        const appPath = assignedDomains.get(req.domain) ?? assignedDomains.get(":default");
-
-        if(appPath) {
-
-            const app = applications.get(appPath)
-
-            // HTTPS Redirect
-            if(app.config.block("server").get("redirect_https", Boolean) && !backend.isDev && !req.secured){
-                res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
-                return
-            }
-
-            // When the app is disabled
-            if(!app.enabled){
-                backend.helper.send(req, res, app.config.block("server").get("disabled_message", String, "This website is temporarily disabled."), null, 422)
-                return
-            }
-
-
-            if(app.config.has("browserSupport")){
-                let browserRequirements = app.config.block("browserSupport");
-
-                if(!checkSupportedBrowser(req.getHeader('user-agent'), browserRequirements.properties)){
-                    res.cork(() => {
-                        res.writeHeader('Content-Type', browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${browserRequirements.chrome && browserRequirements.chrome[0]} and up, Firefox ${browserRequirements.firefox && browserRequirements.firefox[0]} and up.`))
-                    })
-                    return
-                }
-            }
-
-            const url = `/${segments.join("/")}`;
-
-            // Redirect handles
-            for(const handle of app.config.blocks("handle")){
-                if(handle.attributes.some(route => url.startsWith(route))){
-                    const target = handle.get("target", String);
-
-                    if(target) {
-                        return backend.resolve(res, req, { secured: req.secured }, {
-                            domain: handle.get("as", String, "api.extragon.cloud"),
-                            path: `/${target}${handle.get("appendPath", Boolean)? `/${segments.join("/")}`: ""}`,
-                            virtual: true
-                        })
-                    }
-                }
-            }
-
-            app.serve({ req, res, url })
-
-        } else {
-            res.cork(() => {
-                res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}`)
-            })
-        }
-    },
-
-
-    util: {
-        getApp(path_or_name){
-            if(!path_or_name) return null;
-            if(path_or_name.includes("/") && fs.existsSync(path_or_name)) return path_or_name;
-
-            const found = applicationCache.find(app => app.basename === path_or_name);
-
-            return found && found.path
-        },
-        
-        list(){
-            for(let app of applicationCache){
-                app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain) === app.path)
-            }
-
-            return applicationCache
-        },
-
-        enable(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-            
-            for(let application of applications.values()) {
-                if(application.path === app_path) {
-                    application.enabled = true
-                    return true
-                }
-            }
-
-            return false
-        },
-
-        disable(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-        
-            for(let application of applications.values()) {
-                if(application.path === app_path) {
-                    application.enabled = false
-                    return true
-                }
-            }
-
-            return false
-        },
-
-        listDomains(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-
-            let list = [];
-
-            for(domain in assignedDomains.keys()){
-                if(assignedDomains.get(domain) === app_path) list.push(domain);
-            }
-
-            return list;
-        },
-
-        reload(app_path = null){
-            if(app_path && !(app_path = server.util.getApp(app_path))) return false;
-            server.Reload(null, app_path || null)
-        },
-
-        getDomain(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-
-            for(domain in assignedDomains.keys()){
-                if(assignedDomains.get(domain) === req.getQuery(app_path)) return domain;
-            }
-
-            return "";
-        },
-
-        tempDomain(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-
-            let random = backend.uuid();
-            assignedDomains.set(random, app_path);
-
-            return random;
-        }
-    }
-}
 
 
 module.exports = server
