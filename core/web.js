@@ -266,7 +266,7 @@ server = {
                 file = app.config.block("errors").get("code", String) || app.config.block("errors").get("default", String)
 
                 if(!file){
-                    return backend.helper.send(req, res, url + " not found", null, 404);
+                    return backend.helper.send(req, res, url + " not found", null, "404 Not Found");
                 } else file = app.path + file
             }
             
