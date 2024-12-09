@@ -56,7 +56,7 @@ server = {
     Initialize(_backend){
         backend = _backend;
 
-        ls_url = `http${backend.isDev? "" : "s"}://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
+        ls_url = `://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
 
         html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`)
         notfound_error = Buffer.concat([html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)])
@@ -223,7 +223,7 @@ server = {
         let url = `/${segments.join("/")}`;
 
         // Redirects
-        for(const handle of app.config.blocks("redirect")){
+        if(app.config.data.has("redirect")) for(const handle of app.config.blocks("redirect")){
             const target = handle.get("to", String);
 
             if(target && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
@@ -234,12 +234,12 @@ server = {
 
 
         // Redirect handles
-        for(const handle of app.config.blocks("handle")){
+        if(app.config.data.has("handle")) for(const handle of app.config.blocks("handle")){
             const target = handle.get("path", String);
             const domain = handle.get("as", String);
 
             if(target && domain && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
-                return backend.resolve(res, req, { secured: req.secured }, {
+                return backend.resolve(res, req, { secured: req.secure }, {
                     domain,
                     path: `/${target}${handle.get("appendPath", Boolean)? `/${segments.join("/")}`: ""}`,
                     virtual: true
@@ -249,10 +249,14 @@ server = {
 
 
         // Redirect routes
-        for(const route of app.config.blocks("route")){
+        if(app.config.data.has("route")) for(const route of app.config.blocks("route")){
             if((route.picomatchCache || (route.picomatchCache = picomatch(route.attributes)))(url)){
-                url = `/${route.get("to", String)}`
-                break
+                const negate = route.get("not");
+
+                if(!negate.length || !(route.negate_picomatchCache || (route.negate_picomatchCache = picomatch(negate)))(url)){
+                    url = `/${route.get("to", String)}`
+                    break
+                }
             }
         }
 
@@ -319,7 +323,7 @@ server = {
 
                 switch(extension){
                     case "html":
-                        content = parse_html_content({ url, file, app, compress: true })
+                        content = parse_html_content({ url, file, app, compress: true, secure: req.secure })
                     break;
 
                     case "js": case "css":
@@ -704,7 +708,7 @@ function parse_html_content(options){
                 if(block.properties["ls-js"]){
                     misc.default_attributes.body.ls = "";
             
-                    let url = `${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${options.compress? "min." : ""}js`;
+                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${options.compress? "min." : ""}js`;
 
                     head += `<script src="${url}"></script>`;
                 }
@@ -712,7 +716,7 @@ function parse_html_content(options){
                 if(block.properties["ls-css"]){
                     misc.default_attributes.body.ls = "";
 
-                    let url = `${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${options.compress? "min." : ""}css`;
+                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${options.compress? "min." : ""}css`;
                     
                     head += `<link rel=stylesheet href="${url}">`
                 }
@@ -748,7 +752,7 @@ function parse_html_content(options){
                 break;
 
             default:
-                if(options.dynamic) push(block)
+                if(options.dynamic) push(block); else block = null;
         }
     }
 

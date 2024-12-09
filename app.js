@@ -262,27 +262,47 @@ function initialize(){
     const web_handler = backend.addon("core/web").HandleRequest;
 
     function resolve(res, req, flags, virtual = null) {
-        req.begin = performance.now()
 
-        // Virtual requests for whatever reason
-        if(virtual){
-            if(virtual.method) req.getMethod = () => virtual.method
-            if(virtual.path) req.getUrl = () => virtual.path
-            if(virtual.domain) req.getHeader = header => header === "host"? virtual.domain: req.getHeader(header)
+        if(!virtual) {
+
+            req.begin = performance.now()
+
+            // Lowercase is pretty but most code already uses uppercase
+            req.method = req.getMethod && req.getMethod().toUpperCase();
+
+            const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
+            req.domain = _colon_index === -1? _host: _host.slice(0, _host.lastIndexOf(":"));
+
+            req.path = req.getUrl();
+            req.origin = req.getHeader('origin');
+            req.secure = flags && !!flags.secure; // If the request is done over a secured connection
+            // req.secured = req.secure; // I messed up the name at first...
+
+
+        } else {
+
+            // Virtual requests for whatever reason...
+            // Should this be kept or removed?
+            // It has a real use-case: selectively handling some requests by different handlers or "emulating" requests.
+            req.getMethod = () => virtual.method;
+            req.getUrl = () => virtual.path;
+            Object.assign(req, virtual)
+            req.virtual = true
+
         }
 
 
-        // Lowercase is pretty but most code already uses uppercase
-        req.method = req.getMethod && req.getMethod().toUpperCase();
+        // Handle preflight requests
+        // TODO: make this more flexible
+        if(req.method == "OPTIONS"){
+            backend.helper.corsHeaders(req, res)
+            res.writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
+            return
+        }
 
-        const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
-        req.domain = _colon_index === -1? _host: _host.slice(0, _host.lastIndexOf(":"));
 
-        req.path = req.getUrl();
-        req.secured = flags && !!flags.secured; // If the request is done over a secured connection
-
-
-        // This can be called more than once, due to internal redirecions, that is why we check if the request was resolved:
+        // Yeah, if the request is virtual, resolve may be called multiple times on the same request.
+        // However it is not valid if the request has already been sent.
         if(!req.wasResolved){
             req.wasResolved = true;
     
@@ -295,13 +315,6 @@ function initialize(){
             // Handle proxied requests
             // if(shouldProxy(req, res, flags)) return;
 
-
-            // Handle preflight requests
-            if(req.method == "OPTIONS"){
-                backend.helper.corsHeaders(req, res)
-                res.writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
-                return
-            }
 
             // Receive POST body
             if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
@@ -325,65 +338,42 @@ function initialize(){
             res.timeout = setTimeout(() => {
                 try {
                     if(req.abort) return;
-    
+
                     if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
                 } catch {}
             }, res.timeout || 15000)
         }
 
 
-        // Finally, lets route the request.
+        // Finally, lets route the request to find a handler.
 
         let index = -1, segments = decodeURIComponent(req.path).split("/").filter(Boolean)
-
-        function error(error, code){
-            if(req.abort) return;
-
-            if(typeof error == "number" && backend.Errors[error]){
-                let _code = code;
-                code = error;
-                error = (_code? code : "") + backend.Errors[code]
-            }
-
-            res.cork(() => {
-                res.writeStatus('400')
-                backend.helper.corsHeaders(req, res)
-                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
-            })
-        }
 
         function shift(){
             index++
             return segments[index] || "";
         }
 
-        // TODO: improve
-        const target = domainRouter.get(req.domain);
 
-        // Handle the builtin API
-        if(target === 2){
-            let version = segments[0] && +(segments[0].slice(1));
+        // Default handler is the web handler
+        let handler = domainRouter.get(req.domain) || web_handler;
 
-            if(version && segments[0][0].toLowerCase().startsWith("v")){
-                segments.shift()
-            }
-    
-            const handler = API.handlers.get(version || API.default);
-    
-            if(handler){
-                return handler.HandleRequest({segments, shift, error, req, res})
-            } else return error(0)
+        // Handle the built-in API
+        if(handler === 2){
+            const versionCode = segments.shift();
+            const firstChar = versionCode && versionCode.charCodeAt(0);
+
+            if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
+            
+            const api = API.handlers.get(parseInt(versionCode.slice(1), 10));
+            handler = api && api.HandleRequest;
+
+            if(!handler) return backend.helper.error(req, res, 0);
+        } else if(typeof handler !== "function"){
+            return req.writeStatus("400 Bad Request").end("400 Bad Request")
         }
 
-        // Handle the builtin CDN
-        if(typeof target === "function"){
-            return target({segments, shift, error, req, res})
-        }
-
-        else {
-            // Let's handle it by the webserever addon by default
-            web_handler({ segments, req, res })
-        }
+        handler({segments, shift, error: (error, code) => backend.helper.error(req, res, error, code), req, res})
     }
 
     backend.exposeToDebugger("router", resolve)
@@ -420,14 +410,14 @@ function initialize(){
     
                     // HTTP3 doesn't have WebSockets, do not setup ws listeners.
     
-                    H3App.any('/*', (res, req) => resolve(res, req, {secured: true, h3: true}))
+                    H3App.any('/*', (res, req) => resolve(res, req, {secure: true, h3: true}))
     
                     backend.exposeToDebugger("uws_h3", H3App)
                 }
 
 
                 SSLApp.ws('/*', wss)
-                SSLApp.any('/*', (res, req) => resolve(res, req, {secured: true}))
+                SSLApp.any('/*', (res, req) => resolve(res, req, {secure: true}))
                 
 
                 // If sslRouter is defined
@@ -447,7 +437,7 @@ function initialize(){
                             })
 
                             // For some reason we still have to include a separate router like so:
-                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, {secured: true})).ws("/*", wss)
+                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, {secure: true})).ws("/*", wss)
                             // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
                             // A bit wasteful right? For every domain..
                         }
@@ -531,18 +521,23 @@ const backend = {
         },
 
         corsHeaders(req, res, credentials = false) {
+
+            // FIXME: I should seriously stop putting things for my specific usecases into public code
+            if(req.origin.endsWith("lstv.space") || req.origin.endsWith("lstv.test")){
+                credentials = true
+            }
+            
             res.cork(() => {
                 res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
-
+                
                 if(credentials){
-                    const origin = req.getHeader('origin');
                     res.writeHeader("Origin", req.domain);
-                    res.writeHeader("Access-Control-Allow-Credentials", origin);
-                    res.writeHeader("Access-Control-Allow-Origin", "true");
-                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+                    res.writeHeader("Access-Control-Allow-Credentials", "true");
+                    res.writeHeader("Access-Control-Allow-Origin", req.origin);
+                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials");
                 } else {
                     res.writeHeader('Access-Control-Allow-Origin', '*');
-                    res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");
+                    res.writeHeader("Access-Control-Allow-Headers", "Authorization,Credentials,*");
                 }
 
                 res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,DELETE,OPTIONS");
@@ -578,6 +573,23 @@ const backend = {
 
                 if(data !== undefined) res.end(data)
             });
+        },
+
+        // This helper should likely be avoided.
+        error(req, res, error, code){
+            if(req.abort) return;
+
+            if(typeof error == "number" && backend.Errors[error]){
+                let _code = code;
+                code = error;
+                error = (_code? code : "") + backend.Errors[code]
+            }
+
+            res.cork(() => {
+                res.writeStatus('400')
+                backend.helper.corsHeaders(req, res)
+                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
+            })
         },
 
         stream(req, res, stream, totalSize){
