@@ -59,7 +59,7 @@ let
     domainRouter = new Map,
 
     // TODO: you know what to do :sob:
-    allowedOriginDomains = new Set(["lstv.space", "lstv.test", "dev.lstv.test", "dev.lstv.space"])
+    trustedOrigins = new Set(["https://lstv.space", "https://lstv.test", "https://dev.lstv.test", "https://dev.lstv.space"])
 ;
 
 
@@ -522,8 +522,7 @@ const backend = {
 
         corsHeaders(req, res, credentials = false) {
 
-            // FIXME: I should seriously stop putting things for my specific usecases into public code
-            if(req.origin.endsWith("lstv.space") || req.origin.endsWith("lstv.test")){
+            if(trustedOrigins.has(req.origin)){
                 credentials = true
             }
             
@@ -531,13 +530,12 @@ const backend = {
                 res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
                 
                 if(credentials){
-                    res.writeHeader("Origin", req.domain);
                     res.writeHeader("Access-Control-Allow-Credentials", "true");
                     res.writeHeader("Access-Control-Allow-Origin", req.origin);
-                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials");
+                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
                 } else {
                     res.writeHeader('Access-Control-Allow-Origin', '*');
-                    res.writeHeader("Access-Control-Allow-Headers", "Authorization,Credentials,*");
+                    res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");
                 }
 
                 res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,DELETE,OPTIONS");

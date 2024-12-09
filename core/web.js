@@ -184,6 +184,16 @@ server = {
     },
 
 
+    ServeCache(req, res, cache, app, url){
+        // Dynamic content
+        if(Array.isArray(cache.content)){
+            return server.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
+        }
+
+        return backend.helper.send(req, res, cache.content, cache.headers)
+    },
+
+
     async HandleRequest({ segments, req, res }){
         // This is the main handler/router for websites/webapps.
 
@@ -196,7 +206,7 @@ server = {
         })
 
         // HTTPS Redirect
-        if(!req.secured && !backend.isDev && app.config.block("server").get("redirect_https", Boolean)){
+        if(!req.secure && !backend.isDev && app.config.block("server").get("redirect_https", Boolean)){
             res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
             return
         }
@@ -219,8 +229,8 @@ server = {
         }
 
 
+        let url = req.original_url = `/${segments.join("/")}`;
 
-        let url = `/${segments.join("/")}`;
 
         // Redirects
         if(app.config.data.has("redirect")) for(const handle of app.config.blocks("redirect")){
@@ -239,7 +249,7 @@ server = {
             const domain = handle.get("as", String);
 
             if(target && domain && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
-                return backend.resolve(res, req, { secured: req.secure }, {
+                return backend.resolve(res, req, { secure: req.secure }, {
                     domain,
                     path: `/${target}${handle.get("appendPath", Boolean)? `/${segments.join("/")}`: ""}`,
                     virtual: true
@@ -277,73 +287,71 @@ server = {
             file = nodePath.normalize(file);
 
             if(fs.statSync(file).isDirectory()){
-
-                backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
-
-            } else {
-                // TODO: Once uWS implements low-level cache, add support for it
-
-
-                // Check if the file has not been changed since
-                const cache = requestCachedFile(file);
-
-                if(!cache.refresh) {
-                    // Great, content is cached and up to date, lets send the cache directly:
-
-                    // Dynamic content
-                    if(Array.isArray(cache.content)){
-                        return server.ServeDynamicContent(req, res, cache.content, cache.headers)
-                    }
-
-                    return backend.helper.send(req, res, cache.content, cache.headers)
-                }
-
-
-                const file_name = nodePath.basename(file);
-
-                let extension, lastIndex = file_name.lastIndexOf('.');
-
-                if (lastIndex !== -1) {
-                    extension = file_name.slice(lastIndex + 1);
-                } else extension = file_name;
-
-                let mimeType = backend.mime.getType(extension) || "text/plain";
-
-                const headers = {
-                    "Content-Type": `${mimeType}; charset=UTF-8`,
-                    "Cache-Control": `public, max-age=${cacheByFile[extension] || cacheByFile.default}`,
-                    "X-Content-Type-Options": "nosniff",
-                    "ETag": `"${cache.lastModifyTime.toString(36)}"`,
-                }
-
-                server.log.verbose(`[${app.basename}] Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
-
-
-                let content;
-
-                switch(extension){
-                    case "html":
-                        content = parse_html_content({ url, file, app, compress: true, secure: req.secure })
-                    break;
-
-                    case "js": case "css":
-                        content = fs.readFileSync(file, "utf8");
-                        content = content && (backend.compression.code(content, extension === "css") || content)
-                    break;
-
-                    default:
-                        content = fs.readFileSync(file);
-                }
-
-                if(content) {
-                    if(Array.isArray(content)){
-                        // Dynamic content!
-                        server.ServeDynamicContent(req, res, content, headers)
-                    } else backend.helper.send(req, res, content, headers);
-
-                    if(content.length <= max_cache_size) updateCache(file, content, headers);
-                } else res.end();
+                return backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
             }
+
+
+            // TODO: Once uWS implements low-level cache, add support for it
+
+            // Check if the file has not been changed since
+            const cache = requestCachedFile(file);
+
+
+            // In case that we do not have the headers yet, well have to wait for them.
+            if(!cache.refresh && cache.headers) {
+                return server.ServeCache(req, res, cache, app, url)
+            }
+
+            const file_name = nodePath.basename(file);
+
+            let extension, lastIndex = file_name.lastIndexOf('.');
+
+            if (lastIndex !== -1) {
+                extension = file_name.slice(lastIndex + 1);
+            } else extension = file_name;
+
+            let mimeType = backend.mime.getType(extension) || "text/plain";
+
+            const headers = {
+                "Content-Type": `${mimeType}; charset=UTF-8`,
+                "Cache-Control": `public, max-age=${cacheByFile[extension] || cacheByFile.default}`,
+                "X-Content-Type-Options": "nosniff",
+                "ETag": `"${cache.lastModifyTime.toString(36)}"`,
+            }
+
+            // Now that we got headers, lets actually serve the cached response
+            if(!cache.refresh) {
+                cache.headers = headers
+                return server.ServeCache(req, res, cache, app, url)
+            }
+
+            server.log.verbose(`[${app.basename}] Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
+
+            let content;
+
+            switch(extension){
+                case "html":
+                    content = parse_html_content({ url, file, app, compress: true, secure: req.secure })
+                break;
+
+                case "js": case "css":
+                    content = fs.readFileSync(file, "utf8");
+                    content = content && (backend.compression.code(content, extension === "css") || content)
+                break;
+
+                default:
+                    content = fs.readFileSync(file);
+            }
+
+            if(content) {
+                if(Array.isArray(content)){
+                    // Dynamic content!
+                    server.ServeDynamicContent(req, res, content, headers, app, url)
+                } else backend.helper.send(req, res, content, headers);
+
+                if(content.length <= max_cache_size) updateCache(file, content, headers);
+            } else res.end();
+
 
 
         } catch(error) {
@@ -363,7 +371,7 @@ server = {
         Still, use with caution. Is still much slower than regular static files, and if you only need to update dynamic data
         once in a while and they otherwise are the same for all requests, please avoid using it.
     */
-    ServeDynamicContent(req, res, content, headers){
+    ServeDynamicContent(req, res, content, headers, app, url){
         res.cork(() => {
             // undefined will delay sending
             backend.helper.send(req, res, undefined, headers);
@@ -371,8 +379,22 @@ server = {
             for(let chunk of content){
                 if(!(chunk instanceof Buffer)){
 
-                    // Dynamic content can be generated here...
-                    res.write("Hello world :)")
+                    switch(chunk.name){
+                        case "dynamicImport":
+                            
+                            if(!app.path) break;
+            
+                            for(let item of chunk.attributes){
+                                try {
+                                    const path = app.path + "/" + item.replace("$original_path", req.original_url);
+
+                                    res.write(parse_html_content({ file: files_try(path +  + ".html", path + "/index.html", path) || path, plain: true, dynamic: false, compress: true, app, url }))
+                                } catch (error) {
+                                    console.warn("Failed to import: importing " + item, error)
+                                }
+                            }
+                            break;
+                    }
 
                 } else res.write(chunk)
             }
@@ -592,9 +614,16 @@ const voidElements = new Set([
 ]);
 
 function parse_html_content(options){
+    if(options.file){
+        const cache = requestCachedFile(options.file);
+        if(!cache.refresh) return cache.content;
+    }
+
     const htmlContent = options.content? options.content: options.file? fs.readFileSync(options.file, "utf8"): "";
 
-    const output = [ null ]; // null for the header
+    if(htmlContent.length < 1) return Buffer.from("");
+
+    const output = [ null ]; // null for adding the header
 
     let head_string_index = null, head = options.head || '<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
 
@@ -636,10 +665,11 @@ function parse_html_content(options){
         switch(block.name) {
             case "no-init": case "plain":
                 options.plain = true
+                head = ""
                 break;
 
             case "dynamic":
-                options.dynamic = true
+                options.dynamic = Boolean(block.attributes[0])
                 break;
 
             case "print":
@@ -655,7 +685,7 @@ function parse_html_content(options){
                     try {
                         push(parse_html_content({file: options.app.path + "/" + item, plain: true, app: options.app, compress: !!options.compress, url: options.url || null}))
                     } catch (error) {
-                        console.warn("Failed to import: importing " + item, error.toString())
+                        console.warn("Failed to import: importing " + item, error)
                     }
                 }
                 break;
@@ -668,7 +698,7 @@ function parse_html_content(options){
                         let content = fs.readFileSync(options.app.path + "/" + item, "utf8");
                         push(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
                     } catch (error) {
-                        console.warn("Failed to import (raw): importing " + item, error.toString())
+                        console.warn("Failed to import (raw): importing " + item, error)
                     }
                 }
                 break;
@@ -710,7 +740,8 @@ function parse_html_content(options){
             
                     let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${options.compress? "min." : ""}js`;
 
-                    head += `<script src="${url}"></script>`;
+                    const part = `<script src="${url}"></script>`;
+                    if(!options.plain) head += part; else push(part);
                 }
             
                 if(block.properties["ls-css"]){
@@ -718,35 +749,48 @@ function parse_html_content(options){
 
                     let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${options.compress? "min." : ""}css`;
                     
-                    head += `<link rel=stylesheet href="${url}">`
+                    const part = `<link rel=stylesheet href="${url}">`
+                    if(!options.plain) head += part; else push(part);
                 }
 
                 if(block.properties.js) {
                     for(let resource of block.properties.js) {
                         const link = map_resource(resource, options.app.path);
-                        if(link) head += `<script src="${link}"></script>`
+
+                        if(link) {
+                            const part = `<script src="${link}"></script>`
+                            if(!options.plain) head += part; else push(part);
+                        }
                     }
                 }
 
                 if(block.properties.css) {
                     for(let resource of block.properties.css) {
                         const link = map_resource(resource, options.app.path);
-                        if(link) head += `<link rel=stylesheet href="${link}"></link>`
+
+                        if(link) {
+                            const part = `<link rel=stylesheet href="${link}">`
+                            if(!options.plain) head += part; else push(part);
+                        }
                     }
                 }
 
                 if(block.properties["bootstrap-icons"] || (block.properties.icons && block.properties.icons.includes("bootstrap"))) {
-                    head += `<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"></link>`
+                    const part = `<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">`
+                    if(!options.plain) head += part; else push(part);
                 }
 
                 if(block.properties["fa-icons"] || (block.properties.icons && block.properties.icons.includes("fa"))) {
-                    head += `<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.0/css/all.min.css"></link>`
+                    const part = `<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.0/css/all.min.css">`
+                    if(!options.plain) head += part; else push(part);
                 }
 
                 if(block.properties.fonts) {
-                    head += `<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin><link rel=stylesheet href="${`https://fonts.googleapis.com/css2?${block.properties.fonts.map(font => {
+                    const part = `<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin><link rel=stylesheet href="${`https://fonts.googleapis.com/css2?${block.properties.fonts.map(font => {
                         return "family=" + font.replaceAll(" ", "+") + ":wght@100;200;300;400;500;600;700;800;900"
                     }).join("&")}&display=swap`}">`
+
+                    if(!options.plain) head += part; else push(part);
                 }
 
                 break;
@@ -862,8 +906,12 @@ function parse_html_content(options){
         push("</html>");
     }
 
+    const content = condense_parsed_output(output, options.dynamic);
+
+    if(options.file && content.length <= max_cache_size) updateCache(options.file, content, null);
+
     // Finally, condense buffers and return.
-    return condense_parsed_output(output, options.dynamic);
+    return content;
 }
 
 function condense_parsed_output(data, allow_dynamic_content) {
