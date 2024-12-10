@@ -1,5 +1,7 @@
 let
-    version = "1.5.4",
+    version = "1.5.5",
+
+    since_startup = performance.now(),
 
     // Modules
     uws = require('uWebSockets.js'),
@@ -43,7 +45,6 @@ try {
 
 let
     // Globals
-    initialized = false,
     AddonCache = {},
 
     config,
@@ -54,11 +55,12 @@ let
     PATH = __dirname + "/",
     
     total_hits,
-    since_startup = performance.now(),
 
-    domainRouter = new Map
+    domainRouter = new Map,
+
+    // TODO: you know what to do :sob:
+    trustedOrigins = new Set(["https://lstv.space", "https://lstv.test", "https://dev.lstv.test", "https://dev.lstv.space"])
 ;
-
 
 
 
@@ -188,15 +190,7 @@ function initialize(){
         console.log(`[system] IPC socket is listening on ${socketPath}`)
     })
 
-    if (server_enabled) build();
-}
-
-
-
-// The init fucntion that initializes and starts the server.
-function build(){
-    if(initialized) return;
-    initialized = true;
+    if (!server_enabled) return;
 
     backend.log("Initializing the server...")
 
@@ -204,8 +198,9 @@ function build(){
         if(version.Initialize) version.Initialize(backend)
     }
 
+
     // Websocket handler
-    let wss = {
+    const wss = {
 
         // idleTimeout: 32,
         // maxBackpressure: 1024,
@@ -267,27 +262,47 @@ function build(){
     const web_handler = backend.addon("core/web").HandleRequest;
 
     function resolve(res, req, flags, virtual = null) {
-        req.begin = performance.now()
 
-        // Virtual requests for whatever reason
-        if(virtual){
-            if(virtual.method) req.getMethod = () => virtual.method
-            if(virtual.path) req.getUrl = () => virtual.path
-            if(virtual.domain) req.getHeader = header => header === "host"? virtual.domain: req.getHeader(header)
+        if(!virtual) {
+
+            req.begin = performance.now()
+
+            // Lowercase is pretty but most code already uses uppercase
+            req.method = req.getMethod && req.getMethod().toUpperCase();
+
+            const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
+            req.domain = _colon_index === -1? _host: _host.slice(0, _host.lastIndexOf(":"));
+
+            req.path = req.getUrl();
+            req.origin = req.getHeader('origin');
+            req.secure = flags && !!flags.secure; // If the request is done over a secured connection
+            // req.secured = req.secure; // I messed up the name at first...
+
+
+        } else {
+
+            // Virtual requests for whatever reason...
+            // Should this be kept or removed?
+            // It has a real use-case: selectively handling some requests by different handlers or "emulating" requests.
+            req.getMethod = () => virtual.method;
+            req.getUrl = () => virtual.path;
+            Object.assign(req, virtual)
+            req.virtual = true
+
         }
 
 
-        // Lowercase is pretty but most code already uses uppercase
-        req.method = req.getMethod && req.getMethod().toUpperCase();
+        // Handle preflight requests
+        // TODO: make this more flexible
+        if(req.method == "OPTIONS"){
+            backend.helper.corsHeaders(req, res)
+            res.writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
+            return
+        }
 
-        const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
-        req.domain = _colon_index === -1? _host: _host.slice(0, _host.lastIndexOf(":"));
 
-        req.path = req.getUrl();
-        req.secured = flags && !!flags.secured; // If the request is done over a secured connection
-
-
-        // This can be called more than once, due to internal redirecions, that is why we check if the request was resolved:
+        // Yeah, if the request is virtual, resolve may be called multiple times on the same request.
+        // However it is not valid if the request has already been sent.
         if(!req.wasResolved){
             req.wasResolved = true;
     
@@ -300,13 +315,6 @@ function build(){
             // Handle proxied requests
             // if(shouldProxy(req, res, flags)) return;
 
-
-            // Handle preflight requests
-            if(req.method == "OPTIONS"){
-                backend.helper.corsHeaders(req, res)
-                res.writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
-                return
-            }
 
             // Receive POST body
             if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
@@ -330,70 +338,45 @@ function build(){
             res.timeout = setTimeout(() => {
                 try {
                     if(req.abort) return;
-    
+
                     if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
                 } catch {}
             }, res.timeout || 15000)
         }
 
 
-        // Finally, lets route the request.
+        // Finally, lets route the request to find a handler.
 
         let index = -1, segments = decodeURIComponent(req.path).split("/").filter(Boolean)
-
-        function error(error, code){
-            if(req.abort) return;
-
-            if(typeof error == "number" && backend.Errors[error]){
-                let _code = code;
-                code = error;
-                error = (_code? code : "") + backend.Errors[code]
-            }
-
-            res.cork(() => {
-                res.writeStatus('400')
-                backend.helper.corsHeaders(req, res)
-                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
-            })
-        }
 
         function shift(){
             index++
             return segments[index] || "";
         }
 
-        // TODO: improve
-        const target = domainRouter.get(req.domain);
 
-        // Handle the builtin API
-        if(target === 2){
-            let version = segments[0] && +(segments[0].slice(1));
+        // Default handler is the web handler
+        let handler = domainRouter.get(req.domain) || web_handler;
 
-            if(version && segments[0][0].toLowerCase().startsWith("v")){
-                segments.shift()
-            }
-    
-            const handler = API.handlers.get(version || API.default);
-    
-            if(handler){
-                return handler.HandleRequest({segments, shift, error, req, res})
-            } else return error(0)
+        // Handle the built-in API
+        if(handler === 2){
+            const versionCode = segments.shift();
+            const firstChar = versionCode && versionCode.charCodeAt(0);
+
+            if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
+            
+            const api = API.handlers.get(parseInt(versionCode.slice(1), 10));
+            handler = api && api.HandleRequest;
+
+            if(!handler) return backend.helper.error(req, res, 0);
+        } else if(typeof handler !== "function"){
+            return req.writeStatus("400 Bad Request").end("400 Bad Request")
         }
 
-        // Handle the builtin CDN
-        if(typeof target === "function"){
-            return target({segments, shift, error, req, res})
-        }
-
-        else {
-            // Let's handle it by the webserever addon by default
-            web_handler({segments, req, res})
-        }
+        handler({segments, shift, error: (error, code) => backend.helper.error(req, res, error, code), req, res})
     }
 
     backend.exposeToDebugger("router", resolve)
-
-    // backend.exposeToDebugger("proxyRouter", proxyReq)
 
     // Create server instances
     app = uws.App()
@@ -408,7 +391,7 @@ function build(){
     
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
-            console.log(`[system] The Akeno server has started and is listening on port ${HTTPort}! Total hits so far: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
+            console.log(`[system] Akeno server v${version} has started and is listening on port ${HTTPort}! Total hits: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
 
             // Configure SSL
             if(ssl_enabled) {
@@ -427,14 +410,14 @@ function build(){
     
                     // HTTP3 doesn't have WebSockets, do not setup ws listeners.
     
-                    H3App.any('/*', (res, req) => resolve(res, req, {secured: true, h3: true}))
+                    H3App.any('/*', (res, req) => resolve(res, req, {secure: true, h3: true}))
     
                     backend.exposeToDebugger("uws_h3", H3App)
                 }
 
 
                 SSLApp.ws('/*', wss)
-                SSLApp.any('/*', (res, req) => resolve(res, req, {secured: true}))
+                SSLApp.any('/*', (res, req) => resolve(res, req, {secure: true}))
                 
 
                 // If sslRouter is defined
@@ -443,11 +426,8 @@ function build(){
     
                     if(SNIDomains){
 
-                        if(!backend.config.block("sslRouter").properties.certBase){
-                            return backend.log.error("Could not start SSL server - you are missing certBase in your sslRouter block.")
-                        }
-                        if(!backend.config.block("sslRouter").properties.certBase){
-                            return backend.log.error("Could not start SSL server - you are missing keyBase in your sslRouter block.")
+                        if(!backend.config.block("sslRouter").properties.certBase || !backend.config.block("sslRouter").properties.keyBase){
+                            return backend.log.error("Could not start server with SSL - you are missing your certificate files (either base or key)!")
                         }
 
                         function addSNIRoute(domain) {
@@ -455,23 +435,24 @@ function build(){
                                 key_file_name:  backend.config.block("sslRouter").properties.keyBase[0].replace("{domain}", domain.replace("*.", "")),
                                 cert_file_name: backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", domain.replace("*.", ""))
                             })
-    
+
                             // For some reason we still have to include a separate router like so:
-                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, {secured: true})).ws("/*", wss)
+                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, {secure: true})).ws("/*", wss)
                             // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
                             // A bit wasteful right? For every domain..
                         }
 
                         for(let domain of SNIDomains) {
                             addSNIRoute(domain)
-                            if(backend.config.block("sslRouter").properties.subdomainWildcard){
-                                addSNIRoute("*." + domain)
+
+                            if(domain.startsWith("*.")){
+                                addSNIRoute(domain.replace("*.", ""))
                             }
                         }
 
-                        // if(Backend.config.block("sslRouter").properties.autoAddDomains){
+                        // if(backend.config.block("sslRouter").properties.autoAddDomains){
                         //     SSLApp.missingServerName((hostname) => {
-                        //         Backend.log.warn("You are missing a SSL server name <" + hostname + ">! Trying to use a certificate on the fly.");
+                        //         backend.log.warn("You are missing a SSL server name <" + hostname + ">! Trying to use a certificate on the fly.");
 
                         //         addSNIRoute(hostname)
                         //     })
@@ -493,12 +474,12 @@ function build(){
                     });
                 }
             }
-        } else backend.log.error("[error] Could not start the server on port " + HTTPort + "!")
+        } else backend.log.error("[fatal error] Could not start the server on port " + HTTPort + "!")
     });
 
     backend.resolve = resolve;
 
-    if(backend.config.block("server").properties.preloadWeb) backend.addon("core/web");
+    if(backend.config.block("server").get("preloadWeb", Boolean)) backend.addon("core/web");
 }
 
 const jwt_key = process.env.AKENO_KEY;
@@ -540,15 +521,18 @@ const backend = {
         },
 
         corsHeaders(req, res, credentials = false) {
+
+            if(trustedOrigins.has(req.origin)){
+                credentials = true
+            }
+            
             res.cork(() => {
                 res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
-
+                
                 if(credentials){
-                    const origin = req.getHeader('origin');
-                    res.writeHeader("Origin", req.domain);
-                    res.writeHeader("Access-Control-Allow-Credentials", origin);
-                    res.writeHeader("Access-Control-Allow-Origin", "true");
-                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+                    res.writeHeader("Access-Control-Allow-Credentials", "true");
+                    res.writeHeader("Access-Control-Allow-Origin", req.origin);
+                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
                 } else {
                     res.writeHeader('Access-Control-Allow-Origin', '*');
                     res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");
@@ -571,20 +555,39 @@ const backend = {
         send(req, res, data, headers = {}, status){
             if(req.abort) return;            
 
-            if(Array.isArray(data) || (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof DataView) && !(data instanceof Buffer))) {
+            if(data !== undefined && (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof Buffer)) || Array.isArray(data)) {
                 headers["content-type"] = backend.helper.types["json"];    
                 data = JSON.stringify(data);
             }
 
-            if(req.begin && headers) {
-                headers["server-timing"] = `generation;dur=${performance.now() - req.begin}`
+            res.cork(() => {
+                res.writeStatus(status || "200 OK")
+
+                if(req.begin) {
+                    res.writeHeader("server-timing", `generation;dur=${performance.now() - req.begin}`)
+                }
+
+                backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers)
+
+                if(data !== undefined) res.end(data)
+            });
+        },
+
+        // This helper should likely be avoided.
+        error(req, res, error, code){
+            if(req.abort) return;
+
+            if(typeof error == "number" && backend.Errors[error]){
+                let _code = code;
+                code = error;
+                error = (_code? code : "") + backend.Errors[code]
             }
 
             res.cork(() => {
-                res.writeStatus(status? status + "": "200 OK")
-                backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers)
-                res.end(data)
-            });
+                res.writeStatus('400')
+                backend.helper.corsHeaders(req, res)
+                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
+            })
         },
 
         stream(req, res, stream, totalSize){
@@ -714,51 +717,57 @@ const backend = {
 
         // TODO: Merge function must be updated
 
-        // function resolveImports(parsed, stack, referer){
-        //     let imports = [];
+        function resolveImports(parsed, stack, referer){
+            let imports = [];
 
             
-        //     configTools(parsed).forEach("import", (block, remove) => {
-        //         remove() // remove the block from the config
+            configTools(parsed).forEach("import", (block, remove) => {
+                remove() // remove the block from the config
 
-        //         if(block.attributes.length !== 0){
-        //             let path = block.attributes[0].replace("./", PATH + "/");
+                if(block.attributes.length !== 0){
+                    let path = block.attributes[0].replace("./", PATH + "/");
 
-        //             if(path === stack) return Backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
+                    if(path === stack) return backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
 
-        //             if(!fs.existsSync(path)){
-        //                 Backend.log.warn("Failed import of \"" + path + "\", file not found")
-        //                 return;
-        //             }
+                    if(!fs.existsSync(path)){
+                        backend.log.warn("Failed import of \"" + path + "\", file not found")
+                        return;
+                    }
 
-        //             imports.push(path)
-        //         }
-        //     })
+                    imports.push(path)
+                }
+            })
 
-        //     alreadyResolved[stack] = imports;
+            alreadyResolved[stack] = imports;
 
-        //     for(let path of imports){
-        //         if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
-        //             Backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
-        //             continue
-        //         }
+            for(let path of imports){
+                if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
+                    backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
+                    continue
+                }
 
-        //         parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, stack))
-        //     }
+                parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), {
+                    strict: true,
+                    asLookupTable: true
+                }), path, stack))
+            }
 
 
 
-        //     return parsed
-        // }
+            return parsed
+        }
 
         let path = PATH + "/config";
 
-        // configRaw = Backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), true), path, null);
-
-        configRaw = backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
+        configRaw = backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), {
             strict: true,
             asLookupTable: true
-        });
+        }), path, null);
+
+        // configRaw = backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
+        //     strict: true,
+        //     asLookupTable: true
+        // });
 
         config = backend.config = configTools(configRaw);
 
@@ -1047,15 +1056,18 @@ const H3Port = backend.config.block("server").get("h3Port", Number, 443);
 const isDev = backend.config.block("system").get("developmentMode", Boolean);
 
 
+const handlers = {
+    cdn: backend.addon("cdn").HandleRequest,
+    api: 2
+}
+
 
 for (const block of backend.config.blocks("route")) {
     for(const name of block.attributes) {
-        domainRouter.set(name, {
-            cdn: backend.addon("cdn").HandleRequest,
-            api: 2
-        }[block.get("to", String)])
+        domainRouter.set(name, handlers[block.get("to", String)])
     }
 }
+
 
 // Setup API versions/modules
 API.default = backend.config.block("api").get("default", Number, 1)

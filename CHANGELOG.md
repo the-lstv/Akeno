@@ -4,7 +4,11 @@
 - Enhance the config
 - Builtin multi-threading support
 
-## Planned in 1.5.5
+## New in 1.5.5 [WIP]
+X URL routing now uses Globs
+- Web app URL routers now use Globs
+- All web requests now include ETag
+- Overall code enhancements and small performance & memory efficiency improvements
 - Separate user management addon with much improved cache, profiles, etc. management
 
 ## New in 1.5.4

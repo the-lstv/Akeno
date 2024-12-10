@@ -110,7 +110,7 @@ echo "Installing Node.js modules..."
 mkdir -p /usr/lib/akeno/node_modules/
 cd /usr/lib/akeno/
 npm i uNetworking/uWebSockets.js#v20.49.0
-npm i uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js @node-rs/xxhash htmlparser2 minimist fs-extra
+npm i uuid fast-json-stringify bcrypt jsonwebtoken clean-css uglify-js @node-rs/xxhash htmlparser2 minimist fs-extra picomatch cookie
 npm i node-lmdb
 npm i mysql2 sharp
 
