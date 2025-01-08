@@ -18,6 +18,9 @@ addons/*
 db/cache/*
 !db/cache/.gitkeep
 
+db/data/*
+!db/data/.gitkeep
+
 core/native/build
 
 node_modules

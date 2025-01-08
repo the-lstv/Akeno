@@ -1,3 +1,13 @@
+/*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
+
+    Last modified: 2024
+    License: GPL-3.0
+    Version: 1.0.0
+    Description: Inter-process communication (IPC) module built for Akeno
+*/
+
 const net = require('net');
 const fs = require('fs');
 const uuid = (require("uuid")).v4;

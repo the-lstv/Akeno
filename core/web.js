@@ -53,13 +53,16 @@ let
 
 
 server = {
-    Initialize(_backend){
-        backend = _backend;
+    etc: {},
 
-        ls_url = `://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
+    Initialize($){
+        backend = $;
 
-        html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`)
-        notfound_error = Buffer.concat([html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)])
+        // Constants
+        server.etc.ls_url = `://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
+        server.etc.html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`)
+        server.etc.notfound_error = Buffer.concat([server.etc.html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)])
+        server.etc.default_disabled_message = Buffer.from(backend.config.block("web").get("disabledMessage", String) || "This website is temporarily disabled.")
 
         server.Reload(true)
     },
@@ -121,17 +124,22 @@ server = {
     load(path){
 
         // TODO: Hot reloading is almost functional, but needs config validation and re-parsing to be finished
-        if(applications.has(path)) return;
+        if(applications.has(path)) return false;
 
         let app = applications.get(path);
 
         if(!app) {
             app = server._createApp(path)
-            if(!app) return;
-        } else server.log.verbose("Hot-reloading web application (at " + path + ")");
+            if(!app) return false;
+        } else {
+            server.log.verbose("Hot-reloading web application (at " + path + ")");
+            app.config = server.loadAppConfig(path)
+        }
 
-        const is_enabled = backend.cache.get(`web.${path}.enabled`, Boolean)
-        app.enabled = is_enabled === null? true: is_enabled
+        if(!app.config) return false;
+
+        const is_enabled = backend.kvdb.apps.get(`${path}.enabled`, Boolean)
+        app.enabled = (is_enabled === null? true: is_enabled) || false;
 
         const domains = app.config.block("server").get("domains");
 
@@ -143,18 +151,32 @@ server = {
             backend.apiExtensions[api.attributes[0]] = app.path + "/" + api.attributes[1]
         }
 
+        return true
+
     },
 
 
-    _createApp(path){
-        if(applications.has(path)) return;
-
+    loadAppConfig(path){
         let configPath = files_try(path + "/app.conf", path + "/app.manifest");
 
         if(!configPath){
             server.log.warn("Web application (at " + path + ") failed to load - no config file found - skipped.");
             return
         }
+
+        return configTools(parse(fs.readFileSync(configPath, "utf8"), {
+            strict: true,
+            asLookupTable: true
+        }))
+    },
+
+
+    _createApp(path){
+        if(applications.has(path)) return;
+
+        const config = server.loadAppConfig(path);
+
+        if(!config) return;
 
         const app = {
             path,
@@ -163,10 +185,7 @@ server = {
 
             enabled: null,
 
-            config: configTools(parse(fs.readFileSync(configPath, "utf8"), {
-                strict: true,
-                asLookupTable: true
-            }))
+            config
         }
 
         applications.set(app.path, app)
@@ -202,7 +221,7 @@ server = {
         const app = assignedDomains.get(req.domain) ?? assignedDomains.get(":default");
 
         if(!app) return res.cork(() => {
-            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(notfound_error)
+            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error)
         })
 
         // HTTPS Redirect
@@ -213,7 +232,7 @@ server = {
 
         // When the app is disabled
         if(!app.enabled){
-            backend.helper.send(req, res, app.config.block("server").get("disabled_message", String, "This website is temporarily disabled."), null, 422)
+            backend.helper.send(req, res, app.config.block("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422")
             return
         }
 
@@ -428,6 +447,7 @@ server = {
             for(let application of applications.values()) {
                 if(application.path === app_path) {
                     application.enabled = true
+                    backend.kvdb.apps.commitSet(`${app_path}.enabled`, true)
                     return true
                 }
             }
@@ -441,6 +461,7 @@ server = {
             for(let application of applications.values()) {
                 if(application.path === app_path) {
                     application.enabled = false
+                    backend.kvdb.apps.commitSet(`${app_path}.enabled`, false)
                     return true
                 }
             }
@@ -462,7 +483,7 @@ server = {
 
         reload(app_path = null){
             if(app_path && !(app_path = server.util.getApp(app_path))) return false;
-            server.Reload(null, app_path || null)
+            return server.Reload(null, app_path || null)
         },
 
         getDomain(app_path){
@@ -568,13 +589,7 @@ function checkSupportedBrowser(userAgent, properties) {
 
 
 // sorry, more of a personal helper :P
-let latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "4.0.0",
-
-    // Is set in initialization
-    html_header = null,
-    notfound_error = null,
-    ls_url = null
-;
+let latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "4.0.0";
 
 function map_resource(link, local_path){
     if(local_path && !link.startsWith("http")){
@@ -737,8 +752,8 @@ function parse_html_content(options){
             case "resources":
                 if(block.properties["ls-js"]){
                     misc.default_attributes.body.ls = "";
-            
-                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${options.compress? "min." : ""}js`;
+
+                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${!backend.isDev && options.compress? "min." : ""}js`;
 
                     const part = `<script src="${url}"></script>`;
                     if(!options.plain) head += part; else push(part);
@@ -747,7 +762,7 @@ function parse_html_content(options){
                 if(block.properties["ls-css"]){
                     misc.default_attributes.body.ls = "";
 
-                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${options.compress? "min." : ""}css`;
+                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${!backend.isDev && options.compress? "min." : ""}css`;
                     
                     const part = `<link rel=stylesheet href="${url}">`
                     if(!options.plain) head += part; else push(part);
@@ -897,7 +912,7 @@ function parse_html_content(options){
     parser.end();
 
     if(!options.plain) {
-        output[0] = options.header || html_header;
+        output[0] = options.header || server.etc.html_header;
 
         if(head){
             if(head_string_index !== null) output[head_string_index] = Buffer.from(head); else output[0] = Buffer.concat([output[0], Buffer.from(`<head>${head}</head>`)]);

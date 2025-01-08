@@ -1,4 +1,14 @@
 #! /bin/node
+/*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
+
+    Last modified: 2024
+    License: GPL-3.0
+    Version: 1.0.0
+    Description: Command line interface for Akeno
+*/
+
 
 const
     minimist = require('minimist'),
@@ -7,6 +17,8 @@ const
     exec = require("child_process").execSync,
     execAsync = require("child_process").exec,
     spawn = require("child_process").spawn,
+
+    nodePath = require("path"),
 
     fs = require("fs-extra"),
 
@@ -46,21 +58,24 @@ Base commands list:
     \x1b[1mhelp | --help | -h          \x1b[90m│\x1b[0m  Display command help
     \x1b[1minfo | status | --info | -i \x1b[90m│\x1b[0m  Display some current information about the server and its status
     \x1b[1mstart                       \x1b[90m│\x1b[0m  Start the server (without a PM)
-    \x1b[1mreload                      \x1b[90m│\x1b[0m  Reload the server (PM2 required)
-       \x1b[90m⤷\x1b[0m --hot                  \x1b[90m│\x1b[0m  Hot-reload of the webserver (when you add/remove apps)
-       \x1b[90m⤷\x1b[0m --logs                 \x1b[90m│\x1b[0m  Display logs while loading the server
-    \x1b[1mlogs [filter]               \x1b[90m│\x1b[0m  View server logs
+    \x1b[1mreload [app]                \x1b[90m│\x1b[0m  Hot-reload the server configuration
+    \x1b[1mrestart                     \x1b[90m│\x1b[0m  Restart the server (requires PM2)
+        \x1b[90m⤷\x1b[0m --logs                \x1b[90m│\x1b[0m  Display logs while loading the server
+    \x1b[1mlogs [filter]               \x1b[90m│\x1b[0m  View server logs (requires PM2)
   \x1b[93m•\x1b[0m \x1b[1mparse-config <file>         \x1b[90m│\x1b[0m  Parse a config file and return it as JSON. Defaults to the main config.
         \x1b[90m⤷\x1b[0m -t | --text [text]    \x1b[90m│\x1b[0m  Parse from text input instead of a file
         \x1b[90m⤷\x1b[0m -p                    \x1b[90m│\x1b[0m  Prettify JSON output
         \x1b[90m⤷\x1b[0m --stringify           \x1b[90m│\x1b[0m  Return stringified (converted back to a readable syntax)
 ---
-Webserver:
+Web applications (websites) / Modules:
   \x1b[93m•\x1b[0m \x1b[1mlist | ls                          \x1b[90m│\x1b[0m  List web applications
+    \x1b[1mcreate | init [path]               \x1b[90m│\x1b[0m  Setup a new application template in the current or specified directory.
+        \x1b[90m⤷\x1b[0m -n [name]                    \x1b[90m│\x1b[0m  Application name
+        \x1b[90m⤷\x1b[0m -c [config]                  \x1b[90m│\x1b[0m  Configuration options
+        \x1b[90m⤷\x1b[0m -f                           \x1b[90m│\x1b[0m  Force creation even if the directory is not empty
     \x1b[1menable [app]                       \x1b[90m│\x1b[0m  Enable a web application
     \x1b[1mdisable [app]                      \x1b[90m│\x1b[0m  Disable a web application
     \x1b[1mtemp-hostname [app]                \x1b[90m│\x1b[0m  Generate a temporary hostname for an app
-    \x1b[1mcreate <name> [path]               \x1b[90m│\x1b[0m  Setup a new web application. Automatically updates server config and creates a template.
     \x1b[1mbundle <source> [target path]      \x1b[90m│\x1b[0m  Bundle a web application for offline use
 ---
 Auth addon:
@@ -103,7 +118,7 @@ ${response.server_enabled?`Running in \x1b[36m\x1b[1m${response.isDev? "developm
 Currently using \x1b[36m\x1b[1m${(mem_used / 1000000).toFixed(2)} MB\x1b[0m RAM out of a \x1b[36m\x1b[1m${(mem_total / 1000000).toFixed(2)} MB\x1b[0m heap and \x1b[36m\x1b[1m${response.cpu.usage.toFixed(4)}%\x1b[0m CPU.` : ''}
 ---
 Some examples:
-    akeno\x1b[1m reload              \x1b[90m│\x1b[0m  Reload the API server
+    akeno\x1b[1m reload              \x1b[90m│\x1b[0m  Hot-reload the API server without downtime
     akeno\x1b[1m logs                \x1b[90m│\x1b[0m  Show (and stream) logs
     akeno\x1b[1m disable <id>        \x1b[90m│\x1b[0m  Disable an application
     ...
@@ -116,39 +131,44 @@ Some examples:
 
 
 
+const COMMAND_PATH = "/www/cmd/bin/"
+
+
 async function resolve(argv){
 
     let childProcess;
 
     switch(argv._[0]) {
         case "reload":
-            if(argv.hot){
-                // TODO: Add hot-reloading per app
+            const singular = typeof argv._[1] === "string";
 
-                log(`${signature} Hot-reloading web ${(argv.hot? `application`: "server")}...`);
+            log(`${signature} Hot-reloading web ${(singular? `application "${argv._[1]}"`: "server")}...`);
 
-                client.request(["web.reload", ...typeof argv.hot === "string"? argv.hot: []], (error, response) => {
-                    if(error){
-                        return client.close() && log_error(`${signature} Could not reload:`, error)
-                    }
-    
-                    log(`${signature} Sucessfully reloaded!`);
-                })
+            client.request(["web.reload", (singular && argv._[1]) || null], (error, success) => {
+                client.close()
 
-            } else {
-                if(argv.logs){
-                    await resolve({_: ["logs"]})
+                if(error || !success){
+                    return log_error(`${signature} Could not reload:`, (error && error) || "Invalid application")
                 }
-    
-                exec("pm2 reload Akeno")
-                log(`${signature} API Server sucessfully reloaded.`);
+
+                log(`${signature} Sucessfully reloaded!`);
+            })
+
+        break;
+
+        case "restart":
+            if(argv.logs){
+                await resolve({_: ["logs"]}) // This is a bit of a hack, but it works
             }
+
+            exec("pm2 reload Akeno")
+            log(`${signature} API Server sucessfully reloaded.`)
 
         break;
 
 
         case "list": case "ls":
-            client.request("web.list", (error, response) => {
+            client.request(["web.list"], (error, response) => {
                 client.close()
 
                 if(error){
@@ -212,14 +232,24 @@ async function resolve(argv){
             break;
 
 
-        // case "create":
-        //     return (()=>{
-        //         let path = argv._[2] || process.env["PWD"];
-    
-        //         log(`${signature} Creating a new web application named ${argv._[1]} at "${path}"`)
+        case "create": case "init":
+            return (()=>{
+                let path = nodePath.resolve(process.env["PWD"], argv._[1] || "");
 
+                log(`${signature} Creating a new web application at "${path}"`)
 
-        //     })()
+                // Check if the directory is empty
+                if(fs.existsSync(path) && fs.readdirSync(path).length > 0){
+                    if(fs.existsSync(path + "/app.conf") && !argv.f){
+                        return log_error(`${signature} Warning: "${path}/app.conf" already exists and is an application directory! If you wish to proceed anyway (will overwrite the file!), add the -f option. Creating was aborted.`)
+                    }
+
+                    if(!argv.f) return log_error(`${signature} Warning: "${path}" is not empty! If you wish to proceed anyway, add the -f flag. Creating was aborted.`)
+                }
+
+                fs.createFileSync(path + "/app.conf")
+                fs.createFileSync(path + "/index.html")
+            })()
 
         // case "bundle":
         //     thing = await(await fetch(api + "/list")).json();

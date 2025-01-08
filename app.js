@@ -1,5 +1,16 @@
+/*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
+
+    Last modified: 2024
+    License: GPL-3.0
+    Version: 1.5.6
+    See: https://github.com/the-lstv/akeno
+*/
+
+
 let
-    version = "1.5.5",
+    version = "1.5.6 [unreleased]",
 
     since_startup = performance.now(),
 
@@ -15,6 +26,8 @@ let
     SSLApp,
     H3App,
 
+    // Storage/cache managers
+    KeyStorage = require("./core/kvdb"),
     lmdb = require('node-lmdb'),
     lsdb,
 
@@ -59,53 +72,19 @@ let
     domainRouter = new Map,
 
     // TODO: you know what to do :sob:
-    trustedOrigins = new Set(["https://lstv.space", "https://lstv.test", "https://dev.lstv.test", "https://dev.lstv.space"])
+    trustedOrigins = new Set(["https://lstv.space", "https://lstv.test", "http://lstv.test", "https://dev.lstv.test", "https://dev.lstv.space"])
 ;
 
 
+// Open databases
+const cache_db = new KeyStorage(PATH + "db/cache", true);
+const data_db = new KeyStorage(PATH + "db/data", true);
 
-const cache_db = {
-    env: new lmdb.Env(),
-
-    memory_compression_cache: new Map,
-    memory_general_cache: new Map,
-
-    commit(){
-        try {
-
-            cache_db.txn.commit();
-    
-        } catch (error) {
-    
-            console.error(error);
-            cache_db.txn.abort();
-    
-        }
-
-        cache_db.txn = cache_db.env.beginTxn();
-    }
+const kvdb = {
+    compressionCache: cache_db.openDbi("compression_cache", { keyIsUint32: true }, true),
+    generalCache: cache_db.openDbi("general_cache", {}, true),
+    apps: data_db.openDbi("apps_data", {}, true),
 }
-
-cache_db.env.open({
-    path: PATH + "db/cache",
-    maxDbs: 3
-});
-
-cache_db.compression = cache_db.env.openDbi({
-    name: "compression_cache",
-    create: true,
-
-    // 32-bit xxhash
-    keyIsUint32: true
-})
-
-cache_db.general = cache_db.env.openDbi({
-    name: "general_cache",
-    create: true,
-})
-
-cache_db.txn = cache_db.env.beginTxn();
-
 
 
 function initialize(){
@@ -552,7 +531,7 @@ const backend = {
 
         // This helper should be avoided.
         // Only use this if: 1) You are lazy; ...
-        send(req, res, data, headers = {}, status){
+        send(req, res, data, headers, status){
             if(req.abort) return;            
 
             if(data !== undefined && (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof Buffer)) || Array.isArray(data)) {
@@ -780,64 +759,31 @@ const backend = {
             const hash = xxh32(code);
 
             let compressed;
-            if(compressed = cache_db.memory_general_cache.get(hash)) return compressed;
+            // Try to read from memory cache
+            if(compressed = kvdb.compressionCache.getCache(hash)) return compressed;
 
-            let hasDiskCache = false // lmdb_exists(cache_db.txn, cache_db.compression, hash)
-
-            if(!hasDiskCache){
+            // We have no disk nor memory cache, compress on the fly and store.
+            if(!kvdb.compressionCache.exists(hash)){
                 compressed = Buffer.from(isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code)
-                // cache_db.txn.putBinary(cache_db.compression, hash, compressed);
 
-                // cache_db.commit();
+                // If compression failed, return the original code
+                if(!compressed) return code;
+
+                kvdb.compressionCache.commitSet(hash, compressed)
+                return compressed;
             }
             
-            // else {
-            //     compressed = cache_db.txn.getBinary(cache_db.compression, hash)
-            // }
-
-            cache_db.memory_compression_cache.set(hash, compressed)
-
-            return compressed || code;
+            else {
+                // Read from disk cache
+                return kvdb.compressionCache.get(hash, Buffer)
+            }
         }
 
     },
 
-    cache: {
-        set(key, value){
-            switch (true) {
-                case value instanceof Buffer:
-                    cache_db.txn.putBinary(cache_db.general, key, value);
-                    break;
-                case typeof value === "boolean":
-                    cache_db.txn.putBoolean(cache_db.general, key, value);
-                    break;
-                case typeof value === "string":
-                    cache_db.txn.putString(cache_db.general, key, value);
-                    break;
-                case typeof value === "number":
-                    cache_db.txn.putNumber(cache_db.general, key, value);
-                    break;
-                default:
-                    throw new Error("Unsupported value type");
-            }
-            
-            cache_db.memory_general_cache.set(key, value)
-        },
+    kvdb,
 
-        get(key, type){
-            type = {Buffer: "getBinary", Boolean: "getBoolean", Number: "getNumber", String: "getString"}[type] || "getBinary";
-            return cache_db.memory_general_cache.get(key) || cache_db.txn[type](cache_db.general, key)
-        },
-
-        delete(key){
-            cache_db.memory_general_cache.delete(key)
-            cache_db.txn.del(cache_db.general, key);
-        },
-
-        commit(){
-            cache_db.commit();
-        }
-    },
+    // kv: {},
 
     jwt: {
         verify(something, options){
@@ -1111,16 +1057,3 @@ process.on('exit', () => {
 initialize()
 
 module.exports = backend
-
-
-
-// Misc functions:
-function lmdb_exists(txn, db, key){
-    let cursor;
-    try {
-        cursor = new lmdb.Cursor(txn, db);
-        return cursor.goToKey(key) !== null;
-    } finally {
-        if (cursor) cursor.close();
-    }
-}

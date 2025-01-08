@@ -159,7 +159,7 @@ const addon = module.exports = {
     setAuthCookie(req, res, token, identifier, expiresIn){
         return res.writeHeader(
             'Set-Cookie',
-            `token${identifier? `_${identifier}`: ""}=${token}; HttpOnly; SameSite=None; Secure; Domain=${req.domain}; Path=/`
+            `token${identifier? `_${identifier}`: ""}=${token}; HttpOnly; Secure; SameSite=None; Domain=${req.domain}; Path=/`
         );
     },
 
@@ -167,7 +167,7 @@ const addon = module.exports = {
     clearAuthCookie(req, res, identifier){
         return res.writeHeader(
             'Set-Cookie',
-            `token${identifier? `_${identifier}`: ""}=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=None; Secure; Domain=${req.domain}; Path=/`
+            `token${identifier? `_${identifier}`: ""}=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=None; Domain=${req.domain}; Path=/`
         );
     },
 
