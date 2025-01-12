@@ -587,9 +587,7 @@ function checkSupportedBrowser(userAgent, properties) {
     return true; // Allow by default if the browser could not be determined
 }
 
-
-// sorry, more of a personal helper :P
-let latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "4.0.0";
+let latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "5.0.0";
 
 function map_resource(link, local_path){
     if(local_path && !link.startsWith("http")){

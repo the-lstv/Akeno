@@ -4,6 +4,8 @@ let backend,
     fs = require("fs"),
     sharp = require('sharp'),
 
+    path = require("path"),
+
     mime,
 
     fileMetadataCache = {},
@@ -12,8 +14,12 @@ let backend,
     libLocations
 ;
 
-const cdn_path = "/www/content/akeno/cdn";
-const ls_api = require(cdn_path + "/ls/source/backend/api");
+const cdn_path = path.resolve(__dirname, "../cdn");
+
+let ls_api;
+if(fs.existsSync(cdn_path + "/ls")){
+    ls_api = require(cdn_path + "/ls/source/backend/api");
+}
 
 var STREAM_CHUNK_SIZE = 8_000_000;
 
@@ -137,8 +143,9 @@ function send(req, res, data = {}, cache = false, type = null, isFilePath){
 
 
 api = {
-    Initialize(backend_){
-        backend = backend_;
+    Initialize($){
+        backend = $;
+        ls_api.Initialize(backend)
 
         mime = backend.mime;
 
@@ -309,7 +316,7 @@ api = {
                             This code handles transfer of the framework.
                         */
 
-                        ls_api.HandleRequest({ req, res, segments, error, backend, send })
+                        ls_api.HandleRequest({ req, res, segments, error })
                     break;
 
                     default:
