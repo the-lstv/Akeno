@@ -231,7 +231,6 @@ function initialize(){
             if(ws.handler.message) ws.handler.message(ws, message, isBinary);
         },
         
-        
         close(ws, code, message) {
             if(ws.handler.close) ws.handler.close(ws, code, message);
         }
@@ -782,8 +781,6 @@ const backend = {
     },
 
     kvdb,
-
-    // kv: {},
 
     jwt: {
         verify(something, options){

@@ -753,7 +753,7 @@ function parse_html_content(options){
                 if(block.properties["ls-js"]){
                     misc.default_attributes.body.ls = "";
 
-                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${!backend.isDev && options.compress? "min." : ""}js`;
+                    let url = `http${options.secure? "s" : ""}${server.etc.ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${!backend.isDev && options.compress? "min." : ""}js`;
 
                     const part = `<script src="${url}"></script>`;
                     if(!options.plain) head += part; else push(part);
@@ -762,7 +762,7 @@ function parse_html_content(options){
                 if(block.properties["ls-css"]){
                     misc.default_attributes.body.ls = "";
 
-                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${!backend.isDev && options.compress? "min." : ""}css`;
+                    let url = `http${options.secure? "s" : ""}${server.etc.ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${!backend.isDev && options.compress? "min." : ""}css`;
                     
                     const part = `<link rel=stylesheet href="${url}">`
                     if(!options.plain) head += part; else push(part);

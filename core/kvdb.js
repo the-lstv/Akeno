@@ -52,47 +52,6 @@ class KeyStorage {
         return this.env.beginTxn();
     }
 
-    // set(dbName, txn, key, value){
-    //     const db = this.dbi[dbName];
-    //     if(!db) return;
-
-    //     db.set(txn, key, value);
-
-    //     return this;
-    // }
-
-    // deferSet(dbName, key, value){
-    //     const db = this.dbi[dbName];
-    //     if(!db) return;
-
-    //     db.deferSet(key, value);
-
-    //     return this;
-    // }
-
-    // get(dbName, key, type){
-    //     const db = this.dbi[dbName];
-    //     if(!db) return;
-        
-    //     return db.get(key, type);
-    // }
-
-    // delete(dbName, txn, key){
-    //     const db = this.dbi[dbName];
-    //     if(!db) return;
-
-    //     return db.delete(txn, key);
-    // }
-
-    // deferDelete(dbName, key){
-    //     const db = this.dbi[dbName];
-    //     if(!db) return;
-
-    //     db.deferDelete(key);
-
-    //     return this;
-    // }
-
     queuePendingOperation(){
         if(this.timeout) return;
 
