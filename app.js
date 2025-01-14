@@ -351,7 +351,7 @@ function initialize(){
             return req.writeStatus("400 Bad Request").end("400 Bad Request")
         }
 
-        handler({segments, shift, error: (error, code) => backend.helper.error(req, res, error, code), req, res})
+        handler({segments, shift, error: (error, code, status) => backend.helper.error(req, res, error, code, status), req, res})
     }
 
     backend.exposeToDebugger("router", resolve)
@@ -386,16 +386,15 @@ function initialize(){
                         passphrase: '1234'
                     });
     
-                    // HTTP3 doesn't have WebSockets, do not setup ws listeners.
-    
-                    H3App.any('/*', (res, req) => resolve(res, req, {secure: true, h3: true}))
+                    // HTTP3 doesn't have WebSockets, do not setup ws listeners.    
+                    H3App.any('/*', (res, req) => resolve(res, req, { secure: true, h3: true }))
     
                     backend.exposeToDebugger("uws_h3", H3App)
                 }
 
 
                 SSLApp.ws('/*', wss)
-                SSLApp.any('/*', (res, req) => resolve(res, req, {secure: true}))
+                SSLApp.any('/*', (res, req) => resolve(res, req, { secure: true }))
                 
 
                 // If sslRouter is defined
@@ -552,7 +551,7 @@ const backend = {
         },
 
         // This helper should likely be avoided.
-        error(req, res, error, code){
+        error(req, res, error, code, status){
             if(req.abort) return;
 
             if(typeof error == "number" && backend.Errors[error]){
@@ -562,9 +561,9 @@ const backend = {
             }
 
             res.cork(() => {
-                res.writeStatus('400')
+                res.writeStatus(status || (code >= 400 && code <= 599? String(code) : '400'))
                 backend.helper.corsHeaders(req, res)
-                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
+                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":${(JSON.stringify(error) || '"Unknown error"')}}`);
             })
         },
 
@@ -763,10 +762,12 @@ const backend = {
 
             // We have no disk nor memory cache, compress on the fly and store.
             if(!kvdb.compressionCache.exists(hash)){
-                compressed = Buffer.from(isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code)
+                compressed = isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code
 
                 // If compression failed, return the original code
-                if(!compressed) return code;
+                if(!compressed) return Buffer.from(code);
+
+                compressed = Buffer.from(compressed);
 
                 kvdb.compressionCache.commitSet(hash, compressed)
                 return compressed;
@@ -943,11 +944,21 @@ const backend = {
 
 
         // HTTP-compatible error codes, this does NOT mean this list is meant for HTTP status codes.
-        404: "Request Timed Out.",
-        408: "Not Found.",
+        404: "Not found.",
+        500: "Internal server error.",
+        503: "Service unavailable.",
+        504: "Gateway timeout.",
+        429: "Too many requests.",
+        403: "Forbidden.",
+        401: "Unauthorized.",
+        400: "Bad request.",
+        408: "Request timeout.",
         409: "Conflict.",
-        429: "Too Many Requests",
-        500: "Internal Server Error."
+        415: "Unsupported media type.",
+        501: "Not implemented.",
+        406: "Not acceptable.",
+        405: "Method not allowed.",
+        502: "Bad gateway.",
     },
 
     exposeToDebugger(key, thing){
