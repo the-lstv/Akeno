@@ -16,6 +16,7 @@ let
     // Libraries
     fs = require("fs"),
     nodePath = require("path"),
+    uws = require('uWebSockets.js'),
 
     { Parser } = require('htmlparser2'),
     picomatch = require('picomatch'),
@@ -59,7 +60,8 @@ server = {
         backend = $;
 
         // Constants
-        server.etc.ls_url = `://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
+        server.etc.ls_url = `://cdn.extragon.cloud/ls/`
+        server.etc.ls_url_dev = `://cdn.extragon.test/ls/`
         server.etc.html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`)
         server.etc.notfound_error = Buffer.concat([server.etc.html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)])
         server.etc.default_disabled_message = Buffer.from(backend.config.block("web").get("disabledMessage", String) || "This website is temporarily disabled.")
@@ -142,9 +144,25 @@ server = {
         app.enabled = (is_enabled === null? true: is_enabled) || false;
 
         const domains = app.config.block("server").get("domains");
+        const port = app.config.block("server").get("port", Number);
 
-        for(let domain of domains){
-            assignedDomains.set(domain, app);
+        if(domains){
+            for(let domain of domains){
+                assignedDomains.set(domain, app);
+            }
+        }
+
+        if(port){
+            app.uws = uws.App().any('/*', (res, req) => {
+                req.app_handler = app;
+                backend.resolve(res, req, {})
+            })
+
+            app.uws.listen(port, (token) => {
+                if(token) {
+                    server.log(`Web application ${app.basename} is listening on port ${port}`)
+                }
+            })
         }
 
         for(let api of app.config.blocks("api")){
@@ -218,7 +236,7 @@ server = {
 
         if(req.domain.startsWith("www.")) req.domain = req.domain.slice(4);
 
-        const app = assignedDomains.get(req.domain) ?? assignedDomains.get(":default");
+        const app = req.app_handler || (assignedDomains.get(req.domain) ?? assignedDomains.get(":default"));
 
         if(!app) return res.cork(() => {
             res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error)
@@ -751,7 +769,14 @@ function parse_html_content(options){
                 if(block.properties["ls-js"]){
                     misc.default_attributes.body.ls = "";
 
-                    let url = `http${options.secure? "s" : ""}${server.etc.ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${!backend.isDev && options.compress? "min." : ""}js`;
+                    let version = block.properties["ls-version"] && block.properties["ls-version"][0];
+
+                    if(!version) {
+                        version = "4.0.1"
+                        console.error("Warning for app " + options.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
+                    } else if(version === "latest") version = latest_ls_version;
+
+                    let url = `http${options.secure? "s" : ""}${server.etc.ls_url}${version}/${block.properties["ls-js"][0] === true? "": block.properties["ls-js"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}js`;
 
                     const part = `<script src="${url}"></script>`;
                     if(!options.plain) head += part; else push(part);
@@ -760,7 +785,14 @@ function parse_html_content(options){
                 if(block.properties["ls-css"]){
                     misc.default_attributes.body.ls = "";
 
-                    let url = `http${options.secure? "s" : ""}${server.etc.ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${!backend.isDev && options.compress? "min." : ""}css`;
+                    let version = block.properties["ls-version"] && block.properties["ls-version"][0];
+
+                    if(!version) {
+                        version = "4.0.1"
+                        console.error("Warning for app " + options.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
+                    } else if(version === "latest") version = latest_ls_version;
+
+                    let url = `http${options.secure? "s" : ""}${server.etc.ls_url}${version}/${block.properties["ls-css"][0] === true? "": block.properties["ls-css"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}css`;
                     
                     const part = `<link rel=stylesheet href="${url}">`
                     if(!options.plain) head += part; else push(part);

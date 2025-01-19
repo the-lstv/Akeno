@@ -366,7 +366,7 @@ function initialize(){
     app.ws('/*', wss)
     
     // Initialize WebServer
-    app.any('/*', (res, req) => resolve(res, req, backend.isDev))
+    app.any('/*', (res, req) => resolve(res, req, { secure: backend.isDev }))
     
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
