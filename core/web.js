@@ -770,13 +770,14 @@ function parse_html_content(options){
                     misc.default_attributes.body.ls = "";
 
                     let version = block.properties["ls-version"] && block.properties["ls-version"][0];
+                    let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
 
                     if(!version) {
                         version = "4.0.1"
                         console.error("Warning for app " + options.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
                     } else if(version === "latest") version = latest_ls_version;
 
-                    let url = `http${options.secure? "s" : ""}${server.etc.ls_url}${version}/${block.properties["ls-js"][0] === true? "": block.properties["ls-js"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}js`;
+                    let url = `http${options.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-js"][0] === true? "": block.properties["ls-js"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}js`;
 
                     const part = `<script src="${url}"></script>`;
                     if(!options.plain) head += part; else push(part);
@@ -786,13 +787,14 @@ function parse_html_content(options){
                     misc.default_attributes.body.ls = "";
 
                     let version = block.properties["ls-version"] && block.properties["ls-version"][0];
+                    let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
 
                     if(!version) {
                         version = "4.0.1"
                         console.error("Warning for app " + options.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
                     } else if(version === "latest") version = latest_ls_version;
 
-                    let url = `http${options.secure? "s" : ""}${server.etc.ls_url}${version}/${block.properties["ls-css"][0] === true? "": block.properties["ls-css"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}css`;
+                    let url = `http${options.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-css"][0] === true? "": block.properties["ls-css"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}css`;
                     
                     const part = `<link rel=stylesheet href="${url}">`
                     if(!options.plain) head += part; else push(part);

@@ -529,7 +529,7 @@ const backend = {
 
         // This helper should be avoided.
         // Only use this if: 1) You are lazy; ...
-        send(req, res, data, headers, status){
+        send(req, res, data, headers = {}, status){
             if(req.abort) return;            
 
             if(data !== undefined && (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof Buffer)) || Array.isArray(data)) {
