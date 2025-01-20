@@ -26,6 +26,8 @@ let
     SSLApp,
     H3App,
 
+    ModuleManager = require("./core/module"),
+
     // Storage/cache managers
     KeyStorage = require("./core/kvdb"),
     lmdb = require('node-lmdb'),
@@ -115,6 +117,10 @@ function initialize(){
                         version,
                         isDev,
                         server_enabled,
+                        modules: {
+                            count: ModuleManager.modules.size,
+                            sample: [...ModuleManager.modules.keys()]
+                        }
                     };
 
                     // Calculate CPU usage in percentages
@@ -351,7 +357,7 @@ function initialize(){
             return req.writeStatus("400 Bad Request").end("400 Bad Request")
         }
 
-        handler({segments, shift, error: (error, code, status) => backend.helper.error(req, res, error, code, status), req, res})
+        handler({segments, shift, error: (error, code, status) => backend.helper.error(req, res, error, code, status), req, res, flags})
     }
 
     backend.exposeToDebugger("router", resolve)
@@ -811,9 +817,9 @@ const backend = {
         // 0 = Debug (Verbose), 1 = Info (Verbose), 2 = Info, 3 = Warning, 4 = Error, 5 = Important
 
         if(severity < (5 - backend.logLevel)) return;
-        if(!Array.isArray(data)) data = [data];
-        if(devInspecting) data.unshift("color: aquamarine");
-        console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`${devInspecting? "%c": ""}[${source}]`, ...data)
+        if(!Array.isArray(data)) return;
+
+        console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`\x1b[${severity == 4? "1;31": "36"}m[${source}]\x1b[0m`, ...data)
     },
 
     createLoggerContext(target){
@@ -863,6 +869,10 @@ const backend = {
 
         return AddonCache[name]
     },
+
+    ModuleManager,
+
+    module: ModuleManager.loadModule,
 
     mime: {
         // My own mimetype checker since the current mimetype library for Node is meh.

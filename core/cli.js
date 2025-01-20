@@ -101,7 +101,7 @@ else if(argv.i || argv.info || argv._[0] === "info" || argv._[0] === "status"){
             }
 
             return client.close() && log_error(`${signature} Couln't get information! Error:`, error)
-        }
+        }        
 
         const mem_total = response.mem.heapTotal
         const mem_used = response.mem.heapUsed
@@ -109,14 +109,16 @@ else if(argv.i || argv.info || argv._[0] === "info" || argv._[0] === "status"){
         log(logo + box(`You are running the Akeno backend - an open source, fast, modern and fully automated
 web application, API and content delivery management system / server!
 
-\x1b[95mCreated with <3 by \x1b[1mTheLSTV\x1b[0m\x1b[95m (https://lstv.test).\x1b[0m
+\x1b[95mCreated with <3 by \x1b[1mTheLSTV\x1b[0m\x1b[95m (https://lstv.space).\x1b[0m
 
 Version: ${response.version}
 Server is ${response.server_enabled? `\x1b[32monline\x1b[0m for \x1b[36m\x1b[1m${formatUptime(response.uptime)}\x1b[0m`: "\x1b[31moffline\x1b[0m"}
 ${response.server_enabled?`Running in \x1b[36m\x1b[1m${response.isDev? "development": "production"}\x1b[0m environment.
 ---
 Currently using \x1b[36m\x1b[1m${(mem_used / 1000000).toFixed(2)} MB\x1b[0m RAM out of a \x1b[36m\x1b[1m${(mem_total / 1000000).toFixed(2)} MB\x1b[0m heap and \x1b[36m\x1b[1m${response.cpu.usage.toFixed(4)}%\x1b[0m CPU.` : ''}
----
+---${response.modules.count > 0?`
+\x1b[36m\x1b[1m${response.modules.count}\x1b[0m module${response.modules.count > 1? "s": ""} loaded: ${response.modules.sample.join(", ")}
+---`: ''}
 Some examples:
     akeno\x1b[1m reload              \x1b[90m│\x1b[0m  Hot-reload the API server without downtime
     akeno\x1b[1m logs                \x1b[90m│\x1b[0m  Show (and stream) logs
@@ -179,7 +181,7 @@ async function resolve(argv){
                     return log(response)
                 }
                 
-                return log(box(response.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}\n\n\x1b[1mDomains:\x1b[0m\n${app.domains.join("\n")}`).join("\n---\n")))
+                return log(box(response.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.domains.length > 0? `\n\n\x1b[1mDomains:\x1b[0m\n${app.domains.join("\n")}`: "" }${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`).join("\n---\n")))
             })
 
         break;
@@ -250,82 +252,6 @@ async function resolve(argv){
                 fs.createFileSync(path + "/app.conf")
                 fs.createFileSync(path + "/index.html")
             })()
-
-        // case "bundle":
-        //     thing = await(await fetch(api + "/list")).json();
-
-        //     let app, path = argv._[2] || process.env["PWD"];
-
-        //     if(argv._[1] && argv._[1].includes("/")){
-        //         if(fs.existsSync(argv._[1])) app = argv._[1]
-        //     } else if(argv._[1]) {
-        //         app = thing.find(thing => thing.basename == argv._[1]).path
-        //     }
-
-        //     if(!app){
-        //         return log(`${signature} App "${argv._[1]}" not found`)
-        //     }
-
-        //     log(`${signature} Preparing to bundle app "${app}" into ${path}...`)
-
-        //     async function getDomain(file = "/"){
-
-        //         /*
-        //             What does this do?
-        //             This generates a random hostname on-demand that the server will accept as a valid domain for this application, when provided in the host header.
-        //             This allows the web scrape script to reach the app, even if it has no domains attached or is not available globally.
-        //         */
-
-        //         return await(await fetch(`${api}/temporaryDomain?app=${app}`)).text()
-        //     }
-
-        //     domain = await getDomain();
-
-        //     let scraper = (await import('/www/node/shared_modules/node_modules/website-scraper/index.mjs')).default,
-        //         random = "akeno-temp-bundle-" + (Math.random() * 1000).toString(16) // Why? Because the scraper throws an error if the directory already exists for some reason
-        //     ;
-
-        //     log(`${signature} Fetching data to a temporary directory ("${"/tmp/" + random}")`)
-
-        //     // This module is a pain to work with, but it works..
-        //     await scraper({
-        //         urls: [`http://0.0.0.0`],
-        //         directory: "/tmp/" + random,
-
-        //         plugins: [
-        //             new class {
-        //                 apply(register){
-        //                     register("beforeRequest", async ({resource, requestOptions}) => {
-        //                         let url = resource.getUrl();
-
-        //                         log(`${signature} Fetching ${url}`)
-
-        //                         return {
-        //                             requestOptions: {
-        //                                 ...requestOptions,
-        //                                 headers: url.includes("0.0.0.0")? {
-        //                                     host: domain
-        //                                 }: {}
-        //                             }
-        //                         }
-        //                     })
-        //                     register("error", async ({error}) => {
-        //                         log(`${signature} Error ${error}`)
-        //                     })
-        //                     register("onResourceError", async ({error}) => {
-        //                         log(`${signature} Error ${error}`)
-        //                     })
-        //                 }
-        //             }
-        //         ]
-        //     })
-
-        //     log(`${signature} Moving data.`)
-            
-        //     fs.moveSync("/tmp/" + random, path, { overwrite: true });
-            
-        //     log(`${signature} \x1b[32mSUCCESS!\x1b[0m Bundle has been created.`)
-        // break;
 
         case "logs":
             if(argv._[1]) log(`${signature} Showing only lines including "${argv._[1]}"`);

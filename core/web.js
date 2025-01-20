@@ -144,7 +144,7 @@ server = {
         app.enabled = (is_enabled === null? true: is_enabled) || false;
 
         const domains = app.config.block("server").get("domains");
-        const port = app.config.block("server").get("port", Number);
+        const ports = app.config.block("server").get("port");
 
         if(domains){
             for(let domain of domains){
@@ -152,21 +152,52 @@ server = {
             }
         }
 
-        if(port){
-            app.uws = uws.App().any('/*', (res, req) => {
-                req.app_handler = app;
-                backend.resolve(res, req, {})
-            })
-
-            app.uws.listen(port, (token) => {
-                if(token) {
-                    server.log(`Web application ${app.basename} is listening on port ${port}`)
+        if(ports){
+            for (let port of ports) {
+                if(!port || typeof port !== "number") {
+                    server.log.warn("Invalid port number \"" + port + "\" for web application " + app.basename + " - skipped.");
+                    continue
                 }
-            })
+
+                let found = false;
+                for(const app of applications.values()){
+                    if(app.ports.has(port)){
+                        found = app;
+                        break
+                    }
+                }
+
+                if(found){
+                    server.log.warn("Port " + port + " is already in use by \"" + found.basename + "\" - skipped.");
+                    continue
+                }
+                
+                app.ports.add(port);
+
+                const flags = { app };
+
+                if(!app.uws) app.uws = uws.App().any('/*', (res, req) => {
+                    backend.resolve(res, req, flags)
+                })
+
+                app.uws.listen(port, (token) => {
+                    if(token) {
+                        server.log(`Web application ${app.basename} is listening on port ${port}`)
+                    } else {
+                        server.log.error(`Failed to start web application ${app.basename} on port ${port}`)
+                    }
+                })
+            }
         }
 
         for(let api of app.config.blocks("api")){
             backend.apiExtensions[api.attributes[0]] = app.path + "/" + api.attributes[1]
+        }
+
+        for(let api of app.config.blocks("module")){
+            // TODO: Proper module system
+            const name = api.attributes[0];
+            app.modules.set(name, backend.module(`${app.basename}/${name}`, { path: app.path + "/" + api.get("path", String), autoRestart: api.get("autoRestart", Boolean, false) }))
         }
 
         return true
@@ -203,7 +234,11 @@ server = {
 
             enabled: null,
 
-            config
+            config,
+
+            ports: new Set,
+
+            modules: new Map
         }
 
         applications.set(app.path, app)
@@ -212,8 +247,13 @@ server = {
         applicationCache.push({
             basename: app.basename,
             path,
+
             get enabled(){
                 return app.enabled
+            },
+
+            get ports(){
+                return [...app.ports]
             }
         })
 
@@ -231,12 +271,12 @@ server = {
     },
 
 
-    async HandleRequest({ segments, req, res }){
+    async HandleRequest({ segments, req, res, flags }){
         // This is the main handler/router for websites/webapps.
 
         if(req.domain.startsWith("www.")) req.domain = req.domain.slice(4);
 
-        const app = req.app_handler || (assignedDomains.get(req.domain) ?? assignedDomains.get(":default"));
+        const app = flags.app || (assignedDomains.get(req.domain) ?? assignedDomains.get(":default"));
 
         if(!app) return res.cork(() => {
             res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error)
