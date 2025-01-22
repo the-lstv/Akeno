@@ -16,6 +16,7 @@ let
     // Libraries
     fs = require("fs"),
     nodePath = require("path"),
+    uws = require('uWebSockets.js'),
 
     { Parser } = require('htmlparser2'),
     picomatch = require('picomatch'),
@@ -53,38 +54,32 @@ let
 
 
 server = {
-    Initialize(_backend){
-        backend = _backend;
+    Initialize($){
+        backend = $;
 
-        ls_url = `://cdn.extragon.${backend.isDev? "test" : "cloud"}/ls/`
+        // Constants
+        const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`);
 
-        html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`)
-        notfound_error = Buffer.concat([html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)])
+        server.etc = {
+            html_header,
+            notfound_error: Buffer.concat([html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)]),
+            default_disabled_message: Buffer.from(backend.config.block("web").get("disabledMessage", String) || "This website is temporarily disabled."),
+            ls_url: `://cdn.extragon.cloud/ls/`,
+            ls_url_dev: `://cdn.extragon.test/ls/`,
+        };
 
-        server.Reload(true)
+        server.reload()
     },
 
+    async reload(specific_app){
+        if(specific_app) return server.load(specific_app);
 
-    async Reload(server_initiated, specific_app){
-        if(!server_initiated){
-            backend.refreshConfig()
-        }
+        backend.refreshConfig();
 
-        if(specific_app){
-            return server.load(specific_app)
-        }
-
-        let webConfig = backend.config.block("web");
-
-        // Directories with web apps
-        locations = webConfig.get("locations")
-
-        await server.LoadAppliactions();
-    },
-
-
-    async LoadAppliactions(){
         const start = performance.now();
+
+        const webConfig = backend.config.block("web");
+        const locations = webConfig.get("locations") || [];
 
         // Looks for valid application locations
         for(let location of locations){
@@ -121,40 +116,162 @@ server = {
     load(path){
 
         // TODO: Hot reloading is almost functional, but needs config validation and re-parsing to be finished
-        if(applications.has(path)) return;
+        // if(applications.has(path)) return false;
 
         let app = applications.get(path);
 
         if(!app) {
             app = server._createApp(path)
-            if(!app) return;
-        } else server.log.verbose("Hot-reloading web application (at " + path + ")");
+            if(!app) return false;
+        } else {
+            server.log.verbose("Hot-reloading web application (at " + path + ")");
+            app.config = server.loadAppConfig(path)
+        }
 
-        const is_enabled = backend.cache.get(`web.${path}.enabled`, Boolean)
-        app.enabled = is_enabled === null? true: is_enabled
+        if(!app.config) return false;
 
-        const domains = app.config.block("server").get("domains");
+        const is_enabled = backend.kvdb.apps.get(`${path}.enabled`, Boolean)
+        app.enabled = (is_enabled === null? true: is_enabled) || false;
 
-        for(let domain of domains){
-            assignedDomains.set(domain, app);
+
+        const enabledDomains = app.config.block("server").get("domains") || [];
+
+        if(enabledDomains.length > 0 || app.domains.size > 0){
+            const domains = new Set([...enabledDomains, ...app.domains]);
+
+            for(let domain of domains){
+                if(!domain || typeof domain !== "string") {
+                    server.log.warn("Invalid domain name \"" + domain + "\" for web application \"" + app.basename + "\".");
+                    continue
+                }
+
+                if(!enabledDomains.includes(domain)){
+                    assignedDomains.delete(domain);
+                    app.domains.delete(domain);
+                    continue
+                }
+
+                assignedDomains.set(domain, app);
+                app.domains.add(domain);
+            }
+        }
+
+
+        const enabledPorts = app.config.block("server").get("port") || [];
+
+        if(enabledPorts.length > 0 || app.ports.size > 0){
+            const ports = new Set([...enabledPorts, ...app.ports]);
+
+            for (let port of ports) {
+                if(!port || typeof port !== "number" || port < 1 || port > 65535) {
+                    server.log.warn("Invalid port number \"" + port + "\" for web application \"" + app.basename + "\" - skipped.");
+                    continue
+                }
+
+                if(app.ports.has(port)){
+                    if(!enabledPorts.includes(port)){
+                        app.ports.delete(port);
+
+                        if(app.uws){
+                            uws.us_listen_socket_close(app.sockets.get(port));
+                            app.uws.close();
+                            app.uws = null;
+                        }
+
+                        server.log(`Web application "${app.basename}" is no longer listening on port ${port}`);
+                        continue
+                    }
+                    continue
+                }
+
+                let found = false;
+                for(const app of applications.values()){
+                    if(app.ports.has(port)){
+                        found = app;
+                        break
+                    }
+                }
+
+                if(found){
+                    server.log.warn("Port " + port + " is already in use by \"" + found.basename + "\" - skipped.");
+                    continue
+                }
+                
+                app.ports.add(port);
+
+                const flags = { app };
+
+                if(!app.uws) {
+                    app.uws = uws.App().any('/*', (res, req) => {
+                        backend.resolve(res, req, flags)
+                    })
+
+                    app.sockets = new Map;
+                }
+
+                app.uws.listen(port, (socket) => {
+                    if(socket) {
+                        app.sockets.set(port, socket)
+                        server.log(`Web application "${app.basename}" is listening on port ${port}`);
+                    } else {
+                        server.log.error(`Failed to start web application "${app.basename}" on port ${port}`);
+                    }
+                })
+            }
         }
 
         for(let api of app.config.blocks("api")){
             backend.apiExtensions[api.attributes[0]] = app.path + "/" + api.attributes[1]
         }
 
+        // Reload modules
+        for(let [name, module] of app.modules){
+            module.restart()
+        }
+
+        for(let api of app.config.blocks("module")){
+            // TODO: Proper module system
+            const name = api.attributes[0];
+
+            if(app.modules.has(name)) continue;
+
+            let module;
+            try {
+                module = new backend.Module(`${app.basename}/${name}`, { path: app.path + "/" + api.get("path", String), autoRestart: api.get("autoRestart", Boolean, false) });
+            } catch (error) {
+                server.log.error("Failed to load module " + name + " for web application " + app.basename + ": " + error.toString() + ". You can reload the app to retry.");
+                continue
+            }
+
+            app.modules.set(name, module)
+        }
+
+        return true
+
     },
 
 
-    _createApp(path){
-        if(applications.has(path)) return;
-
+    loadAppConfig(path){
         let configPath = files_try(path + "/app.conf", path + "/app.manifest");
 
         if(!configPath){
             server.log.warn("Web application (at " + path + ") failed to load - no config file found - skipped.");
             return
         }
+
+        return configTools(parse(fs.readFileSync(configPath, "utf8"), {
+            strict: true,
+            asLookupTable: true
+        }))
+    },
+
+
+    _createApp(path){
+        if(applications.has(path)) return;
+
+        const config = server.loadAppConfig(path);
+
+        if(!config) return;
 
         const app = {
             path,
@@ -163,10 +280,16 @@ server = {
 
             enabled: null,
 
-            config: configTools(parse(fs.readFileSync(configPath, "utf8"), {
-                strict: true,
-                asLookupTable: true
-            }))
+            config,
+
+            ports: new Set,
+
+            /**
+             * @warning Do not use this set for routing - it is only a reference to allow for easy removal of domains.
+             */
+            domains: new Set,
+
+            modules: new Map
         }
 
         applications.set(app.path, app)
@@ -175,8 +298,13 @@ server = {
         applicationCache.push({
             basename: app.basename,
             path,
+
             get enabled(){
                 return app.enabled
+            },
+
+            get ports(){
+                return [...app.ports]
             }
         })
 
@@ -194,15 +322,15 @@ server = {
     },
 
 
-    async HandleRequest({ segments, req, res }){
+    async HandleRequest({ segments, req, res, flags }){
         // This is the main handler/router for websites/webapps.
 
         if(req.domain.startsWith("www.")) req.domain = req.domain.slice(4);
 
-        const app = assignedDomains.get(req.domain) ?? assignedDomains.get(":default");
+        const app = flags.app || (assignedDomains.get(req.domain) ?? assignedDomains.get(":default"));
 
         if(!app) return res.cork(() => {
-            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(notfound_error)
+            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error)
         })
 
         // HTTPS Redirect
@@ -213,7 +341,7 @@ server = {
 
         // When the app is disabled
         if(!app.enabled){
-            backend.helper.send(req, res, app.config.block("server").get("disabled_message", String, "This website is temporarily disabled."), null, 422)
+            backend.helper.send(req, res, app.config.block("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422")
             return
         }
 
@@ -263,7 +391,7 @@ server = {
             if((route.picomatchCache || (route.picomatchCache = picomatch(route.attributes)))(url)){
                 const negate = route.get("not");
 
-                if(!negate.length || !(route.negate_picomatchCache || (route.negate_picomatchCache = picomatch(negate)))(url)){
+                if(!negate || !negate.length || !(route.negate_picomatchCache || (route.negate_picomatchCache = picomatch(negate)))(url)){
                     url = `/${route.get("to", String)}`
                     break
                 }
@@ -428,6 +556,7 @@ server = {
             for(let application of applications.values()) {
                 if(application.path === app_path) {
                     application.enabled = true
+                    backend.kvdb.apps.commitSet(`${app_path}.enabled`, true)
                     return true
                 }
             }
@@ -441,6 +570,7 @@ server = {
             for(let application of applications.values()) {
                 if(application.path === app_path) {
                     application.enabled = false
+                    backend.kvdb.apps.commitSet(`${app_path}.enabled`, false)
                     return true
                 }
             }
@@ -462,7 +592,7 @@ server = {
 
         reload(app_path = null){
             if(app_path && !(app_path = server.util.getApp(app_path))) return false;
-            server.Reload(null, app_path || null)
+            return server.reload(app_path || null)
         },
 
         getDomain(app_path){
@@ -485,9 +615,6 @@ server = {
         }
     }
 }
-
-
-let locations;
 
 // Section: utils
 function files_try(...files){
@@ -566,15 +693,7 @@ function checkSupportedBrowser(userAgent, properties) {
     return true; // Allow by default if the browser could not be determined
 }
 
-
-// sorry, more of a personal helper :P
-let latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "4.0.0",
-
-    // Is set in initialization
-    html_header = null,
-    notfound_error = null,
-    ls_url = null
-;
+let latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "5.0.0";
 
 function map_resource(link, local_path){
     if(local_path && !link.startsWith("http")){
@@ -737,8 +856,16 @@ function parse_html_content(options){
             case "resources":
                 if(block.properties["ls-js"]){
                     misc.default_attributes.body.ls = "";
-            
-                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-js"].join(",")}/ls.${options.compress? "min." : ""}js`;
+
+                    let version = block.properties["ls-version"] && block.properties["ls-version"][0];
+                    let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
+
+                    if(!version) {
+                        version = "4.0.1"
+                        console.error("Warning for app " + options.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
+                    } else if(version === "latest") version = latest_ls_version;
+
+                    let url = `http${options.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-js"][0] === true? "": block.properties["ls-js"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}js`;
 
                     const part = `<script src="${url}"></script>`;
                     if(!options.plain) head += part; else push(part);
@@ -747,7 +874,15 @@ function parse_html_content(options){
                 if(block.properties["ls-css"]){
                     misc.default_attributes.body.ls = "";
 
-                    let url = `http${options.secure? "s" : ""}${ls_url}${block.properties["ls-version"]? block.properties["ls-version"][0]: latest_ls_version}/${block.properties["ls-css"].join(",")}/ls.${options.compress? "min." : ""}css`;
+                    let version = block.properties["ls-version"] && block.properties["ls-version"][0];
+                    let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
+
+                    if(!version) {
+                        version = "4.0.1"
+                        console.error("Warning for app " + options.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
+                    } else if(version === "latest") version = latest_ls_version;
+
+                    let url = `http${options.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-css"][0] === true? "": block.properties["ls-css"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}css`;
                     
                     const part = `<link rel=stylesheet href="${url}">`
                     if(!options.plain) head += part; else push(part);
@@ -897,7 +1032,7 @@ function parse_html_content(options){
     parser.end();
 
     if(!options.plain) {
-        output[0] = options.header || html_header;
+        output[0] = options.header || server.etc.html_header;
 
         if(head){
             if(head_string_index !== null) output[head_string_index] = Buffer.from(head); else output[0] = Buffer.concat([output[0], Buffer.from(`<head>${head}</head>`)]);

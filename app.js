@@ -1,5 +1,16 @@
+/*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
+
+    Last modified: 2024
+    License: GPL-3.0
+    Version: 1.5.6
+    See: https://github.com/the-lstv/akeno
+*/
+
+
 let
-    version = "1.5.5",
+    version = "1.5.6",
 
     since_startup = performance.now(),
 
@@ -15,6 +26,10 @@ let
     SSLApp,
     H3App,
 
+    ModuleManager = require("./core/module"),
+
+    // Storage/cache managers
+    KeyStorage = require("./core/kvdb"),
     lmdb = require('node-lmdb'),
     lsdb,
 
@@ -47,9 +62,6 @@ let
     // Globals
     AddonCache = {},
 
-    config,
-    configRaw,
-
     API = { handlers: new Map },
 
     PATH = __dirname + "/",
@@ -59,53 +71,19 @@ let
     domainRouter = new Map,
 
     // TODO: you know what to do :sob:
-    trustedOrigins = new Set(["https://lstv.space", "https://lstv.test", "https://dev.lstv.test", "https://dev.lstv.space"])
+    trustedOrigins = new Set(["https://lstv.space", "https://lstv.test", "http://lstv.test", "https://dev.lstv.test", "https://dev.lstv.space"])
 ;
 
 
+// Open databases
+const cache_db = new KeyStorage(PATH + "db/cache", true);
+const data_db = new KeyStorage(PATH + "db/data", true);
 
-const cache_db = {
-    env: new lmdb.Env(),
-
-    memory_compression_cache: new Map,
-    memory_general_cache: new Map,
-
-    commit(){
-        try {
-
-            cache_db.txn.commit();
-    
-        } catch (error) {
-    
-            console.error(error);
-            cache_db.txn.abort();
-    
-        }
-
-        cache_db.txn = cache_db.env.beginTxn();
-    }
+const kvdb = {
+    compressionCache: cache_db.openDbi("compression_cache", { keyIsUint32: true }, true),
+    generalCache: cache_db.openDbi("general_cache", {}, true),
+    apps: data_db.openDbi("apps_data", {}, true),
 }
-
-cache_db.env.open({
-    path: PATH + "db/cache",
-    maxDbs: 3
-});
-
-cache_db.compression = cache_db.env.openDbi({
-    name: "compression_cache",
-    create: true,
-
-    // 32-bit xxhash
-    keyIsUint32: true
-})
-
-cache_db.general = cache_db.env.openDbi({
-    name: "general_cache",
-    create: true,
-})
-
-cache_db.txn = cache_db.env.beginTxn();
-
 
 
 function initialize(){
@@ -136,6 +114,10 @@ function initialize(){
                         version,
                         isDev,
                         server_enabled,
+                        modules: {
+                            count: ModuleManager.modules.size,
+                            sample: [...ModuleManager.modules.keys()]
+                        }
                     };
 
                     // Calculate CPU usage in percentages
@@ -251,7 +233,6 @@ function initialize(){
         message(ws, message, isBinary) {
             if(ws.handler.message) ws.handler.message(ws, message, isBinary);
         },
-        
         
         close(ws, code, message) {
             if(ws.handler.close) ws.handler.close(ws, code, message);
@@ -373,7 +354,7 @@ function initialize(){
             return req.writeStatus("400 Bad Request").end("400 Bad Request")
         }
 
-        handler({segments, shift, error: (error, code) => backend.helper.error(req, res, error, code), req, res})
+        handler({segments, shift, error: (error, code, status) => backend.helper.error(req, res, error, code, status), req, res, flags})
     }
 
     backend.exposeToDebugger("router", resolve)
@@ -387,7 +368,7 @@ function initialize(){
     app.ws('/*', wss)
     
     // Initialize WebServer
-    app.any('/*', (res, req) => resolve(res, req, backend.isDev))
+    app.any('/*', (res, req) => resolve(res, req, { secure: backend.isDev }))
     
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
@@ -408,16 +389,15 @@ function initialize(){
                         passphrase: '1234'
                     });
     
-                    // HTTP3 doesn't have WebSockets, do not setup ws listeners.
-    
-                    H3App.any('/*', (res, req) => resolve(res, req, {secure: true, h3: true}))
+                    // HTTP3 doesn't have WebSockets, do not setup ws listeners.    
+                    H3App.any('/*', (res, req) => resolve(res, req, { secure: true, h3: true }))
     
                     backend.exposeToDebugger("uws_h3", H3App)
                 }
 
 
                 SSLApp.ws('/*', wss)
-                SSLApp.any('/*', (res, req) => resolve(res, req, {secure: true}))
+                SSLApp.any('/*', (res, req) => resolve(res, req, { secure: true }))
                 
 
                 // If sslRouter is defined
@@ -487,9 +467,6 @@ const devInspecting = !!process.execArgv.find(v => v.startsWith("--inspect"));
 
 const backend = {
     version,
-
-    config,
-    configRaw,
 
     get path(){
         return PATH
@@ -574,7 +551,7 @@ const backend = {
         },
 
         // This helper should likely be avoided.
-        error(req, res, error, code){
+        error(req, res, error, code, status){
             if(req.abort) return;
 
             if(typeof error == "number" && backend.Errors[error]){
@@ -584,9 +561,9 @@ const backend = {
             }
 
             res.cork(() => {
-                res.writeStatus('400')
+                res.writeStatus(status || (code >= 400 && code <= 599? String(code) : '400'))
                 backend.helper.corsHeaders(req, res)
-                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":"${(JSON.stringify(error) || "Unknown error").replaceAll('"', '\\"')}"}`);
+                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":${(JSON.stringify(error) || '"Unknown error"')}}`);
             })
         },
 
@@ -713,64 +690,58 @@ const backend = {
             fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
         }
 
-        let alreadyResolved = {}; // Prevent infinite loops
+        // let alreadyResolved = {}; // Prevent infinite loops
 
         // TODO: Merge function must be updated
 
-        function resolveImports(parsed, stack, referer){
-            let imports = [];
+        // function resolveImports(parsed, stack, referer){
+        //     let imports = [];
 
             
-            configTools(parsed).forEach("import", (block, remove) => {
-                remove() // remove the block from the config
+        //     configTools(parsed).forEach("import", (block, remove) => {
+        //         remove() // remove the block from the config
 
-                if(block.attributes.length !== 0){
-                    let path = block.attributes[0].replace("./", PATH + "/");
+        //         if(block.attributes.length !== 0){
+        //             let path = block.attributes[0].replace("./", PATH + "/");
 
-                    if(path === stack) return backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
+        //             if(path === stack) return backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
 
-                    if(!fs.existsSync(path)){
-                        backend.log.warn("Failed import of \"" + path + "\", file not found")
-                        return;
-                    }
+        //             if(!fs.existsSync(path)){
+        //                 backend.log.warn("Failed import of \"" + path + "\", file not found")
+        //                 return;
+        //             }
 
-                    imports.push(path)
-                }
-            })
+        //             imports.push(path)
+        //         }
+        //     })
 
-            alreadyResolved[stack] = imports;
+        //     alreadyResolved[stack] = imports;
 
-            for(let path of imports){
-                if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
-                    backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
-                    continue
-                }
+        //     for(let path of imports){
+        //         if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
+        //             backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
+        //             continue
+        //         }
 
-                parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), {
-                    strict: true,
-                    asLookupTable: true
-                }), path, stack))
-            }
+        //         parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), {
+        //             strict: true,
+        //             asLookupTable: true
+        //         }), path, stack))
+        //     }
 
 
 
-            return parsed
-        }
+        //     return parsed
+        // }
 
         let path = PATH + "/config";
 
-        configRaw = backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), {
+        backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
             strict: true,
             asLookupTable: true
-        }), path, null);
+        });
 
-        // configRaw = backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
-        //     strict: true,
-        //     asLookupTable: true
-        // });
-
-        config = backend.config = configTools(configRaw);
-
+        backend.config = configTools(backend.configRaw);
     },
 
     compression: {
@@ -780,64 +751,31 @@ const backend = {
             const hash = xxh32(code);
 
             let compressed;
-            if(compressed = cache_db.memory_general_cache.get(hash)) return compressed;
+            // Try to read from memory cache
+            if(compressed = kvdb.compressionCache.getCache(hash)) return compressed;
 
-            let hasDiskCache = false // lmdb_exists(cache_db.txn, cache_db.compression, hash)
+            // We have no disk nor memory cache, compress on the fly and store.
+            if(!kvdb.compressionCache.exists(hash)){
+                compressed = isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code
 
-            if(!hasDiskCache){
-                compressed = Buffer.from(isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code)
-                // cache_db.txn.putBinary(cache_db.compression, hash, compressed);
+                // If compression failed, return the original code
+                if(!compressed) return Buffer.from(code);
 
-                // cache_db.commit();
+                compressed = Buffer.from(compressed);
+
+                kvdb.compressionCache.commitSet(hash, compressed)
+                return compressed;
             }
             
-            // else {
-            //     compressed = cache_db.txn.getBinary(cache_db.compression, hash)
-            // }
-
-            cache_db.memory_compression_cache.set(hash, compressed)
-
-            return compressed || code;
+            else {
+                // Read from disk cache
+                return kvdb.compressionCache.get(hash, Buffer)
+            }
         }
 
     },
 
-    cache: {
-        set(key, value){
-            switch (true) {
-                case value instanceof Buffer:
-                    cache_db.txn.putBinary(cache_db.general, key, value);
-                    break;
-                case typeof value === "boolean":
-                    cache_db.txn.putBoolean(cache_db.general, key, value);
-                    break;
-                case typeof value === "string":
-                    cache_db.txn.putString(cache_db.general, key, value);
-                    break;
-                case typeof value === "number":
-                    cache_db.txn.putNumber(cache_db.general, key, value);
-                    break;
-                default:
-                    throw new Error("Unsupported value type");
-            }
-            
-            cache_db.memory_general_cache.set(key, value)
-        },
-
-        get(key, type){
-            type = {Buffer: "getBinary", Boolean: "getBoolean", Number: "getNumber", String: "getString"}[type] || "getBinary";
-            return cache_db.memory_general_cache.get(key) || cache_db.txn[type](cache_db.general, key)
-        },
-
-        delete(key){
-            cache_db.memory_general_cache.delete(key)
-            cache_db.txn.del(cache_db.general, key);
-        },
-
-        commit(){
-            cache_db.commit();
-        }
-    },
+    kvdb,
 
     jwt: {
         verify(something, options){
@@ -867,9 +805,9 @@ const backend = {
         // 0 = Debug (Verbose), 1 = Info (Verbose), 2 = Info, 3 = Warning, 4 = Error, 5 = Important
 
         if(severity < (5 - backend.logLevel)) return;
-        if(!Array.isArray(data)) data = [data];
-        if(devInspecting) data.unshift("color: aquamarine");
-        console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`${devInspecting? "%c": ""}[${source}]`, ...data)
+        if(!Array.isArray(data)) return;
+
+        console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`\x1b[${severity == 4? "1;31": "36"}m[${source}]\x1b[0m`, ...data)
     },
 
     createLoggerContext(target){
@@ -919,6 +857,12 @@ const backend = {
 
         return AddonCache[name]
     },
+
+    ModuleManager,
+
+    Module: ModuleManager.Module,
+
+    module: ModuleManager.loadModule,
 
     mime: {
         // My own mimetype checker since the current mimetype library for Node is meh.
@@ -1000,11 +944,21 @@ const backend = {
 
 
         // HTTP-compatible error codes, this does NOT mean this list is meant for HTTP status codes.
-        404: "Request Timed Out.",
-        408: "Not Found.",
+        404: "Not found.",
+        500: "Internal server error.",
+        503: "Service unavailable.",
+        504: "Gateway timeout.",
+        429: "Too many requests.",
+        403: "Forbidden.",
+        401: "Unauthorized.",
+        400: "Bad request.",
+        408: "Request timeout.",
         409: "Conflict.",
-        429: "Too Many Requests",
-        500: "Internal Server Error."
+        415: "Unsupported media type.",
+        501: "Not implemented.",
+        406: "Not acceptable.",
+        405: "Method not allowed.",
+        502: "Bad gateway.",
     },
 
     exposeToDebugger(key, thing){
@@ -1111,16 +1065,3 @@ process.on('exit', () => {
 initialize()
 
 module.exports = backend
-
-
-
-// Misc functions:
-function lmdb_exists(txn, db, key){
-    let cursor;
-    try {
-        cursor = new lmdb.Cursor(txn, db);
-        return cursor.goToKey(key) !== null;
-    } finally {
-        if (cursor) cursor.close();
-    }
-}
