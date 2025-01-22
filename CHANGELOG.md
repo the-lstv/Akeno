@@ -4,7 +4,12 @@
 - Enhance the config
 - Builtin multi-threading support
 
-## New in 1.5.5 [WIP]
+## New in 1.5.6
+- Hot-reloading support
+- Modules & experimental multithreading support
+- Many enhancements and bugfixes
+
+## New in 1.5.5
 X URL routing now uses Globs
 - Web app URL routers now use Globs
 - All web requests now include ETag

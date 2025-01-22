@@ -1,5 +1,5 @@
-# This is the default config. You can change it to fit your needs or use it as an example of how a config may look like.
-
+# This is the default config. You can change it to fit your needs or use it as an example of how a config may look like and build your own.
+# This does not explain or contain all the things that can be specified here. Please refer to the docs for more information.
 
 system {
     # You can enable development mode when debugging.
@@ -26,7 +26,8 @@ server {
 # Webserver configuration
 web {
     locations:
-        # Website locations - * searches all subdirectories as individual locations.
+        # Website locations - * searches all subdirectories.
+        # A website/webapp becomes valid when it contains an app.conf file.
         "/var/www/akeno/*",
         "/var/lib/akeno/examples/hello-world-website",
         "/var/lib/akeno/core/gui"
@@ -46,7 +47,7 @@ api.version(1) {
 
 # Setup domains to route to API:
 route ("api.example.com") { to: api }
-
+# More spefic routing can be set later within web applications.
 
 
 sslRouter {
@@ -56,8 +57,9 @@ sslRouter {
     certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
     keyBase: "/etc/letsencrypt/live/{domain}/privkey.pem";
 
-    domains: example.com;
+    domains: example.com, example.net, *.example.com, *.example.net;
 }
+
 
 # If you intend to use a SQL database, eg. for user management
 database.sql {
@@ -66,23 +68,3 @@ database.sql {
     user: "...";
     password: "...";
 }
-
-
-performance {
-    # Compress JS, HTML, CSS on the fly
-    code-compression;
-
-    # Cache to both disk and memory
-    cache-to: disk, memory;
-
-    # Performance = Prioritize speed over resource efficiency
-    # Efficiency = Prioritize resource efficiency over speed
-    mode: performance;
-
-    # Enable the ?mtime query to be added to requests, automatically refreshing files that have been changed while caching still works.
-    mtime-query;
-}
-
-
-# Import generated configs created automatically by the CLI
-import("./etc/generated");

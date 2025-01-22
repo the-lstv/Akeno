@@ -54,42 +54,32 @@ let
 
 
 server = {
-    etc: {},
-
     Initialize($){
         backend = $;
 
         // Constants
-        server.etc.ls_url = `://cdn.extragon.cloud/ls/`
-        server.etc.ls_url_dev = `://cdn.extragon.test/ls/`
-        server.etc.html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`)
-        server.etc.notfound_error = Buffer.concat([server.etc.html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)])
-        server.etc.default_disabled_message = Buffer.from(backend.config.block("web").get("disabledMessage", String) || "This website is temporarily disabled.")
+        const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`);
 
-        server.Reload(true)
+        server.etc = {
+            html_header,
+            notfound_error: Buffer.concat([html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)]),
+            default_disabled_message: Buffer.from(backend.config.block("web").get("disabledMessage", String) || "This website is temporarily disabled."),
+            ls_url: `://cdn.extragon.cloud/ls/`,
+            ls_url_dev: `://cdn.extragon.test/ls/`,
+        };
+
+        server.reload()
     },
 
+    async reload(specific_app){
+        if(specific_app) return server.load(specific_app);
 
-    async Reload(server_initiated, specific_app){
-        if(!server_initiated){
-            backend.refreshConfig()
-        }
+        backend.refreshConfig();
 
-        if(specific_app){
-            return server.load(specific_app)
-        }
-
-        let webConfig = backend.config.block("web");
-
-        // Directories with web apps
-        locations = webConfig.get("locations")
-
-        await server.LoadAppliactions();
-    },
-
-
-    async LoadAppliactions(){
         const start = performance.now();
+
+        const webConfig = backend.config.block("web");
+        const locations = webConfig.get("locations") || [];
 
         // Looks for valid application locations
         for(let location of locations){
@@ -126,7 +116,7 @@ server = {
     load(path){
 
         // TODO: Hot reloading is almost functional, but needs config validation and re-parsing to be finished
-        if(applications.has(path)) return false;
+        // if(applications.has(path)) return false;
 
         let app = applications.get(path);
 
@@ -143,19 +133,54 @@ server = {
         const is_enabled = backend.kvdb.apps.get(`${path}.enabled`, Boolean)
         app.enabled = (is_enabled === null? true: is_enabled) || false;
 
-        const domains = app.config.block("server").get("domains");
-        const ports = app.config.block("server").get("port");
 
-        if(domains){
+        const enabledDomains = app.config.block("server").get("domains") || [];
+
+        if(enabledDomains.length > 0 || app.domains.size > 0){
+            const domains = new Set([...enabledDomains, ...app.domains]);
+
             for(let domain of domains){
+                if(!domain || typeof domain !== "string") {
+                    server.log.warn("Invalid domain name \"" + domain + "\" for web application \"" + app.basename + "\".");
+                    continue
+                }
+
+                if(!enabledDomains.includes(domain)){
+                    assignedDomains.delete(domain);
+                    app.domains.delete(domain);
+                    continue
+                }
+
                 assignedDomains.set(domain, app);
+                app.domains.add(domain);
             }
         }
 
-        if(ports){
+
+        const enabledPorts = app.config.block("server").get("port") || [];
+
+        if(enabledPorts.length > 0 || app.ports.size > 0){
+            const ports = new Set([...enabledPorts, ...app.ports]);
+
             for (let port of ports) {
-                if(!port || typeof port !== "number") {
-                    server.log.warn("Invalid port number \"" + port + "\" for web application " + app.basename + " - skipped.");
+                if(!port || typeof port !== "number" || port < 1 || port > 65535) {
+                    server.log.warn("Invalid port number \"" + port + "\" for web application \"" + app.basename + "\" - skipped.");
+                    continue
+                }
+
+                if(app.ports.has(port)){
+                    if(!enabledPorts.includes(port)){
+                        app.ports.delete(port);
+
+                        if(app.uws){
+                            uws.us_listen_socket_close(app.sockets.get(port));
+                            app.uws.close();
+                            app.uws = null;
+                        }
+
+                        server.log(`Web application "${app.basename}" is no longer listening on port ${port}`);
+                        continue
+                    }
                     continue
                 }
 
@@ -176,15 +201,20 @@ server = {
 
                 const flags = { app };
 
-                if(!app.uws) app.uws = uws.App().any('/*', (res, req) => {
-                    backend.resolve(res, req, flags)
-                })
+                if(!app.uws) {
+                    app.uws = uws.App().any('/*', (res, req) => {
+                        backend.resolve(res, req, flags)
+                    })
 
-                app.uws.listen(port, (token) => {
-                    if(token) {
-                        server.log(`Web application ${app.basename} is listening on port ${port}`)
+                    app.sockets = new Map;
+                }
+
+                app.uws.listen(port, (socket) => {
+                    if(socket) {
+                        app.sockets.set(port, socket)
+                        server.log(`Web application "${app.basename}" is listening on port ${port}`);
                     } else {
-                        server.log.error(`Failed to start web application ${app.basename} on port ${port}`)
+                        server.log.error(`Failed to start web application "${app.basename}" on port ${port}`);
                     }
                 })
             }
@@ -194,10 +224,26 @@ server = {
             backend.apiExtensions[api.attributes[0]] = app.path + "/" + api.attributes[1]
         }
 
+        // Reload modules
+        for(let [name, module] of app.modules){
+            module.restart()
+        }
+
         for(let api of app.config.blocks("module")){
             // TODO: Proper module system
             const name = api.attributes[0];
-            app.modules.set(name, backend.module(`${app.basename}/${name}`, { path: app.path + "/" + api.get("path", String), autoRestart: api.get("autoRestart", Boolean, false) }))
+
+            if(app.modules.has(name)) continue;
+
+            let module;
+            try {
+                module = new backend.Module(`${app.basename}/${name}`, { path: app.path + "/" + api.get("path", String), autoRestart: api.get("autoRestart", Boolean, false) });
+            } catch (error) {
+                server.log.error("Failed to load module " + name + " for web application " + app.basename + ": " + error.toString() + ". You can reload the app to retry.");
+                continue
+            }
+
+            app.modules.set(name, module)
         }
 
         return true
@@ -237,6 +283,11 @@ server = {
             config,
 
             ports: new Set,
+
+            /**
+             * @warning Do not use this set for routing - it is only a reference to allow for easy removal of domains.
+             */
+            domains: new Set,
 
             modules: new Map
         }
@@ -541,7 +592,7 @@ server = {
 
         reload(app_path = null){
             if(app_path && !(app_path = server.util.getApp(app_path))) return false;
-            return server.Reload(null, app_path || null)
+            return server.reload(app_path || null)
         },
 
         getDomain(app_path){
@@ -564,9 +615,6 @@ server = {
         }
     }
 }
-
-
-let locations;
 
 // Section: utils
 function files_try(...files){

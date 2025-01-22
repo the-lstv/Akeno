@@ -10,7 +10,7 @@
 
 
 let
-    version = "1.5.6 [unreleased]",
+    version = "1.5.6",
 
     since_startup = performance.now(),
 
@@ -61,9 +61,6 @@ try {
 let
     // Globals
     AddonCache = {},
-
-    config,
-    configRaw,
 
     API = { handlers: new Map },
 
@@ -471,9 +468,6 @@ const devInspecting = !!process.execArgv.find(v => v.startsWith("--inspect"));
 const backend = {
     version,
 
-    config,
-    configRaw,
-
     get path(){
         return PATH
     },
@@ -696,64 +690,58 @@ const backend = {
             fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
         }
 
-        let alreadyResolved = {}; // Prevent infinite loops
+        // let alreadyResolved = {}; // Prevent infinite loops
 
         // TODO: Merge function must be updated
 
-        function resolveImports(parsed, stack, referer){
-            let imports = [];
+        // function resolveImports(parsed, stack, referer){
+        //     let imports = [];
 
             
-            configTools(parsed).forEach("import", (block, remove) => {
-                remove() // remove the block from the config
+        //     configTools(parsed).forEach("import", (block, remove) => {
+        //         remove() // remove the block from the config
 
-                if(block.attributes.length !== 0){
-                    let path = block.attributes[0].replace("./", PATH + "/");
+        //         if(block.attributes.length !== 0){
+        //             let path = block.attributes[0].replace("./", PATH + "/");
 
-                    if(path === stack) return backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
+        //             if(path === stack) return backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
 
-                    if(!fs.existsSync(path)){
-                        backend.log.warn("Failed import of \"" + path + "\", file not found")
-                        return;
-                    }
+        //             if(!fs.existsSync(path)){
+        //                 backend.log.warn("Failed import of \"" + path + "\", file not found")
+        //                 return;
+        //             }
 
-                    imports.push(path)
-                }
-            })
+        //             imports.push(path)
+        //         }
+        //     })
 
-            alreadyResolved[stack] = imports;
+        //     alreadyResolved[stack] = imports;
 
-            for(let path of imports){
-                if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
-                    backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
-                    continue
-                }
+        //     for(let path of imports){
+        //         if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
+        //             backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
+        //             continue
+        //         }
 
-                parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), {
-                    strict: true,
-                    asLookupTable: true
-                }), path, stack))
-            }
+        //         parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), {
+        //             strict: true,
+        //             asLookupTable: true
+        //         }), path, stack))
+        //     }
 
 
 
-            return parsed
-        }
+        //     return parsed
+        // }
 
         let path = PATH + "/config";
 
-        configRaw = backend.configRaw = resolveImports(parse(fs.readFileSync(path, "utf8"), {
+        backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
             strict: true,
             asLookupTable: true
-        }), path, null);
+        });
 
-        // configRaw = backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
-        //     strict: true,
-        //     asLookupTable: true
-        // });
-
-        config = backend.config = configTools(configRaw);
-
+        backend.config = configTools(backend.configRaw);
     },
 
     compression: {
@@ -871,6 +859,8 @@ const backend = {
     },
 
     ModuleManager,
+
+    Module: ModuleManager.Module,
 
     module: ModuleManager.loadModule,
 
