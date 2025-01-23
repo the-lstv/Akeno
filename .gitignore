@@ -15,10 +15,8 @@ api/*
 addons/*
 !addons/cdn.js
 
-db/cache/*
+db/*
 !db/cache/.gitkeep
-
-db/data/*
 !db/data/.gitkeep
 
 core/native/build

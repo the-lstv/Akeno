@@ -10,7 +10,7 @@
 
 
 let
-    version = "1.5.6",
+    version = "1.5.7 [unreleased]",
 
     since_startup = performance.now(),
 
@@ -42,7 +42,7 @@ let
     { parse, stringify, merge, configTools } = require("./core/parser"),
     // { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy"),
 
-    { xxh32 } = require("@node-rs/xxhash"),
+    { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),
 
     // For code compression
     CleanCSS = new (require('clean-css')),
@@ -75,9 +75,25 @@ let
 ;
 
 
+function KeyDB(name){
+    const path = PATH + name;
+
+    if(name.startsWith("db/")){
+        if(!fs.existsSync(path)){
+            fs.mkdirSync(path)
+        }
+    } else throw new Error("Invalid database path");
+
+    return new KeyStorage(path)
+}
+
+
 // Open databases
-const cache_db = new KeyStorage(PATH + "db/cache", true);
-const data_db = new KeyStorage(PATH + "db/data", true);
+const cache_db = new KeyDB("db/cache");
+const data_db = new KeyDB("db/data");
+
+cache_db.open();
+data_db.open();
 
 const kvdb = {
     compressionCache: cache_db.openDbi("compression_cache", { keyIsUint32: true }, true),
@@ -252,7 +268,7 @@ function initialize(){
             req.method = req.getMethod && req.getMethod().toUpperCase();
 
             const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
-            req.domain = _colon_index === -1? _host: _host.slice(0, _host.lastIndexOf(":"));
+            req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
 
             req.path = req.getUrl();
             req.origin = req.getHeader('origin');
@@ -609,76 +625,95 @@ const backend = {
             });
         },
 
-        parseBody(req, res, callback){
-            return {
-                get type(){
-                    return req.getHeader("content-type")
-                },
-
-                get length(){
-                    return req.getHeader("content-length")
-                },
-
-                upload(key = "file", hash){
-
-                    function done(){
-                        let parts = uws.getParts(req.fullBody, req.contentType);
-                        
-                        for(let part of parts){
-                            part.data = Buffer.from(part.data)
-                            if(hash) part.md5 = crypto.createHash('md5').update(part.data).digest('hex')
-                        }
-
-                        callback(parts)
-                    }
-
-                    if(req.hasFullBody) done(); else req.onFullData = done;
-
-                },
-
-                parts(){
-
-                    function done(){
-                        let parts = uws.getParts(req.fullBody, req.contentType);
-
-                        callback(parts)
-                    }
-
-                    if(req.hasFullBody) done(); else req.onFullData = done;
-
-                },
-
-                data(){
-                    function done(){
-                        req.body = {
-                            get data(){
-                                return req.fullBody
-                            },
-
-                            get string(){
-                                return req.fullBody.toString('utf8');
-                            },
-
-                            get json(){
-                                let data;
-
-                                try{
-                                    data = JSON.parse(req.fullBody.toString('utf8'));
-                                } catch {
-                                    return null
-                                }
-
-                                return data
-                            }
-                        }
-    
-                        callback(req.body)
-                    }
-
-
-                    if(req.hasFullBody) done(); else req.onFullData = done;
-                }
+        bodyParser: class {
+            constructor(req, res, callback){
+                this.req = req;
+                this.res = res;
+                this.callback = callback;
             }
+
+            get type(){
+                return this.req.getHeader("content-type")
+            }
+
+            get length(){
+                return this.req.getHeader("content-length")
+            }
+
+            upload(key = "file", hash){
+
+                function done(){
+                    let parts = uws.getParts(this.req.fullBody, this.req.contentType);
+                    this.processFiles(parts, hash, this.callback);
+                }
+
+                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
+
+            }
+
+            processFiles(files, hash, callback){
+                for(let part of files){
+                    part.data = Buffer.from(part.data)
+
+                    if(hash) {
+                        if(hash === "xxh3") part.hash = xxh3.xxh64(part.data).toString(16); else
+                        if(hash === "xxh32") part.hash = xxh32(part.data).toString(16); else
+                        if(hash === "xxh64") part.hash = xxh64(part.data).toString(16); else
+                        if(hash === "xxh128") part.hash = xxh3.xxh128(part.data).toString(16); else
+
+                        part.hash = crypto.createHash('md5').update(part.data).digest('hex');
+                    }
+                }
+
+                callback(files)
+            }
+
+            parts(){
+
+                function done(){
+                    let parts = uws.getParts(this.req.fullBody, this.req.contentType);
+
+                    this.callback(parts)
+                }
+
+                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
+
+            }
+
+            data(){
+                function done(){
+                    this.req.body = {
+                        get data(){
+                            return this.req.fullBody
+                        },
+
+                        get string(){
+                            return this.req.fullBody.toString('utf8');
+                        },
+
+                        get json(){
+                            let data;
+
+                            try{
+                                data = JSON.parse(this.req.fullBody.toString('utf8'));
+                            } catch {
+                                return null
+                            }
+
+                            return data
+                        }
+                    }
+
+                    this.callback(this.req.body)
+                }
+
+
+                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
+            }
+        },
+
+        parseBody(req, res, callback){
+            return new backend.helper.bodyParser(req, res, callback)
         }
     },
 
@@ -755,7 +790,7 @@ const backend = {
             if(compressed = kvdb.compressionCache.getCache(hash)) return compressed;
 
             // We have no disk nor memory cache, compress on the fly and store.
-            if(!kvdb.compressionCache.exists(hash)){
+            if(!kvdb.compressionCache.has(hash)){
                 compressed = isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code
 
                 // If compression failed, return the original code
@@ -776,6 +811,8 @@ const backend = {
     },
 
     kvdb,
+
+    KeyDB,
 
     jwt: {
         verify(something, options){

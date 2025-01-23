@@ -25,10 +25,12 @@ class KeyStorage {
         }
     }
 
-    open(){
+    open(options){
         this.env.open({
+            maxDbs: 3,
+            mapSize: 2 * 1024 * 1024 * 1024,
+            ...options,
             path: this.path,
-            maxDbs: 3
         });
 
         return this;
@@ -85,6 +87,8 @@ class KeyStorage {
 }
 
 
+// Newly, the dbi class is more compatible with JS Map
+
 class dbi {
     constructor(parent, instance, memoryCache = false){
         this.parent = parent;
@@ -109,6 +113,9 @@ class dbi {
             case typeof value === "string":
                 txn.putString(this.dbi, key, value);
                 break;
+            case typeof value === "object" || Array.isArray(value):
+                txn.putString(this.dbi, key, JSON.stringify(value));
+                break;
             case typeof value === "number":
                 txn.putNumber(this.dbi, key, value);
                 break;
@@ -131,6 +138,10 @@ class dbi {
             txn.commit();
         }
     }
+
+    /**
+     * @deprecated
+     */
 
     deferSet(key, value){
         if(!this.parent.txn) this.parent.txn = this.env.beginTxn();
@@ -163,7 +174,10 @@ class dbi {
                 return txn.getBoolean(this.dbi, key);
 
             case "string": case String: case null: case undefined:
-                return txn.getBoolean(this.dbi, key);
+                return txn.getString(this.dbi, key);
+
+            case "object": case "json": case Object: case Array:
+                return JSON.parse(txn.getString(this.dbi, key));
 
             case "number": case Number:
                 return txn.getNumber(this.dbi, key);
@@ -222,7 +236,23 @@ class dbi {
         return this.cache.get(key);
     }
 
+    /**
+     * @deprecated
+     */
+
     exists(key){
+        return this.has(key);
+    }
+
+    /**
+     * @description Check if a key exists in the database
+     */
+
+    has(key){
+        if(this.memoryCache && this.cache.has(key)){
+            return true;
+        }
+
         const txn = this.env.beginTxn({ readOnly: true });
 
         let cursor;
