@@ -39,7 +39,7 @@ let
 
     // Config parser
     { parse, stringify, merge, configTools } = require("./core/parser"),
-    // { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy"),
+    // { proxyReq, proxyWebSocket } = require("./core/proxy"),
 
     { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),
 
@@ -49,12 +49,14 @@ let
 ;
 
 
-
 try {
     // Disable uWebSockets version header, remove to re-enable
     uws._cfg('999999990007');
 } catch (error) {}
 
+const EMPTY_OBJECT = Object.freeze({});
+const EMPTY_ARRAY = Object.freeze([]);
+const EMPTY_BUFFER = Buffer.alloc(0);
 
 
 let
@@ -273,6 +275,7 @@ function initialize(){
     const web_handler = backend.addon("core/web").HandleRequest;
 
     function resolve(res, req, flags, virtual = null) {
+        if(!flags) flags = EMPTY_OBJECT;
 
         if(!virtual) {
 
@@ -323,7 +326,7 @@ function initialize(){
 
             // Receive POST body
             if(req.method === "POST" || (req.hasBody && req.transferProtocol === "qblaze")){
-                req.fullBody = Buffer.from('');
+                req.fullBody = Buffer.alloc(0);
 
                 req.hasFullBody = false;
                 req.contentType = req.getHeader('content-type');
@@ -410,7 +413,7 @@ function initialize(){
     
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
-            console.log(`[system] Akeno server v${version} has started and is listening on port ${HTTPort}! Total hits: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
+            console.log(`[system] Server has started and is listening on port ${HTTPort}! Total hits: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
 
             // Configure SSL
             if(ssl_enabled) {
@@ -1054,11 +1057,18 @@ const backend = {
             if(backend.db.sql_connections[db]) return backend.db.sql_connections[db];
             return backend.db.sql_connections[db] = lsdb.Server(host, user, password, db)
         }
+    },
+
+    constants: {
+        EMPTY_OBJECT, EMPTY_ARRAY, EMPTY_BUFFER
     }
 }
 
 
 backend.log = backend.createLoggerContext("api")
+
+backend.log("Starting Akeno server v" + version + " in " + (isDev? "development": "production") + " mode.")
+
 backend.refreshConfig()
 
 const server_enabled = backend.config.block("server").get("enable", Boolean);
