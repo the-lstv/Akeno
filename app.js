@@ -102,90 +102,96 @@ const kvdb = {
 
 
 function initialize(){
-    const socketPath = (backend.config.block("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
+    if (process.platform !== 'linux') {
+        console.warn(`[system] Warning: Your platform (${process.platform}) has experimental support. Internal API server is disabled and the CLI will not work as expected. Akeno is currently only supported on Linux.`);
+    }
 
-    // Internal ipc server
-    ipc = new ipc_server({
-        onRequest(socket, request, respond){
-            
-            const command = typeof request === "string"? (request = [request] && request[0]): request[0];
-
-            switch(command){
-                case "ping":
-                    respond(null, {
-                        backend_path: PATH,
-                        version,
-                        isDev,
-                        server_enabled
-                    })
-                    break
-
-                case "usage":
-                    const res = {
-                        mem: process.memoryUsage(),
-                        cpu: process.cpuUsage(),
-                        uptime: process.uptime(),
-                        backend_path: PATH,
-                        version,
-                        isDev,
-                        server_enabled,
-                        modules: {
-                            count: ModuleManager.modules.size,
-                            sample: [...ModuleManager.modules.keys()]
-                        }
-                    };
-
-                    // Calculate CPU usage in percentages
-                    if(request[1] === "cpu") {
-                        setTimeout(() => {
-                            const endUsage = process.cpuUsage(res.cpu);
-                            const userTime = endUsage.user / 1000;
-                            const systemTime = endUsage.system / 1000;
-
-                            res.cpu.usage = ((userTime + systemTime) / 200) * 100
-                            respond(null, res)
-                        }, 200);
-                    } else respond(null, res);
-                    break
-
-                case "web.list":
-                    respond(null, backend.addon("core/web").util.list())
-                    break
-
-                case "web.list.domains":
-                    respond(null, backend.addon("core/web").util.listDomains(request[1]))
-                    break
-
-                case "web.list.getDomain":
-                    respond(null, backend.addon("core/web").util.getDomain(request[1]))
-                    break
-
-                case "web.enable":
-                    respond(null, backend.addon("core/web").util.enable(request[1]))
-                    break
-
-                case "web.disable":
-                    respond(null, backend.addon("core/web").util.disable(request[1]))
-                    break
-
-                case "web.reload":
-                    respond(null, backend.addon("core/web").util.reload(request[1]))
-                    break
-
-                case "web.tempDomain":
-                    respond(null, backend.addon("core/web").util.tempDomain(request[1]))
-                    break
-
-                default:
-                    respond("Invalid command")
+    else {
+        const socketPath = (backend.config.block("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
+    
+        // Internal ipc server
+        ipc = new ipc_server({
+            onRequest(socket, request, respond){
+                
+                const command = typeof request === "string"? (request = [request] && request[0]): request[0];
+    
+                switch(command){
+                    case "ping":
+                        respond(null, {
+                            backend_path: PATH,
+                            version,
+                            isDev,
+                            server_enabled
+                        })
+                        break
+    
+                    case "usage":
+                        const res = {
+                            mem: process.memoryUsage(),
+                            cpu: process.cpuUsage(),
+                            uptime: process.uptime(),
+                            backend_path: PATH,
+                            version,
+                            isDev,
+                            server_enabled,
+                            modules: {
+                                count: ModuleManager.modules.size,
+                                sample: [...ModuleManager.modules.keys()]
+                            }
+                        };
+    
+                        // Calculate CPU usage in percentages
+                        if(request[1] === "cpu") {
+                            setTimeout(() => {
+                                const endUsage = process.cpuUsage(res.cpu);
+                                const userTime = endUsage.user / 1000;
+                                const systemTime = endUsage.system / 1000;
+    
+                                res.cpu.usage = ((userTime + systemTime) / 200) * 100
+                                respond(null, res)
+                            }, 200);
+                        } else respond(null, res);
+                        break
+    
+                    case "web.list":
+                        respond(null, backend.addon("core/web").util.list())
+                        break
+    
+                    case "web.list.domains":
+                        respond(null, backend.addon("core/web").util.listDomains(request[1]))
+                        break
+    
+                    case "web.list.getDomain":
+                        respond(null, backend.addon("core/web").util.getDomain(request[1]))
+                        break
+    
+                    case "web.enable":
+                        respond(null, backend.addon("core/web").util.enable(request[1]))
+                        break
+    
+                    case "web.disable":
+                        respond(null, backend.addon("core/web").util.disable(request[1]))
+                        break
+    
+                    case "web.reload":
+                        respond(null, backend.addon("core/web").util.reload(request[1]))
+                        break
+    
+                    case "web.tempDomain":
+                        respond(null, backend.addon("core/web").util.tempDomain(request[1]))
+                        break
+    
+                    default:
+                        respond("Invalid command")
+                }
+    
             }
-
-        }
-    })
-
-    ipc.listen(socketPath, () => {
-        console.log(`[system] IPC socket is listening on ${socketPath}`)
-    })
+        })
+    
+        ipc.listen(socketPath, () => {
+            console.log(`[system] IPC socket is listening on ${socketPath}`)
+        })
+    }
 
     if (!server_enabled) return;
 
@@ -195,14 +201,13 @@ function initialize(){
         if(version.Initialize) version.Initialize(backend)
     }
 
-
     // Websocket handler
     const wss = {
 
         // idleTimeout: 32,
         // maxBackpressure: 1024,
-        maxPayloadLength: 2**16,
-        compression: uws.DEDICATED_COMPRESSOR_32KB,
+        maxPayloadLength: backend.config.block("websocket").get("maxPayloadLength", Number) || 32 * 1024,
+        compression: uws[backend.config.block("websocket").get("compression", String)] || uws.DEDICATED_COMPRESSOR_32KB,
 
         sendPingsAutomatically: true,
 
@@ -214,18 +219,28 @@ function initialize(){
                 continueUpgrade = false
             })
 
-            let host = req.getHeader("host");
+            let host = req.getHeader("host"), handler;
 
 
             // Handle proxied websockets when needed
             // if(shouldProxy(req, res, true, true, context)) return;
 
 
-            let segments = req.getUrl().split("/").filter(garbage => garbage), continueUpgrade = true;
-            
-            if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments[0].replace("v", ""))) segments.shift();
+            /**
+             * @warning This router is currently outdated and will be replaced in the future.
+             */
 
-            let handler = API.handlers.get(API.default).GetHandler(segments[0]);
+            let segments = req.getUrl().split("/").filter(Boolean), continueUpgrade = true;
+            
+            const versionCode = req.pathSegments.shift();
+            const firstChar = versionCode && versionCode.charCodeAt(0);
+
+            if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
+            
+            const api = API.handlers.get(parseInt(versionCode.slice(1), 10));
+            handler = api && api.HandleRequest;
+
+            if(!handler) return backend.helper.error(req, res, 0);
 
             if(!handler || !handler.HandleSocket) return res.end();
 
@@ -263,23 +278,21 @@ function initialize(){
 
             req.begin = performance.now()
 
-            // Lowercase is pretty but most code already uses uppercase
+            // Lowercase is pretty but most code already uses uppercase :(
             req.method = req.getMethod && req.getMethod().toUpperCase();
 
             const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
             req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
 
-            req.path = req.getUrl();
+            req.path = decodeURIComponent(req.getUrl());
             req.origin = req.getHeader('origin');
             req.secure = flags && !!flags.secure; // If the request is done over a secured connection
-            // req.secured = req.secure; // I messed up the name at first...
 
 
         } else {
 
-            // Virtual requests for whatever reason...
             // Should this be kept or removed?
-            // It has a real use-case: selectively handling some requests by different handlers or "emulating" requests.
+            // It has a real use-case: selectively handling some requests by different handlers and localy emulating requests.
             req.getMethod = () => virtual.method;
             req.getUrl = () => virtual.path;
             Object.assign(req, virtual)
@@ -290,30 +303,26 @@ function initialize(){
 
         // Handle preflight requests
         // TODO: make this more flexible
-        if(req.method == "OPTIONS"){
+        if(req.method === "OPTIONS"){
             backend.helper.corsHeaders(req, res)
             res.writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
             return
         }
 
 
-        // Yeah, if the request is virtual, resolve may be called multiple times on the same request.
-        // However it is not valid if the request has already been sent.
-        if(!req.wasResolved){
-            req.wasResolved = true;
-    
+        if(!req._once){
+            req._once = true;
+
             res.onAborted(() => {
                 clearTimeout(res.timeout)
                 req.abort = true;
             })
 
-
             // Handle proxied requests
             // if(shouldProxy(req, res, flags)) return;
 
-
             // Receive POST body
-            if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
+            if(req.method === "POST" || (req.hasBody && req.transferProtocol === "qblaze")){
                 req.fullBody = Buffer.from('');
 
                 req.hasFullBody = false;
@@ -343,20 +352,22 @@ function initialize(){
 
         // Finally, lets route the request to find a handler.
 
-        let index = -1, segments = decodeURIComponent(req.path).split("/").filter(Boolean)
-
-        function shift(){
-            index++
-            return segments[index] || "";
+        // A slightly faster implementation compared to .split("/").filter(Boolean)
+        req.pathSegments = []
+        let last = 0
+        for(let i = 0; i < req.path.length +1; i++){
+            if(req.path.charCodeAt(i) === 47 || i === req.path.length) {
+                if(last !== i) req.pathSegments.push(req.path.slice(last, i));
+                last = i + 1
+            }
         }
-
 
         // Default handler is the web handler
         let handler = domainRouter.get(req.domain) || web_handler;
 
         // Handle the built-in API
         if(handler === 2){
-            const versionCode = segments.shift();
+            const versionCode = req.pathSegments.shift();
             const firstChar = versionCode && versionCode.charCodeAt(0);
 
             if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
@@ -369,7 +380,19 @@ function initialize(){
             return req.writeStatus("400 Bad Request").end("400 Bad Request")
         }
 
-        handler({segments, shift, error: (error, code, status) => backend.helper.error(req, res, error, code, status), req, res, flags})
+        handler({
+            req,
+            res,
+            flags,
+
+            segments: req.pathSegments,
+
+            /** @deprecated */
+            shift: backend.helper.next(req),
+
+            /** @deprecated */
+            error: (error, code, status) => backend.helper.error(req, res, error, code, status)
+        })
     }
 
     backend.exposeToDebugger("router", resolve)
@@ -383,7 +406,7 @@ function initialize(){
     app.ws('/*', wss)
     
     // Initialize WebServer
-    app.any('/*', (res, req) => resolve(res, req, { secure: backend.isDev }))
+    app.any('/*', resolve)
     
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
@@ -392,10 +415,8 @@ function initialize(){
             // Configure SSL
             if(ssl_enabled) {
 
-
                 SSLApp = uws.SSLApp();
-                backend.exposeToDebugger("uws_ssl", SSLApp)
-
+                backend.exposeToDebugger("uws_ssl", SSLApp);
 
                 if(h3_enabled){
                     H3App = uws.H3App({
@@ -431,7 +452,7 @@ function initialize(){
                                 cert_file_name: backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", domain.replace("*.", ""))
                             })
 
-                            // For some reason we still have to include a separate router like so:
+                            // We still have to include a separate router like so:
                             SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, {secure: true})).ws("/*", wss)
                             // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
                             // A bit wasteful right? For every domain..
@@ -478,7 +499,7 @@ function initialize(){
 }
 
 const jwt_key = process.env.AKENO_KEY;
-const devInspecting = !!process.execArgv.find(v => v.startsWith("--inspect"));
+const devInspecting = !!process.execArgv.find(arg => arg.startsWith("--inspect"));
 
 const backend = {
     version,
@@ -563,6 +584,11 @@ const backend = {
 
                 if(data !== undefined) res.end(data)
             });
+        },
+
+        next(req){
+            if(!req._segmentsIndex) req._segmentsIndex = 0; else req._segmentsIndex ++;
+            return req.pathSegments[req._segmentsIndex] || ""; // Returning null is more correct
         },
 
         // This helper should likely be avoided.

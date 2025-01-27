@@ -83,7 +83,7 @@ server = {
 
         // Looks for valid application locations
         for(let location of locations){
-            if(location.startsWith("./")) location = backend.path + location.replace("./", "/");
+            if(location.startsWith("./")) location = backend.path + location.slice(1);
 
             if(!fs.existsSync(location.replace("/*", ""))) {
                 server.log.warn("Web application (at " + location + ") does not exist - skipped.");
