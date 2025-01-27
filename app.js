@@ -30,7 +30,6 @@ let
 
     // Storage/cache managers
     KeyStorage = require("./core/kvdb"),
-    lmdb = require('node-lmdb'),
     lsdb,
 
     bcrypt = require("bcrypt"),     // Secure hashing
