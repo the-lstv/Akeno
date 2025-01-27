@@ -291,7 +291,7 @@ class dbi {
      */
 
     has(key){
-        if(this.memoryCache && this.cache.has(key)){
+        if(!lmdb || (this.memoryCache && this.cache.has(key))){
             return true;
         }
 
