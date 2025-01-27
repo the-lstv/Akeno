@@ -308,4 +308,4 @@ class dbi {
     }
 }
 
-export default KeyStorage;
+module.exports = KeyStorage;
