@@ -4,13 +4,13 @@
 
     Last modified: 2024
     License: GPL-3.0
-    Version: 1.5.6
+    Version: 1.5.7
     See: https://github.com/the-lstv/akeno
 */
 
 
 let
-    version = "1.5.7 [unreleased]",
+    version = "1.5.7",
 
     since_startup = performance.now(),
 
@@ -1067,8 +1067,6 @@ const backend = {
 
 backend.log = backend.createLoggerContext("api")
 
-backend.log("Starting Akeno server v" + version + " in " + (isDev? "development": "production") + " mode.")
-
 backend.refreshConfig()
 
 const server_enabled = backend.config.block("server").get("enable", Boolean);
@@ -1081,6 +1079,8 @@ const H3Port = backend.config.block("server").get("h3Port", Number, 443);
 
 const isDev = backend.config.block("system").get("developmentMode", Boolean);
 
+
+backend.log("Starting Akeno v" + version + " in " + (isDev? "development": "production") + " mode.")
 
 const handlers = {
     cdn: backend.addon("cdn").HandleRequest,

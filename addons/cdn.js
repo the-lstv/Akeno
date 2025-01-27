@@ -35,23 +35,23 @@ api = {
 
         fileMetadata = db.openDbi("fileMetadata", {}, true);
         
-        if(fs.existsSync(cdn_path + "/metadata.cache.json")){
-            let data = JSON.parse(fs.readFileSync(cdn_path + "/metadata.cache.json", "utf8"));
+        // if(fs.existsSync(cdn_path + "/metadata.cache.json")){
+        //     let data = JSON.parse(fs.readFileSync(cdn_path + "/metadata.cache.json", "utf8"));
 
-            console.log("Migrating metadata cache JSON into a database...");
+        //     console.log("Migrating metadata cache JSON into a database...");
 
-            const txn = fileMetadata.beginTxn();
-            try {
-                for (const key in data) {
-                    fileMetadata.set(txn, key, data[key]);
-                }
-            } finally {
-                txn.commit();
-                console.log("Migration complete.");
-            }
+        //     const txn = fileMetadata.beginTxn();
+        //     try {
+        //         for (const key in data) {
+        //             fileMetadata.set(txn, key, data[key]);
+        //         }
+        //     } finally {
+        //         txn.commit();
+        //         console.log("Migration complete.");
+        //     }
 
-            fs.renameSync(cdn_path + "/metadata.cache.json", cdn_path + "/archive/metadata.cache.json");
-        }
+        //     fs.renameSync(cdn_path + "/metadata.cache.json", cdn_path + "/archive/metadata.cache.json");
+        // }
         
         mime = backend.mime;
     },
