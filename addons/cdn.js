@@ -17,7 +17,7 @@ let backend,
 
 const cdn_path = path.resolve(__dirname, "../cdn");
 
-let ls_api;
+let ls_api = null;
 if(fs.existsSync(cdn_path + "/ls")){
     ls_api = require(cdn_path + "/ls/backend/api");
 }
@@ -27,7 +27,8 @@ var STREAM_CHUNK_SIZE = 8_000_000;
 api = {
     Initialize($){
         backend = $;
-        ls_api.Initialize(backend)
+
+        if (ls_api) ls_api.Initialize(backend)
 
         db = backend.KeyDB("db/cdn");
         db.open();
@@ -168,7 +169,7 @@ api = {
                             This code handles transfer of the framework.
                         */
 
-                        ls_api.HandleRequest({ req, res, segments, error })
+                        if(ls_api) ls_api.HandleRequest({ req, res, segments, error }); else error(43);
                     break;
 
                     default:
