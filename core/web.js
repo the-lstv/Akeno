@@ -21,8 +21,6 @@ let
     { Parser } = require('htmlparser2'),
     picomatch = require('picomatch'),
 
-    // { xxh32 } = require("@node-rs/xxhash"),
-
     // Local libraries
     { parse, configTools } = require("./parser"),
 
@@ -40,7 +38,7 @@ let
     cache = new Map,
 
     // Maximal cache size for binary files per-file.
-    // If a file is bigger than this, it is not saved and served from RAM.
+    // If a file is bigger than this, it is not served from RAM.
     max_cache_size = 367001600,
 
     cacheByFile = {
@@ -83,7 +81,7 @@ server = {
 
         // Looks for valid application locations
         for(let location of locations){
-            if(location.startsWith("./")) location = backend.path + location.replace("./", "/");
+            if(location.startsWith("./")) location = backend.path + location.slice(1);
 
             if(!fs.existsSync(location.replace("/*", ""))) {
                 server.log.warn("Web application (at " + location + ") does not exist - skipped.");
@@ -740,7 +738,7 @@ function parse_html_content(options){
 
     const htmlContent = options.content? options.content: options.file? fs.readFileSync(options.file, "utf8"): "";
 
-    if(htmlContent.length < 1) return Buffer.from("");
+    if(htmlContent.length < 1) return backend.constants.EMPTY_BUFFER;
 
     const output = [ null ]; // null for adding the header
 

@@ -29,8 +29,8 @@ web {
         # Website locations - * searches all subdirectories.
         # A website/webapp becomes valid when it contains an app.conf file.
         "/var/www/akeno/*",
-        "/var/lib/akeno/examples/hello-world-website",
-        "/var/lib/akeno/core/gui"
+        "./examples/hello-world-website",
+        "./core/gui"
     ;
 }
 

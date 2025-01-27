@@ -4,13 +4,13 @@
 
     Last modified: 2024
     License: GPL-3.0
-    Version: 1.5.6
+    Version: 1.5.7
     See: https://github.com/the-lstv/akeno
 */
 
 
 let
-    version = "1.5.6",
+    version = "1.5.7",
 
     since_startup = performance.now(),
 
@@ -30,7 +30,6 @@ let
 
     // Storage/cache managers
     KeyStorage = require("./core/kvdb"),
-    lmdb = require('node-lmdb'),
     lsdb,
 
     bcrypt = require("bcrypt"),     // Secure hashing
@@ -40,9 +39,9 @@ let
 
     // Config parser
     { parse, stringify, merge, configTools } = require("./core/parser"),
-    // { proxyReq, proxyWebSocket, proxySFTP, remoteNodeShell } = require("./core/proxy"),
+    // { proxyReq, proxyWebSocket } = require("./core/proxy"),
 
-    { xxh32 } = require("@node-rs/xxhash"),
+    { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),
 
     // For code compression
     CleanCSS = new (require('clean-css')),
@@ -50,12 +49,14 @@ let
 ;
 
 
-
 try {
     // Disable uWebSockets version header, remove to re-enable
     uws._cfg('999999990007');
 } catch (error) {}
 
+const EMPTY_OBJECT = Object.freeze({});
+const EMPTY_ARRAY = Object.freeze([]);
+const EMPTY_BUFFER = Buffer.alloc(0);
 
 
 let
@@ -75,9 +76,25 @@ let
 ;
 
 
+function KeyDB(name){
+    const path = PATH + name;
+
+    if(name.startsWith("db/")){
+        if(!fs.existsSync(path)){
+            fs.mkdirSync(path)
+        }
+    } else throw new Error("Invalid database path");
+
+    return new KeyStorage(path)
+}
+
+
 // Open databases
-const cache_db = new KeyStorage(PATH + "db/cache", true);
-const data_db = new KeyStorage(PATH + "db/data", true);
+const cache_db = new KeyDB("db/cache");
+const data_db = new KeyDB("db/data");
+
+cache_db.open();
+data_db.open();
 
 const kvdb = {
     compressionCache: cache_db.openDbi("compression_cache", { keyIsUint32: true }, true),
@@ -87,90 +104,96 @@ const kvdb = {
 
 
 function initialize(){
-    const socketPath = (backend.config.block("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
+    if (process.platform !== 'linux') {
+        console.warn(`[system] Warning: Your platform (${process.platform}) has experimental support. Internal API server is disabled and the CLI will not work as expected. Akeno is currently only supported on Linux.`);
+    }
 
-    // Internal ipc server
-    ipc = new ipc_server({
-        onRequest(socket, request, respond){
-            
-            const command = typeof request === "string"? (request = [request] && request[0]): request[0];
-
-            switch(command){
-                case "ping":
-                    respond(null, {
-                        backend_path: PATH,
-                        version,
-                        isDev,
-                        server_enabled
-                    })
-                    break
-
-                case "usage":
-                    const res = {
-                        mem: process.memoryUsage(),
-                        cpu: process.cpuUsage(),
-                        uptime: process.uptime(),
-                        backend_path: PATH,
-                        version,
-                        isDev,
-                        server_enabled,
-                        modules: {
-                            count: ModuleManager.modules.size,
-                            sample: [...ModuleManager.modules.keys()]
-                        }
-                    };
-
-                    // Calculate CPU usage in percentages
-                    if(request[1] === "cpu") {
-                        setTimeout(() => {
-                            const endUsage = process.cpuUsage(res.cpu);
-                            const userTime = endUsage.user / 1000;
-                            const systemTime = endUsage.system / 1000;
-
-                            res.cpu.usage = ((userTime + systemTime) / 200) * 100
-                            respond(null, res)
-                        }, 200);
-                    } else respond(null, res);
-                    break
-
-                case "web.list":
-                    respond(null, backend.addon("core/web").util.list())
-                    break
-
-                case "web.list.domains":
-                    respond(null, backend.addon("core/web").util.listDomains(request[1]))
-                    break
-
-                case "web.list.getDomain":
-                    respond(null, backend.addon("core/web").util.getDomain(request[1]))
-                    break
-
-                case "web.enable":
-                    respond(null, backend.addon("core/web").util.enable(request[1]))
-                    break
-
-                case "web.disable":
-                    respond(null, backend.addon("core/web").util.disable(request[1]))
-                    break
-
-                case "web.reload":
-                    respond(null, backend.addon("core/web").util.reload(request[1]))
-                    break
-
-                case "web.tempDomain":
-                    respond(null, backend.addon("core/web").util.tempDomain(request[1]))
-                    break
-
-                default:
-                    respond("Invalid command")
+    else {
+        const socketPath = (backend.config.block("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
+    
+        // Internal ipc server
+        ipc = new ipc_server({
+            onRequest(socket, request, respond){
+                
+                const command = typeof request === "string"? (request = [request] && request[0]): request[0];
+    
+                switch(command){
+                    case "ping":
+                        respond(null, {
+                            backend_path: PATH,
+                            version,
+                            isDev,
+                            server_enabled
+                        })
+                        break
+    
+                    case "usage":
+                        const res = {
+                            mem: process.memoryUsage(),
+                            cpu: process.cpuUsage(),
+                            uptime: process.uptime(),
+                            backend_path: PATH,
+                            version,
+                            isDev,
+                            server_enabled,
+                            modules: {
+                                count: ModuleManager.modules.size,
+                                sample: [...ModuleManager.modules.keys()]
+                            }
+                        };
+    
+                        // Calculate CPU usage in percentages
+                        if(request[1] === "cpu") {
+                            setTimeout(() => {
+                                const endUsage = process.cpuUsage(res.cpu);
+                                const userTime = endUsage.user / 1000;
+                                const systemTime = endUsage.system / 1000;
+    
+                                res.cpu.usage = ((userTime + systemTime) / 200) * 100
+                                respond(null, res)
+                            }, 200);
+                        } else respond(null, res);
+                        break
+    
+                    case "web.list":
+                        respond(null, backend.addon("core/web").util.list())
+                        break
+    
+                    case "web.list.domains":
+                        respond(null, backend.addon("core/web").util.listDomains(request[1]))
+                        break
+    
+                    case "web.list.getDomain":
+                        respond(null, backend.addon("core/web").util.getDomain(request[1]))
+                        break
+    
+                    case "web.enable":
+                        respond(null, backend.addon("core/web").util.enable(request[1]))
+                        break
+    
+                    case "web.disable":
+                        respond(null, backend.addon("core/web").util.disable(request[1]))
+                        break
+    
+                    case "web.reload":
+                        respond(null, backend.addon("core/web").util.reload(request[1]))
+                        break
+    
+                    case "web.tempDomain":
+                        respond(null, backend.addon("core/web").util.tempDomain(request[1]))
+                        break
+    
+                    default:
+                        respond("Invalid command")
+                }
+    
             }
-
-        }
-    })
-
-    ipc.listen(socketPath, () => {
-        console.log(`[system] IPC socket is listening on ${socketPath}`)
-    })
+        })
+    
+        ipc.listen(socketPath, () => {
+            console.log(`[system] IPC socket is listening on ${socketPath}`)
+        })
+    }
 
     if (!server_enabled) return;
 
@@ -180,14 +203,13 @@ function initialize(){
         if(version.Initialize) version.Initialize(backend)
     }
 
-
     // Websocket handler
     const wss = {
 
         // idleTimeout: 32,
         // maxBackpressure: 1024,
-        maxPayloadLength: 2**16,
-        compression: uws.DEDICATED_COMPRESSOR_32KB,
+        maxPayloadLength: backend.config.block("websocket").get("maxPayloadLength", Number) || 32 * 1024,
+        compression: uws[backend.config.block("websocket").get("compression", String)] || uws.DEDICATED_COMPRESSOR_32KB,
 
         sendPingsAutomatically: true,
 
@@ -199,18 +221,28 @@ function initialize(){
                 continueUpgrade = false
             })
 
-            let host = req.getHeader("host");
+            let host = req.getHeader("host"), handler;
 
 
             // Handle proxied websockets when needed
             // if(shouldProxy(req, res, true, true, context)) return;
 
 
-            let segments = req.getUrl().split("/").filter(garbage => garbage), continueUpgrade = true;
-            
-            if(segments[0].toLowerCase().startsWith("v") && !isNaN(+segments[0].replace("v", ""))) segments.shift();
+            /**
+             * @warning This router is currently outdated and will be replaced in the future.
+             */
 
-            let handler = API.handlers.get(API.default).GetHandler(segments[0]);
+            let segments = req.getUrl().split("/").filter(Boolean), continueUpgrade = true;
+            
+            const versionCode = req.pathSegments.shift();
+            const firstChar = versionCode && versionCode.charCodeAt(0);
+
+            if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
+            
+            const api = API.handlers.get(parseInt(versionCode.slice(1), 10));
+            handler = api && api.HandleRequest;
+
+            if(!handler) return backend.helper.error(req, res, 0);
 
             if(!handler || !handler.HandleSocket) return res.end();
 
@@ -243,28 +275,27 @@ function initialize(){
     const web_handler = backend.addon("core/web").HandleRequest;
 
     function resolve(res, req, flags, virtual = null) {
+        if(!flags) flags = EMPTY_OBJECT;
 
         if(!virtual) {
 
             req.begin = performance.now()
 
-            // Lowercase is pretty but most code already uses uppercase
+            // Lowercase is pretty but most code already uses uppercase :(
             req.method = req.getMethod && req.getMethod().toUpperCase();
 
             const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
-            req.domain = _colon_index === -1? _host: _host.slice(0, _host.lastIndexOf(":"));
+            req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
 
-            req.path = req.getUrl();
+            req.path = decodeURIComponent(req.getUrl());
             req.origin = req.getHeader('origin');
             req.secure = flags && !!flags.secure; // If the request is done over a secured connection
-            // req.secured = req.secure; // I messed up the name at first...
 
 
         } else {
 
-            // Virtual requests for whatever reason...
             // Should this be kept or removed?
-            // It has a real use-case: selectively handling some requests by different handlers or "emulating" requests.
+            // It has a real use-case: selectively handling some requests by different handlers and localy emulating requests.
             req.getMethod = () => virtual.method;
             req.getUrl = () => virtual.path;
             Object.assign(req, virtual)
@@ -275,31 +306,27 @@ function initialize(){
 
         // Handle preflight requests
         // TODO: make this more flexible
-        if(req.method == "OPTIONS"){
+        if(req.method === "OPTIONS"){
             backend.helper.corsHeaders(req, res)
             res.writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
             return
         }
 
 
-        // Yeah, if the request is virtual, resolve may be called multiple times on the same request.
-        // However it is not valid if the request has already been sent.
-        if(!req.wasResolved){
-            req.wasResolved = true;
-    
+        if(!req._once){
+            req._once = true;
+
             res.onAborted(() => {
                 clearTimeout(res.timeout)
                 req.abort = true;
             })
 
-
             // Handle proxied requests
             // if(shouldProxy(req, res, flags)) return;
 
-
             // Receive POST body
-            if(req.method === "POST" || (req.transferProtocol === "qblaze" && req.hasBody)){
-                req.fullBody = Buffer.from('');
+            if(req.method === "POST" || (req.hasBody && req.transferProtocol === "qblaze")){
+                req.fullBody = Buffer.alloc(0);
 
                 req.hasFullBody = false;
                 req.contentType = req.getHeader('content-type');
@@ -328,20 +355,22 @@ function initialize(){
 
         // Finally, lets route the request to find a handler.
 
-        let index = -1, segments = decodeURIComponent(req.path).split("/").filter(Boolean)
-
-        function shift(){
-            index++
-            return segments[index] || "";
+        // A slightly faster implementation compared to .split("/").filter(Boolean)
+        req.pathSegments = []
+        let last = 0
+        for(let i = 0; i < req.path.length +1; i++){
+            if(req.path.charCodeAt(i) === 47 || i === req.path.length) {
+                if(last !== i) req.pathSegments.push(req.path.slice(last, i));
+                last = i + 1
+            }
         }
-
 
         // Default handler is the web handler
         let handler = domainRouter.get(req.domain) || web_handler;
 
         // Handle the built-in API
         if(handler === 2){
-            const versionCode = segments.shift();
+            const versionCode = req.pathSegments.shift();
             const firstChar = versionCode && versionCode.charCodeAt(0);
 
             if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
@@ -354,7 +383,19 @@ function initialize(){
             return req.writeStatus("400 Bad Request").end("400 Bad Request")
         }
 
-        handler({segments, shift, error: (error, code, status) => backend.helper.error(req, res, error, code, status), req, res, flags})
+        handler({
+            req,
+            res,
+            flags,
+
+            segments: req.pathSegments,
+
+            /** @deprecated */
+            shift: backend.helper.next(req),
+
+            /** @deprecated */
+            error: (error, code, status) => backend.helper.error(req, res, error, code, status)
+        })
     }
 
     backend.exposeToDebugger("router", resolve)
@@ -368,19 +409,17 @@ function initialize(){
     app.ws('/*', wss)
     
     // Initialize WebServer
-    app.any('/*', (res, req) => resolve(res, req, { secure: backend.isDev }))
+    app.any('/*', resolve)
     
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
-            console.log(`[system] Akeno server v${version} has started and is listening on port ${HTTPort}! Total hits: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
+            console.log(`[system] Server has started and is listening on port ${HTTPort}! Total hits: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
 
             // Configure SSL
             if(ssl_enabled) {
 
-
                 SSLApp = uws.SSLApp();
-                backend.exposeToDebugger("uws_ssl", SSLApp)
-
+                backend.exposeToDebugger("uws_ssl", SSLApp);
 
                 if(h3_enabled){
                     H3App = uws.H3App({
@@ -416,7 +455,7 @@ function initialize(){
                                 cert_file_name: backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", domain.replace("*.", ""))
                             })
 
-                            // For some reason we still have to include a separate router like so:
+                            // We still have to include a separate router like so:
                             SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, {secure: true})).ws("/*", wss)
                             // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
                             // A bit wasteful right? For every domain..
@@ -463,7 +502,7 @@ function initialize(){
 }
 
 const jwt_key = process.env.AKENO_KEY;
-const devInspecting = !!process.execArgv.find(v => v.startsWith("--inspect"));
+const devInspecting = !!process.execArgv.find(arg => arg.startsWith("--inspect"));
 
 const backend = {
     version,
@@ -550,6 +589,11 @@ const backend = {
             });
         },
 
+        next(req){
+            if(!req._segmentsIndex) req._segmentsIndex = 0; else req._segmentsIndex ++;
+            return req.pathSegments[req._segmentsIndex] || ""; // Returning null is more correct
+        },
+
         // This helper should likely be avoided.
         error(req, res, error, code, status){
             if(req.abort) return;
@@ -609,76 +653,95 @@ const backend = {
             });
         },
 
-        parseBody(req, res, callback){
-            return {
-                get type(){
-                    return req.getHeader("content-type")
-                },
-
-                get length(){
-                    return req.getHeader("content-length")
-                },
-
-                upload(key = "file", hash){
-
-                    function done(){
-                        let parts = uws.getParts(req.fullBody, req.contentType);
-                        
-                        for(let part of parts){
-                            part.data = Buffer.from(part.data)
-                            if(hash) part.md5 = crypto.createHash('md5').update(part.data).digest('hex')
-                        }
-
-                        callback(parts)
-                    }
-
-                    if(req.hasFullBody) done(); else req.onFullData = done;
-
-                },
-
-                parts(){
-
-                    function done(){
-                        let parts = uws.getParts(req.fullBody, req.contentType);
-
-                        callback(parts)
-                    }
-
-                    if(req.hasFullBody) done(); else req.onFullData = done;
-
-                },
-
-                data(){
-                    function done(){
-                        req.body = {
-                            get data(){
-                                return req.fullBody
-                            },
-
-                            get string(){
-                                return req.fullBody.toString('utf8');
-                            },
-
-                            get json(){
-                                let data;
-
-                                try{
-                                    data = JSON.parse(req.fullBody.toString('utf8'));
-                                } catch {
-                                    return null
-                                }
-
-                                return data
-                            }
-                        }
-    
-                        callback(req.body)
-                    }
-
-
-                    if(req.hasFullBody) done(); else req.onFullData = done;
-                }
+        bodyParser: class {
+            constructor(req, res, callback){
+                this.req = req;
+                this.res = res;
+                this.callback = callback;
             }
+
+            get type(){
+                return this.req.getHeader("content-type")
+            }
+
+            get length(){
+                return this.req.getHeader("content-length")
+            }
+
+            upload(key = "file", hash){
+
+                function done(){
+                    let parts = uws.getParts(this.req.fullBody, this.req.contentType);
+                    this.processFiles(parts, hash, this.callback);
+                }
+
+                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
+
+            }
+
+            processFiles(files, hash, callback){
+                for(let part of files){
+                    part.data = Buffer.from(part.data)
+
+                    if(hash) {
+                        if(hash === "xxh3") part.hash = xxh3.xxh64(part.data).toString(16); else
+                        if(hash === "xxh32") part.hash = xxh32(part.data).toString(16); else
+                        if(hash === "xxh64") part.hash = xxh64(part.data).toString(16); else
+                        if(hash === "xxh128") part.hash = xxh3.xxh128(part.data).toString(16); else
+
+                        part.hash = crypto.createHash('md5').update(part.data).digest('hex');
+                    }
+                }
+
+                callback(files)
+            }
+
+            parts(){
+
+                function done(){
+                    let parts = uws.getParts(this.req.fullBody, this.req.contentType);
+
+                    this.callback(parts)
+                }
+
+                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
+
+            }
+
+            data(){
+                function done(){
+                    this.req.body = {
+                        get data(){
+                            return this.req.fullBody
+                        },
+
+                        get string(){
+                            return this.req.fullBody.toString('utf8');
+                        },
+
+                        get json(){
+                            let data;
+
+                            try{
+                                data = JSON.parse(this.req.fullBody.toString('utf8'));
+                            } catch {
+                                return null
+                            }
+
+                            return data
+                        }
+                    }
+
+                    this.callback(this.req.body)
+                }
+
+
+                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
+            }
+        },
+
+        parseBody(req, res, callback){
+            return new backend.helper.bodyParser(req, res, callback)
         }
     },
 
@@ -755,7 +818,7 @@ const backend = {
             if(compressed = kvdb.compressionCache.getCache(hash)) return compressed;
 
             // We have no disk nor memory cache, compress on the fly and store.
-            if(!kvdb.compressionCache.exists(hash)){
+            if(!kvdb.compressionCache.has(hash)){
                 compressed = isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code
 
                 // If compression failed, return the original code
@@ -776,6 +839,8 @@ const backend = {
     },
 
     kvdb,
+
+    KeyDB,
 
     jwt: {
         verify(something, options){
@@ -992,11 +1057,16 @@ const backend = {
             if(backend.db.sql_connections[db]) return backend.db.sql_connections[db];
             return backend.db.sql_connections[db] = lsdb.Server(host, user, password, db)
         }
+    },
+
+    constants: {
+        EMPTY_OBJECT, EMPTY_ARRAY, EMPTY_BUFFER
     }
 }
 
 
 backend.log = backend.createLoggerContext("api")
+
 backend.refreshConfig()
 
 const server_enabled = backend.config.block("server").get("enable", Boolean);
@@ -1009,6 +1079,8 @@ const H3Port = backend.config.block("server").get("h3Port", Number, 443);
 
 const isDev = backend.config.block("system").get("developmentMode", Boolean);
 
+
+backend.log("Starting Akeno v" + version + " in " + (isDev? "development": "production") + " mode.")
 
 const handlers = {
     cdn: backend.addon("cdn").HandleRequest,

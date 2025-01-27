@@ -8,22 +8,287 @@ let backend,
 
     mime,
 
-    fileMetadataCache = {},
+    db,
+    fileMetadata
 
-    // Libraries
-    libLocations
+    // // Libraries
+    // libLocations
 ;
 
 const cdn_path = path.resolve(__dirname, "../cdn");
 
-let ls_api;
+let ls_api = null;
 if(fs.existsSync(cdn_path + "/ls")){
-    ls_api = require(cdn_path + "/ls/source/backend/api");
+    ls_api = require(cdn_path + "/ls/backend/api");
 }
 
 var STREAM_CHUNK_SIZE = 8_000_000;
 
-fileMetadataCache = JSON.parse(fs.readFileSync(cdn_path + "/metadata.cache.json", "utf8"))
+api = {
+    Initialize($){
+        backend = $;
+
+        if (ls_api) ls_api.Initialize(backend)
+
+        db = backend.KeyDB("db/cdn");
+        db.open();
+
+        fileMetadata = db.openDbi("fileMetadata", {}, true);
+        
+        // if(fs.existsSync(cdn_path + "/metadata.cache.json")){
+        //     let data = JSON.parse(fs.readFileSync(cdn_path + "/metadata.cache.json", "utf8"));
+
+        //     console.log("Migrating metadata cache JSON into a database...");
+
+        //     const txn = fileMetadata.beginTxn();
+        //     try {
+        //         for (const key in data) {
+        //             fileMetadata.set(txn, key, data[key]);
+        //         }
+        //     } finally {
+        //         txn.commit();
+        //         console.log("Migration complete.");
+        //     }
+
+        //     fs.renameSync(cdn_path + "/metadata.cache.json", cdn_path + "/archive/metadata.cache.json");
+        // }
+        
+        mime = backend.mime;
+    },
+
+    async HandleRequest({segments, shift, error, req, res}){
+        let first = segments.shift();
+
+        switch(req.method){
+            case "GET":
+                switch(first){
+                    case "file":
+                        if(!segments[0]){
+                            return backend.helper.send(req, res, `{"success":false,"error":"Usage: /file/[hash][.format][?options] instead."}`, null, "400")
+                        }
+
+                        let file = segments[segments[0].length < 6? 1 : 0] || "";
+                        
+                        const dot_index = file.lastIndexOf(".");
+                        const fileName = dot_index === -1? file: file.slice(0, dot_index);
+                        const fileExtension = dot_index === -1? "": fileName.slice(dot_index + 1);
+
+                        let filePath = cdn_path + "/file/" + fileName,
+                            mimeType = mime.getType(fileExtension) || "text/plain",
+                            exists = fs.existsSync(filePath),
+                            content
+                        ;
+
+                        if(fs.lstatSync(filePath).isDirectory()){
+                            backend.helper.send(req, res, fs.readdirSync(filePath))
+                            return
+                        }
+
+                        if(segments[0] === "check"){
+                            return backend.helper.send(req, res, `{"exists":${exists}}`, {'cache-control': "no-cache"})
+                        }
+
+                        if(segments[0] === "info"){
+                            const metadata = fileMetadata.get(fileName, Object);
+
+                            if(metadata){
+                                return backend.helper.send(req, res, {
+                                    ...metadata,
+                                    likelyMimeType: mostCommonItem(metadata.mimeTypeHistory),
+                                    likelyName: mostCommonItem(metadata.nameHistory),
+                                    likelyExtension: mostCommonItem(metadata.extensionHistory),
+                                    exists
+                                }, {'cache-control': "no-cache"})
+                            } else {
+                                return error(43);
+                            }
+                        }
+
+                        if(!exists) {
+                            return error(43)
+                        }
+
+                        // if(segments[1] && segments[1].toLowerCase() == "checknsfw"){
+                        //     backend.helper.send(req, res, await imageCheckNSFW(fileName))
+                        //     return 
+                        // }
+
+                        const size_query = req.getQuery("size");
+                        if(size_query && mimeType.startsWith("image")){
+                            let size = size_query.split(",");
+                
+                            if(size.length < 2) size[1] = size[0];
+                
+                            size = size.map(value => Math.max(12, Math.min(+value, 1024)))
+
+                            size[0] = +size[0]
+                            size[1] = +size[1]
+                
+                            if(isNaN(size[0])) size[0] = null;
+                            if(isNaN(size[1])) size[1] = null;
+                
+                            content = await sharp(filePath).resize(size[0] === 0 ? null : size[0], size[1] === 0 ? null : size[1], {fit: req.getQuery("fit") || "cover"}).webp({
+                                quality: 80,
+                                lossless: false
+                            }).toBuffer()
+                        }
+
+                        migration_send(req, res, content || filePath, 31536000, mimeType, content? false : true)
+                        return;
+
+                    case "archive":
+                        (() => {
+                            let file = segments.join("/"),
+                                extension = file.split(".").at(-1).toLowerCase(),
+                                filePath = cdn_path + "/archive/" + segments.join("/"),
+                                mimeType = mime.getType(extension) || "text/plain",
+                                exists = fs.existsSync(filePath),
+                                content
+                            ;
+    
+                            if(!exists) {
+                                return error(43)
+                            }
+    
+                            if(fs.lstatSync(filePath).isDirectory()){
+                                migration_send(req, res, fs.readdirSync(filePath))
+                                return
+                            }
+
+                            migration_send(req, res, content || filePath, 31536000, mimeType, content? false : true)
+                            return
+                        })()
+                        return;
+
+                    case "docs": case "docs.html": case "docs.htm":
+                        backend.helper.send(req, res, cdn_path + "/docs.html", false, "text/html", true)
+                    break
+
+                    case "ls":
+                        /*
+                            This code handles transfer of the framework.
+                        */
+
+                        if(ls_api) ls_api.HandleRequest({ req, res, segments, error }); else error(43);
+                    break;
+
+                    default:
+                        file = cdn_path + "/" + first + "/" + req.path;
+
+                        if(fs.existsSync(file) && fs.lstatSync(file).isDirectory()){
+                            backend.helper.send(req, res, fs.readdirSync(file))
+                            return
+                        }
+
+                        error(43)
+                }
+            break;
+
+            case "POST":
+                switch(first){
+                    case "upload": case "file":
+                        backend.helper.parseBody(req, res, async (data, fail) => {
+                            if(fail){
+                                return error(fail)
+                            }
+
+                            let finalResult = [];
+
+                            if(!data || !Array.isArray(data)){
+                                return error(2)
+                            }
+
+                            api.upload(data, req, res, error);
+                        }).upload("file", "xxh3")
+                    break;
+                    default:
+                        error(1)
+                }
+            break;
+
+            default:
+                error(39)
+        }
+    },
+
+    async upload(files, req, res, error){
+        const update_txn = fileMetadata.beginTxn();
+
+        const finalResult = [];
+
+        const ip = (res && String(new Uint8Array(res.getRemoteAddress())).replaceAll(",", ".").replace("0.0.0.0.0.0.0.0.0.0.255.255.", "")) || null;
+
+        for(let file of files){
+            let ext = (file.filename.match(/\.[^.]+$/)?.[0] || "").replace(".", ""),
+                mimeType = file.type || mime.getType(ext) || "text/plain"
+            ;
+
+            if(fileMetadata.has(file.hash)) {
+                const metadata = fileMetadata.get(file.hash, Object);
+
+                Object.assign(metadata, {
+                    lastUploaderIP: ip,
+                    lastUploadTime: Date.now(),
+                    uploadedTimes: metadata.uploadedTimes + 1,
+                })
+
+                if(!metadata.nameHistory) metadata.nameHistory = [];
+                if(!metadata.extensionHistory) metadata.extensionHistory = [];
+                if(!metadata.mimeTypeHistory) metadata.mimeTypeHistory = [];
+
+                if(!metadata.nameHistory.includes(file.filename)) metadata.nameHistory.push(file.filename)
+                if(!metadata.extensionHistory.includes(ext)) metadata.extensionHistory.push(ext)
+                if(!metadata.mimeTypeHistory.includes(ext)) metadata.mimeTypeHistory.push(mimeType)
+
+                fileMetadata.set(update_txn, file.hash, metadata)
+            } else {
+                fileMetadata.set(update_txn, file.hash, {
+                    nameHistory: [file.filename],
+                    extensionHistory: [ext],
+                    mimeTypeHistory: [mimeType],
+                    lastUploaderIP: ip,
+                    uploaderIP: ip,
+                    firstUploadTime: Date.now(),
+                    uploadedTimes: 1
+                })
+            }
+
+            const newPath = cdn_path + '/file/' + file.hash;
+            const filename = file.hash + (ext? "." + ext: "");
+            const exists = fs.existsSync(newPath);
+
+            const result = {
+                success: true,
+                mimeType,
+                hash: file.hash,
+                originalName: file.filename,
+                name: filename,
+                ignored: exists,
+                url: "https://cdn.extragon.cloud/file/" + filename
+            }
+
+            // if(mimeType.startsWith("image")){
+            //     try {
+            //         result.nsfw = await imageCheckNSFW(file.hash);
+            //     } catch (e) {
+            //         result.nsfw_error = e
+            //     }
+            // }
+
+            if(!exists) {
+                fs.writeFile(newPath, file.data, () => {
+                    delete file.data
+                })
+            }
+
+            // if(!fileMetadataCache.nsfw) await imageCheckNSFW(file.hash)                        
+            finalResult.push(result)
+        }
+
+        update_txn.commit();
+        if (res) backend.helper.send(req, res, finalResult); else return finalResult
+    }
+};
 
 function mostCommonItem(arr) {
     const frequency = arr.reduce((acc, item) => {
@@ -44,58 +309,43 @@ function mostCommonItem(arr) {
     return mostCommon;
 }
 
-async function deadlineFetch(url, options = {}, timeout = 5000) {
-    let controller = new AbortController(),
-        timeoutId = setTimeout(() => controller.abort(), timeout);
-    ;
+// async function deadlineFetch(url, options = {}, timeout = 5000) {
+//     let controller = new AbortController(),
+//         timeoutId = setTimeout(() => controller.abort(), timeout);
+//     ;
 
-    try {
-        let response = await fetch(url, { signal: controller.signal, ...options });
+//     try {
+//         let response = await fetch(url, { signal: controller.signal, ...options });
 
-        clearTimeout(timeoutId);
+//         clearTimeout(timeoutId);
 
-        return response
-    } catch (error) {throw error};
-}
+//         return response
+//     } catch (error) {throw error};
+// }
 
-async function imageCheckNSFW(hash){
-    if(!fileMetadataCache[hash]) fileMetadataCache[hash] = {};
-    if(fileMetadataCache[hash].nsfw) return fileMetadataCache[hash].nsfw;
+// async function imageCheckNSFW(hash){
+//     if(!fileMetadataCache[hash]) fileMetadataCache[hash] = {};
+//     if(fileMetadataCache[hash].nsfw) return fileMetadataCache[hash].nsfw;
 
-    let result = {};
+//     let result = {};
 
-    try {
-        let data = await deadlineFetch("http://0.0.0.0:8000?imageHash=" + hash)
-        result = await data.json()
-    } catch (e) {
-        result.error = e
-    }
+//     try {
+//         let data = await deadlineFetch("http://0.0.0.0:8000?imageHash=" + hash)
+//         result = await data.json()
+//     } catch (e) {
+//         result.error = e
+//     }
 
-    if(!result.error){
-        fileMetadataCache[hash].nsfw = result
-    }
+//     if(!result.error){
+//         fileMetadataCache[hash].nsfw = result
+//     }
 
-    saveMetadata()
+//     saveMetadata()
     
-    return result
-}
+//     return result
+// }
 
-function updateMetadataOf(hash, patch){
-    if(!fileMetadataCache[hash]) fileMetadataCache[hash] = {};
-
-    fileMetadataCache[hash] = {
-        ...fileMetadataCache[hash],
-        ...patch
-    }
-
-    saveMetadata()
-}
-
-function saveMetadata(){
-    fs.writeFileSync(cdn_path + "/metadata.cache.json", JSON.stringify(fileMetadataCache))
-}
-
-function send(req, res, data = {}, cache = false, type = null, isFilePath){
+function migration_send(req, res, data = {}, cache = false, type = null, isFilePath){
     let mime = type || (typeof data == "object"? "application/json" : typeof data == "string" ? "text/plain" : "application/octet-stream");
 
     let headers = {
@@ -106,334 +356,39 @@ function send(req, res, data = {}, cache = false, type = null, isFilePath){
     if(isFilePath){
         const range = req.getHeader("range");
 
-        if (range) {
-            const fileSize = fs.statSync(data).size;
-
-            // const parts = range.replace(/bytes=/, '').split('-');
-            // const start = parseInt(parts[0], 10);
-            // const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 1000000, fileSize - 1);
-
-            const start = Number(range.replace(/\D/g, ""));
-            const end = Math.min(start + STREAM_CHUNK_SIZE, fileSize - 1);
-
-            const chunkSize = end - start;
-            const file = fs.createReadStream(data, { start, end });
-
-            res.cork(() => {
-                // Begin stream with the proper headers
-                res.writeStatus('206')
-
-                backend.helper.corsHeaders(req, res).writeHeaders(req, res, {
-                    ...headers,
-                    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                    'Accept-Ranges': 'bytes'
-                });
-            })
-
-            backend.helper.stream(req, res, file, chunkSize);
-        } else {
-            backend.helper.writeHeaders(req, res, headers).stream(req, res, fs.createReadStream(data), fs.statSync(data).size);
+        if(!range){
+            return backend.helper.writeHeaders(req, res, headers).stream(req, res, fs.createReadStream(data), fs.statSync(data).size);
         }
+
+        const fileSize = fs.statSync(data).size;
+
+        // const parts = range.replace(/bytes=/, '').split('-');
+        // const start = parseInt(parts[0], 10);
+        // const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 1000000, fileSize - 1);
+
+        const start = Number(range.replace(/\D/g, ""));
+        const end = Math.min(start + STREAM_CHUNK_SIZE, fileSize - 1);
+
+        const chunkSize = end - start;
+        const file = fs.createReadStream(data, { start, end });
+
+        res.cork(() => {
+            // Begin stream with the proper headers
+            res.writeStatus('206')
+
+            backend.helper.corsHeaders(req, res).writeHeaders(req, res, {
+                ...headers,
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes'
+            });
+        })
+
+        backend.helper.stream(req, res, file, chunkSize);
         return
     }
 
     // res[(!type && (Array.isArray(data) || (typeof data == "object" && Object.prototype.toString.call(data) === '[object Object]'))? "json" : "send")](data);
     backend.helper.send(req, res, data, headers);
 }
-
-
-api = {
-    Initialize($){
-        backend = $;
-        ls_api.Initialize(backend)
-
-        mime = backend.mime;
-
-        api.Reload(true)
-    },
-
-
-    async Reload(server_initiated){
-        if(!server_initiated){
-            backend.refreshConfig()
-        }
-    
-        // let libConfig = backend.config.block("cdn.libraries");
-    
-        // libLocations = libConfig && libConfig.properties.locations? libConfig.properties.locations : [cdn_path + "/lib/*"]
-
-        // await api.LoadLibraries();
-    },
-
-
-    async LoadLibraries(){
-
-        function load(path){
-            // console.log("loading ", path);
-        }
-
-        for(let location of libLocations){
-
-            if(location.startsWith("./")) location = backend.path + location.replace("./", "/");
-
-            if(!fs.existsSync(location.replace("/*", ""))) {
-                api.log.warn("Library directory (" + location + ") does not exist");
-                continue
-            }
-
-            if(location.endsWith("*")){
-                let path = (location.replace("*", "") + "/").replaceAll("//", "/");
-                libLocations.push(...fs.readdirSync(path).map(location => path + location).filter(path => fs.statSync(path).isDirectory()))
-                continue
-            }
-
-            if(fs.statSync(location).isDirectory()){
-                load(location)
-            }
-        }
-    },
-
-
-    async HandleRequest({segments, shift, error, req, res}){
-        let file;
-
-        let first = segments.shift();
-
-        switch(req.method){
-            case "GET":
-                switch(first){
-                    case "lib":
-                        // Library
-                        req.end("a")
-                    break;
-
-                    case "file":
-
-                        // FIXME: This needs changes
-
-                        if(!segments[0]){
-                            return backend.helper.send(req, res, `{"success":false,"error":"This endpoint is currently not supported directly as for unstable behavior. Use /file/[hash][.format][?options] instead."}`, {'cache-control': "no-cache"}, 400)
-                        }
-
-                        let fileName = segments[segments[0].length < 32? 1 : 0] || "";
-
-                        file = [(fileName.split(".").slice(0,-1)[0]) || fileName, fileName.split(".").length > 1 ? fileName.split(".").slice(-1)[0].replace(/\?.*/, ""): ""]
-
-                        let filePath = cdn_path + "/file/" + file[0],
-                            mimeType = mime.getType(file[1]) || "text/plain",
-                            exists = fs.existsSync(filePath),
-                            content
-                        ;
-                        
-                        if(segments[0] == "check"){
-                            return backend.helper.send(req, res, `{"exists":${exists}}`, {'cache-control': "no-cache"})
-                        }
-
-                        if(segments[0] == "info"){
-                            if(fileMetadataCache[file[0]]){
-                                return backend.helper.send(req, res, {
-                                    ...fileMetadataCache[file[0]],
-                                    likelyMimeType: mostCommonItem(fileMetadataCache[file[0]].mimeTypeHistory),
-                                    likelyName: mostCommonItem(fileMetadataCache[file[0]].nameHistory),
-                                    likelyExtension: mostCommonItem(fileMetadataCache[file[0]].extensionHistory),
-                                }, {'cache-control': "no-cache"})
-                            } else {
-                                return backend.helper.send(req, res, {
-                                    success: false,
-                                    code: 43,
-                                    error: "File metadata not found.",
-                                    file: file[0]
-                                }, {'cache-control': "no-cache"})
-                            }
-                        }
-
-                        if(!exists) {
-                            return error(43)
-                        }
-
-                        if(fs.lstatSync(filePath).isDirectory()){
-                            send(req, res, fs.readdirSync(filePath))
-                            return
-                        }
-
-                        if(segments[1] && segments[1].toLowerCase() == "checknsfw"){
-                            send(req, res, await imageCheckNSFW(file[0]))
-                            return 
-                        }
-
-                        if(req.getQuery("size") && mimeType.startsWith("image")){
-                            let size = req.getQuery("size").split(",");
-                
-                            if(size.length < 2) size[1] = size[0];
-                
-                            size = size.map(value => Math.max(12, Math.min(+value, 1024)))
-
-                            size[0] = +size[0]
-                            size[1] = +size[1]
-                
-                            if(isNaN(size[0])) size[0] = null;
-                            if(isNaN(size[1])) size[1] = null;
-                
-                            content = await sharp(filePath).resize(size[0] === 0 ? null : size[0], size[1] === 0 ? null : size[1], {fit: req.getQuery("fit") || "cover"}).webp({
-                                quality: 80,
-                                lossless: false
-                            }).toBuffer()
-                        }
-
-                        send(req, res, content || filePath, 31536000, mimeType, content? false : true)
-                        return;
-
-                    case "archive":
-                        (() => {
-                            let file = segments.join("/"),
-                                extension = file.split(".").at(-1).toLowerCase(),
-                                filePath = cdn_path + "/archive/" + segments.join("/"),
-                                mimeType = mime.getType(extension) || "text/plain",
-                                exists = fs.existsSync(filePath),
-                                content
-                            ;
-    
-                            if(!exists) {
-                                return error(43)
-                            }
-    
-                            if(fs.lstatSync(filePath).isDirectory()){
-                                send(req, res, fs.readdirSync(filePath))
-                                return
-                            }
-
-                            send(req, res, content || filePath, 31536000, mimeType, content? false : true)
-                            return
-                        })()
-                        return;
-
-                    case "docs": case "docs.html": case "docs.htm":
-                        send(req, res, cdn_path + "/docs.html", false, "text/html", true)
-                    break
-
-                    case "ls":
-                        /*
-                            This code handles transfer of the framework.
-                        */
-
-                        ls_api.HandleRequest({ req, res, segments, error })
-                    break;
-
-                    default:
-                        file = cdn_path + "/" + first + "/" + req.path;
-
-                        if(fs.existsSync(file)){
-                            if(fs.lstatSync(file).isDirectory()){
-                                send(req, res, fs.readdirSync(file))
-                                return
-                            }
-
-                            send(req, res, file, (args.includes("@version") || args.includes("@refresh"))? false : 345600, first == "flags"? "image/svg+xml": "application/octet-stream", true)
-                        } else {
-                            error(43)
-                        }
-                }
-            break;
-
-            case "POST":
-                switch(first){
-                    case "upload": case "file":
-                        backend.helper.parseBody(req, res, async (data, fail) => {
-                            if(fail){
-                                return error(fail)
-                            }
-
-                            let finalResult = [];
-
-                            if(!data || !Array.isArray(data)){
-                                return error(2)
-                            }
-
-                            for(let file of data){
-                                // fs.renameSync("/www/ram/" + file.path.split("/").at(-1), "/www/ram/" + file.md5)
-
-                                // file.path = "/www/ram/" + file.md5;
-
-                                let ext = (file.filename.match(/\.[^.]+$/)?.[0] || "").replace(".", ""),
-                                    mimeType = file.type || mime.getType(ext) || "text/plain",
-                                    ignored = false
-                                ;
-
-                                if(fileMetadataCache.hasOwnProperty(file.md5)) {
-                                    Object.assign(fileMetadataCache[file.md5], {
-                                        lastUploaderIP: req.ip,
-                                        lastUploadTime: Date.now()
-                                    })
-
-                                    fileMetadataCache[file.md5].uploadedTimes ++
-
-                                    if(!fileMetadataCache[file.md5].nameHistory) fileMetadataCache[file.md5].nameHistory = [];
-                                    if(!fileMetadataCache[file.md5].extensionHistory) fileMetadataCache[file.md5].extensionHistory = [];
-                                    if(!fileMetadataCache[file.md5].mimeTypeHistory) fileMetadataCache[file.md5].mimeTypeHistory = [];
-
-                                    if(!fileMetadataCache[file.md5].nameHistory.includes(file.filename)) fileMetadataCache[file.md5].nameHistory.push(file.filename)
-                                    if(!fileMetadataCache[file.md5].extensionHistory.includes(ext)) fileMetadataCache[file.md5].extensionHistory.push(ext)
-                                    if(!fileMetadataCache[file.md5].mimeTypeHistory.includes(ext)) fileMetadataCache[file.md5].mimeTypeHistory.push(mimeType)
-
-                                    saveMetadata()
-                                } else {
-                                    updateMetadataOf(file.md5, {
-                                        nameHistory: [file.filename],
-                                        extensionHistory: [ext],
-                                        mimeTypeHistory: [mimeType],
-                                        lastUploaderIP: req.ip,
-                                        uploaderIP: req.ip,
-                                        firstUploadTime: Date.now(),
-                                        uploadedTimes: 1
-                                    })
-                                }
-
-                                let newPath = cdn_path + '/file/' + file.md5,
-                                    result = {
-                                        success: true,
-                                        mimeType,
-                                        hash: file.md5,
-                                        originalName: file.filename,
-                                        name: file.md5 + (ext? "." + ext: ""),
-                                        url: "https://cdn.extragon.cloud/file/" + file.md5 + (ext? "." + ext: ""),
-                                        ... mimeType.startsWith("image") ? {
-                                            nsfw: await imageCheckNSFW(file.md5)
-                                        } : {}
-                                    }
-                                ;
-
-
-                                if(fs.existsSync(newPath)){
-                                    ignored = true
-                                }else{
-                                    // fs.copyFileSync(file.path, newPath)
-                                    fs.writeFile(newPath, file.data, () => {
-                                        delete file.data
-                                    })
-                                    ignored = false
-                                }
-
-                                result.ignored = ignored;
-
-                                // fs.rmSync(file.path)
-
-                                if(!fileMetadataCache[file.md5].nsfw) await imageCheckNSFW(file.md5)
-                        
-                                finalResult.push(result)
-                            }
-
-                            send(req, res, finalResult);
-                        }).upload("file", true)
-                    break;
-                    default:
-                        error(1)
-                }
-            break;
-
-            default:
-                error(39)
-        }
-    }
-};
 
 module.exports = api;
