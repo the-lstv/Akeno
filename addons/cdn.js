@@ -173,12 +173,12 @@ api = {
                     break;
 
                     default:
-                        file = cdn_path + "/" + first + "/" + req.path;
+                        // file = cdn_path + "/" + first + "/" + req.path;
 
-                        if(fs.existsSync(file) && fs.lstatSync(file).isDirectory()){
-                            backend.helper.send(req, res, fs.readdirSync(file))
-                            return
-                        }
+                        // if(fs.existsSync(file) && fs.lstatSync(file).isDirectory()){
+                        //     backend.helper.send(req, res, fs.readdirSync(file))
+                        //     return
+                        // }
 
                         error(43)
                 }
