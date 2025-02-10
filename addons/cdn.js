@@ -71,7 +71,7 @@ api = {
                         
                         const dot_index = file.lastIndexOf(".");
                         const fileName = dot_index === -1? file: file.slice(0, dot_index);
-                        const fileExtension = dot_index === -1? "": fileName.slice(dot_index + 1);
+                        const fileExtension = dot_index === -1? "": file.slice(dot_index + 1);
 
                         let filePath = cdn_path + "/file/" + fileName,
                             mimeType = mime.getType(fileExtension) || "text/plain",
