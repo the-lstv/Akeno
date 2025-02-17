@@ -3,12 +3,16 @@ const fs = require("fs");
 const types = new Map;
 const extensions = new Map;
 
+let loaded = false;
+
 function load(){
-    if(types.size) return;
+    if(loaded || types.size > 0) return;
 
     try {
         const data = JSON.parse(fs.readFileSync(__dirname + "/../etc/mimetypes.json", "utf8"));
-    
+
+        loaded = true;
+
         for(let extension in data){
             types.set(extension, data[extension]);
             extensions.set(data[extension], extension);
@@ -23,12 +27,12 @@ const mime = module.exports = {
     extensions,
 
     getType(extension){
-        if(!types.size) load();
-        return mime.types[extension] || null
+        if(!loaded) load();
+        return types.get(extension) || null;
     },
 
     getExtension(mimetype){
-        if(!types.size) load();
-        return mime.extensions[mimetype] || null
+        if(!loaded) load();
+        return extensions.get(mimetype) || null;
     }
 }
