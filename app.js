@@ -929,31 +929,7 @@ const backend = {
 
     module: ModuleManager.loadModule,
 
-    mime: {
-        // My own mimetype checker since the current mimetype library for Node is meh.
-
-        types: null,
-        extensions: null,
-
-        load(){
-            backend.mime.types = JSON.parse(fs.readFileSync(PATH + "/etc/mimetypes.json", "utf8"))
-            backend.mime.extensions = {}
-
-            for(let extension in backend.mime.types){
-                backend.mime.extensions[backend.mime.types[extension]] = extension
-            }
-        },
-
-        getType(extension){
-            if(!backend.mime.types) backend.mime.load();
-            return backend.mime.types[extension] || null
-        },
-
-        getExtension(mimetype){
-            if(!backend.mime.extensions) backend.mime.load();
-            return backend.mime.extensions[mimetype] || null
-        }
-    },
+    mime: require("./core/mime"),
 
     Errors: {
         0: "Unknown API version",
@@ -966,12 +942,12 @@ const backend = {
         7: "Username already taken.",
         8: "Email address is already registered.",
         9: "Your login session has expired. Please log-in again.",
-        10: "Incorrect verification code.", // FIXME: What does this even mean
+        10: "Incorrect verification code.",
         11: "Invalid password.",
         12: "Authentication failed.",
         13: "Session/API token missing or expired.", // FIXME: Identical to 9
         14: "This account is suspended.",
-        15: "Forbidden action.", // FIXME: Unclear
+        15: "Forbidden action.",
         16: "Entity not found.",
         17: "Request timed out.",
         18: "Too many requests. Try again in a few seconds.", // FIXME: Identical to 34/36/429
@@ -1008,7 +984,7 @@ const backend = {
         49: "Sent data exceed maximum allowed size.",
 
 
-        // HTTP-compatible error codes, this does NOT mean this list is meant for HTTP status codes.
+        // HTTP-compatible error codes, this does not mean this list is for HTTP status codes.
         404: "Not found.",
         500: "Internal server error.",
         503: "Service unavailable.",
