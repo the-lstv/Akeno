@@ -457,7 +457,7 @@ server = {
 
             switch(extension){
                 case "html":
-                    content = parse_html_content({ url, file, app, compress: true, secure: req.secure })
+                    content = parse_html_content({ url, file, app, compress: backend.isDev, secure: req.secure })
                 break;
 
                 case "js": case "css":

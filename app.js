@@ -407,10 +407,10 @@ function initialize(){
 
     // Initialize WebSockets
     app.ws('/*', wss)
-    
+
     // Initialize WebServer
     app.any('/*', resolve)
-    
+
     app.listen(HTTPort, (listenSocket) => {
         if (listenSocket) {
             console.log(`[system] Server has started and is listening on port ${HTTPort}! Total hits: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
