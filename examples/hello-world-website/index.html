@@ -1,21 +1,45 @@
 <head>
+
+    <!-- Legacy syntax, on by default for by .html, .htm (Akeno 1.2 - 1.5.6) -->
+
     @manifest {
         title: "Hello world!";
+
+        theme: dark;
+        style: flat;
+        accent: blue;
     }
 
     @resources {
-        fonts: Poppins;
-
         css: /assets/style.css;
         js: /assets/script.js;
+
+        fonts: Poppins;
+
+        ls-channel: prod;
+        ls-version: 5.0.0;
+        ls-js;
+        ls-css: flat;
+    }
+
+
+
+    <!-- Modern syntax (Akeno 1.6+) -->
+
+    <!-- @use (ls, reactivity);
+
+    @theme {
+        dark;
+        flat;
+        blue;
     }
 
     @page {
         # Proposed syntax, leveraging nested blocks
 
         resources {
-            fonts: Poppins;
-    
+            fonts: Poppins :default;
+
             css: /assets/style.css;
             js: /assets/script.js;
         }
@@ -24,57 +48,73 @@
             description: "This is a simple hello world website.";
             keywords: "hello", "world", "website";
         }
-    }
+    } -->
+
 </head>
 
 <body>
 
-    Reactivity test: {{ value }}
+    <style>
+        :root {
+            --font: Poppins;
+        }
+    </style>
+
+    <!-- Reactivity test: {{ value }} <br>
     
     <button @click="value++">Increment</button>
-    <button @click="value--">Decrement</button>
-
+    <button @click="value--" .elevated>Decrement</button> -->
 
 
     <!-- Compiled example: -->
 
-    Reactivity test: <span data-source="value"></span>
+    Reactivity test: <strong data-source="value"></strong> <br>
 
-    <button onclick="LS.global.value++">Increment</button>
-    <button onclick="LS.global.value--">Decrement</button>
-    
+    <button onclick="LS.Reactive.globalContext.object.value++">Increment</button>
+    <button onclick="LS.Reactive.globalContext.object.value--" .elevated>Decrement</button>
+
     <script>
         LS.LoadComponent(class Reactive extends LS.Component {
-            constructor(object = {}){
+            constructor(object = {}, options = {}){
                 super()
-                
+
+                this.target = options.target || document.body;
+
                 this.object = new Proxy(object, {
                     set: (target, key, value) => {
-                        // ...
-                        console.log("Setting", key, "to", value)
+                        target[key] = value;
+                        this.render(key);
                     },
 
-                    get: (target, key) => {
-                        // ...
-                        console.log("Getting", key)
-                        return target[key]
+                    get: (target, key) => target[key],
+
+                    deleteProperty: (target, key) => {
+                        delete target[key];
+                        this.render(key);
                     }
                 })
+
+                this.render(null, false);
+            }
+
+            assign(object, options){
+                Object.assign(this.object, object);
+                this.render();
+            }
+
+            render(keys, cached = true){
+                for(let key of Array.isArray(keys)? keys: (keys? [keys]: Object.keys(this.object)))
+                for(let element of this.target.querySelectorAll(`[data-source='${key}']`)) element.textContent = String(this.object[key]);
             }
 
             static global(object, options){
-                // ...
-                console.log("Globalizing", object, this)
-                if(this.globalContext) return this.globalContext;
-
-                return this.globalContext = new this(object, options);
+                return this.globalContext? this.globalContext.assign(object, options) : (this.globalContext = new this(object, options));
             }
-        }, {name: "Reactive", global: true})
+        }, { name: "Reactive", global: true })
+
 
         LS.Reactive.global({
             value: 0
-        }, {
-            global: true
         });
 
     </script>

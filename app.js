@@ -813,6 +813,10 @@ const backend = {
         code(code, isCSS){
             const hash = xxh32(code);
 
+            if (isDev) {
+                return Buffer.from(code);
+            }
+
             let compressed;
             // Try to read from memory cache
             if(compressed = kvdb.compressionCache.getCache(hash)) return compressed;
