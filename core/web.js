@@ -730,6 +730,13 @@ const voidElements = new Set([
     "wbr",
 ]);
 
+
+/**
+ * TODO: Should handle dynamic HTML app templates besides the default preprocessor, add reactivity to the parser.
+ * @param {*} options 
+ * @returns Buffer
+ */
+
 function parse_html_content(options){
     if(options.file){
         const cache = requestCachedFile(options.file);

@@ -9,16 +9,74 @@
         css: /assets/style.css;
         js: /assets/script.js;
     }
+
+    @page {
+        # Proposed syntax, leveraging nested blocks
+
+        resources {
+            fonts: Poppins;
+    
+            css: /assets/style.css;
+            js: /assets/script.js;
+        }
+
+        meta {
+            description: "This is a simple hello world website.";
+            keywords: "hello", "world", "website";
+        }
+    }
 </head>
 
 <body>
-    <style>
-        /* All HTML/CSS/JS code is automatically compressed (enabled by default) - this comment will not be sent to the client! */
 
-        :root {
-            font-family: Poppins;
-        }
-    </style>
+    Reactivity test: {{ value }}
+    
+    <button @click="value++">Increment</button>
+    <button @click="value--">Decrement</button>
 
-    <h2 .myClass>Hello world!</h2>
+
+
+    <!-- Compiled example: -->
+
+    Reactivity test: <span data-source="value"></span>
+
+    <button onclick="LS.global.value++">Increment</button>
+    <button onclick="LS.global.value--">Decrement</button>
+    
+    <script>
+        LS.LoadComponent(class Reactive extends LS.Component {
+            constructor(object = {}){
+                super()
+                
+                this.object = new Proxy(object, {
+                    set: (target, key, value) => {
+                        // ...
+                        console.log("Setting", key, "to", value)
+                    },
+
+                    get: (target, key) => {
+                        // ...
+                        console.log("Getting", key)
+                        return target[key]
+                    }
+                })
+            }
+
+            static global(object, options){
+                // ...
+                console.log("Globalizing", object, this)
+                if(this.globalContext) return this.globalContext;
+
+                return this.globalContext = new this(object, options);
+            }
+        }, {name: "Reactive", global: true})
+
+        LS.Reactive.global({
+            value: 0
+        }, {
+            global: true
+        });
+
+    </script>
+
 </body>
