@@ -18,8 +18,10 @@ let
     nodePath = require("path"),
     uws = require('uWebSockets.js'),
 
-    { Parser } = require('htmlparser2'),
     picomatch = require('picomatch'),
+
+    HTMLParser = require("./native/dist/html-parser"),
+    parser, // Will be defined later
 
     // Local libraries
     { parse, configTools } = require("./parser"),
@@ -50,21 +52,32 @@ let
 ;
 
 
+// Note: Some of the following options cannot be changed at runtime and require a restart.
+const contentSettings = {
+    compress: null, // If null, set based on dev mode
+}
+
+
 
 server = {
     Initialize($){
         backend = $;
 
         // Constants
-        const html_header = Buffer.from(`<!DOCTYPE html>\n<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->\n<html lang="en">`);
+        const header = `<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`;
 
         server.etc = {
-            html_header,
-            notfound_error: Buffer.concat([html_header, Buffer.from(`<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`)]),
+            notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`),
             default_disabled_message: Buffer.from(backend.config.block("web").get("disabledMessage", String) || "This website is temporarily disabled."),
             ls_url: `://cdn.extragon.cloud/ls/`,
             ls_url_dev: `://cdn.extragon.test/ls/`,
         };
+
+        if(contentSettings.compress === null) contentSettings.compress = !backend.isDev;
+
+        initParser(header);
+
+        backend.exposeToDebugger("parser", parser);
 
         server.reload()
     },
@@ -457,7 +470,7 @@ server = {
 
             switch(extension){
                 case "html":
-                    content = parse_html_content({ url, file, app, compress: backend.isDev, secure: req.secure })
+                    content = parser.fromFile(file, new HTMLParser.context({ url, app, secure: req.secure }))
                 break;
 
                 case "js": case "css":
@@ -514,7 +527,7 @@ server = {
                                 try {
                                     const path = app.path + "/" + item.replace("$original_path", req.original_url);
 
-                                    res.write(parse_html_content({ file: files_try(path +  + ".html", path + "/index.html", path) || path, plain: true, dynamic: false, compress: true, app, url }))
+                                    res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, new HTMLParser.context({ plain: true, dynamic: false, compress: true, app, url })))
                                 } catch (error) {
                                     console.warn("Failed to import: importing " + item, error)
                                 }
@@ -691,7 +704,30 @@ function checkSupportedBrowser(userAgent, properties) {
     return true; // Allow by default if the browser could not be determined
 }
 
-let latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "5.0.0";
+
+
+function initParser(header){
+    parser = new HTMLParser.parser({
+        header,
+        buffer: true,
+        compact: contentSettings.compress,
+
+        onText(text, parent, context) {
+            // Inline script/style compression
+            switch (parent){
+                case "script":
+                    // if(script_type && script_type !== "text/javascript") break;
+                    return text ?? (context.compress? backend.compression.code(text) : text);
+
+                case "style":
+                    return text ?? (context.compress? backend.compression.code(text, true) : text);
+            }
+
+            // We give full control back over to C++
+            parse(text, context)
+        }
+    });
+}
 
 function map_resource(link, local_path){
     if(local_path && !link.startsWith("http")){
@@ -702,426 +738,173 @@ function map_resource(link, local_path){
     return link
 }
 
-
-const html_element_alias = new Map;
-
-html_element_alias.set("page", "body") // Backwards-compatibility with the old, outdated parser
-html_element_alias.set("shader", "script")
-
-const voidElements = new Set([
-    "area",
-    "base",
-    "basefont",
-    "br",
-    "col",
-    "command",
-    "embed",
-    "frame",
-    "hr",
-    "img",
-    "input",
-    "isindex",
-    "keygen",
-    "link",
-    "meta",
-    "param",
-    "source",
-    "track",
-    "wbr",
-]);
-
-
-/**
- * TODO: Should handle dynamic HTML app templates besides the default preprocessor, add reactivity to the parser.
- * @param {*} options 
- * @returns Buffer
- */
-
-function parse_html_content(options){
-    if(options.file){
-        const cache = requestCachedFile(options.file);
-        if(!cache.refresh) return cache.content;
-    }
-
-    const htmlContent = options.content? options.content: options.file? fs.readFileSync(options.file, "utf8"): "";
-
-    if(htmlContent.length < 1) return backend.constants.EMPTY_BUFFER;
-
-    const output = [ null ]; // null for adding the header
-
-    let head_string_index = null, head = options.head || '<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
-
-    let currentTag = null, script_type = null;
-
-    if(!options.app) options.app = {};
-
-    const misc = {
-        default_attributes: options.default_attributes || {
-            body: {}
-        }
-    }
-
-    function push(data){
-        if(!data) return;
-
-        if(typeof data === "string"){
-            if(options.compress){
-                data = (data.startsWith(" ")? " " : "") + data.trim() + (data.endsWith(" ")? " " : "");
-                if(data.length === 0) return;
-            }
-            data = Buffer.from(data)
-        }
-
-        if(data instanceof Buffer){
-
-            const last = output.at(-1);
-            if(Array.isArray(last)) {
-                last.push(data)
-            } else {
-                output.push([data])
-            }
-
-        } else output.push(data);
-    }
-
-    // This gets called once a block finishes parsing, with the block in question.
-    function process_block(block){
-        switch(block.name) {
-            case "no-init": case "plain":
-                options.plain = true
-                head = ""
-                break;
-
-            case "dynamic":
-                options.dynamic = Boolean(block.attributes[0])
-                break;
-
-            case "print":
-                for(let attrib of block.attributes){
-                    push(attrib.replace(/\$\w+/, () => { return "" }))
-                }
-                break;
-
-            case "import":
-                if(!options.app.path) break;
-
-                for(let item of block.attributes){
-                    try {
-                        push(parse_html_content({file: options.app.path + "/" + item, plain: true, app: options.app, compress: !!options.compress, url: options.url || null}))
-                    } catch (error) {
-                        console.warn("Failed to import: importing " + item, error)
-                    }
-                }
-                break;
-
-            case "importRaw":
-                if(!options.app.path) break;
-
-                for(let item of block.attributes){
-                    try {
-                        let content = fs.readFileSync(options.app.path + "/" + item, "utf8");
-                        push(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
-                    } catch (error) {
-                        console.warn("Failed to import (raw): importing " + item, error)
-                    }
-                }
-                break;
-
-            case "manifest":
-                if(block.properties.title) {
-                    push(`<title>${block.properties.title[0]}</title>`)
-                }
-
-                if(block.properties.favicon) {
-                    const baseName = nodePath.basename(block.properties.favicon[0]);
-                    let extension = baseName, lastIndex = baseName.lastIndexOf('.');
-
-                    if (lastIndex !== -1) {
-                        extension = baseName.slice(lastIndex + 1);
-                    }
-
-                    let mimeType = backend.mime.getType(extension) || "image/x-icon";
-
-                    push(`<link rel="shortcut icon" href="${block.properties.favicon[0]}" type="${mimeType}">`)
-                }
-
-                if(block.properties.theme) {
-                    misc.default_attributes.body["ls-theme"] = block.properties.theme[0]
-                }
-
-                if(block.properties.style) {
-                    misc.default_attributes.body["ls-style"] = block.properties.style[0]
-                }
-
-                if(block.properties.accent) {
-                    misc.default_attributes.body["ls-accent"] = block.properties.accent[0]
-                }
-                break;
-
-            case "resources":
-                if(block.properties["ls-js"]){
-                    misc.default_attributes.body.ls = "";
-
-                    let version = block.properties["ls-version"] && block.properties["ls-version"][0];
-                    let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
-
-                    if(!version) {
-                        version = "4.0.1"
-                        console.error("Warning for app " + options.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
-                    } else if(version === "latest") version = latest_ls_version;
-
-                    let url = `http${options.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-js"][0] === true? "": block.properties["ls-js"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}js`;
-
-                    const part = `<script src="${url}"></script>`;
-                    if(!options.plain) head += part; else push(part);
-                }
-            
-                if(block.properties["ls-css"]){
-                    misc.default_attributes.body.ls = "";
-
-                    let version = block.properties["ls-version"] && block.properties["ls-version"][0];
-                    let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
-
-                    if(!version) {
-                        version = "4.0.1"
-                        console.error("Warning for app " + options.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
-                    } else if(version === "latest") version = latest_ls_version;
-
-                    let url = `http${options.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-css"][0] === true? "": block.properties["ls-css"].join(",") + "/"}ls.${!backend.isDev && options.compress? "min." : ""}css`;
-                    
-                    const part = `<link rel=stylesheet href="${url}">`
-                    if(!options.plain) head += part; else push(part);
-                }
-
-                if(block.properties.js) {
-                    for(let resource of block.properties.js) {
-                        const link = map_resource(resource, options.app.path);
-
-                        if(link) {
-                            const part = `<script src="${link}"></script>`
-                            if(!options.plain) head += part; else push(part);
-                        }
-                    }
-                }
-
-                if(block.properties.css) {
-                    for(let resource of block.properties.css) {
-                        const link = map_resource(resource, options.app.path);
-
-                        if(link) {
-                            const part = `<link rel=stylesheet href="${link}">`
-                            if(!options.plain) head += part; else push(part);
-                        }
-                    }
-                }
-
-                if(block.properties["bootstrap-icons"] || (block.properties.icons && block.properties.icons.includes("bootstrap"))) {
-                    const part = `<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">`
-                    if(!options.plain) head += part; else push(part);
-                }
-
-                if(block.properties["fa-icons"] || (block.properties.icons && block.properties.icons.includes("fa"))) {
-                    const part = `<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.0/css/all.min.css">`
-                    if(!options.plain) head += part; else push(part);
-                }
-
-                if(block.properties.fonts) {
-                    const part = `<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin><link rel=stylesheet href="${`https://fonts.googleapis.com/css2?${block.properties.fonts.map(font => {
-                        return "family=" + font.replaceAll(" ", "+") + ":wght@100;200;300;400;500;600;700;800;900"
-                    }).join("&")}&display=swap`}">`
-
-                    if(!options.plain) head += part; else push(part);
-                }
-
-                break;
-
-            default:
-                if(options.dynamic) push(block); else block = null;
-        }
-    }
-
-    const parser = new Parser({
-        onopentag(name, attribs) {
-            let result = "<";
-
-            if(name === "shader" && !attribs.type) attribs.type = "x-shader/x-fragment";
-
-            if(html_element_alias.has(name)) name = html_element_alias.get(name);
-
-            script_type = name === "script" && attribs.type? attribs.type: null;
-            currentTag = name;
-
-            if(attribs.class) attribs.class; else attribs.class = "";
-
-            result += name;
-
-            // Assign default attributes
-            if(misc.default_attributes[name]){
-                Object.assign(attribs, misc.default_attributes[name])
-            }
-
-            for(let attr in attribs) {
-                if (attr === "class" || attr === "id") continue;
-
-                if (attr.startsWith('.')) {
-                    attribs.class += " " + attr.slice(1).split(".").join(" ")
-                    continue
-                }
-
-                if (attr.startsWith('%') || attr.startsWith('#')) {
-                    attribs.id = attr.slice(1)
-                    continue
-                }
-
-                let value = attribs[attr];
-
-                if(value){
-                    if (value.includes(`"`) && value.includes(`'`)) {
-                        value = `"${value.replace(/"/g, '&quot;')}"`;
-                    } else if (value.includes('"')) {
-                        value = `'${value}'`;
-                    } else if (value.includes(" ") || value.includes("'")) {
-                        value = `"${value}"`;
-                    }
-
-                    result += ` ${attr}=${value}`;
-                    continue
-                }
-
-                result += " " + attr;
-            }
-
-            if (attribs.class) result += ` class="${attribs.class.trim()}"`;
-            if (attribs.id) result += ` id=${attribs.id.replaceAll(" ", "")}`;
-
-            push(result + ">");
-
-            if(name === "head" && head_string_index === null) {
-                head_string_index = output.push(null) -1
-            }
-        },
-
-        ontext(text) {
-            // Inline script/style compression
-            switch (currentTag){
-                case "script":
-                    if(script_type && script_type !== "text/javascript") break;
-
-                    if(text) {
-                        push(options.compress? backend.compression.code(text) : text)
-                    }
-                    return;
-
-                case "style":
-                    if(text) {
-                        push(options.compress? backend.compression.code(text, true) : text)
-                    }
-                    return;
-            }
-
-            parse(text, { onText: push, onBlock: process_block, embedded: true, strict: false })
-        },
-
-        onclosetag(name) {
-            if(html_element_alias.has(name)) name = html_element_alias.get(name);
-
-            if(voidElements.has(name)) return;
-
-            push(`</${name}>`);
-        }
-    }, {
-        lowerCaseAttributeNames: false
-    });
-
-    parser.write(htmlContent);
-    parser.end();
-
-    if(!options.plain) {
-        output[0] = options.header || server.etc.html_header;
-
-        if(head){
-            if(head_string_index !== null) output[head_string_index] = Buffer.from(head); else output[0] = Buffer.concat([output[0], Buffer.from(`<head>${head}</head>`)]);
-        }
-
-        push("</html>");
-    }
-
-    const content = condense_parsed_output(output, options.dynamic);
-
-    if(options.file && content.length <= max_cache_size) updateCache(options.file, content, null);
-
-    // Finally, condense buffers and return.
-    return content;
-}
-
-function condense_parsed_output(data, allow_dynamic_content) {
-    let bufferGroup = [];
-
-    if(!allow_dynamic_content){
-        let length = 0;
-
-        for(let item of data){
-            if (item instanceof Buffer) {
-                bufferGroup.push(item);
-                length += item.length
-            } else if (Array.isArray(item)) {
-                for(let _item of item){
-                    if (_item instanceof Buffer) {
-                        bufferGroup.push(_item);
-                        length += _item.length
-                    }
-                }
-            }
-        }
-
-        data = null;
-
-        return Buffer.concat(bufferGroup)
-    }
-
-    let flattenedData = [];
-    
-    for (const item of data) {
-        if (!item) continue;
-
-        if (Array.isArray(item)) {
-            for (const subItem of item) {
-                if (subItem instanceof Buffer) {
-                    bufferGroup.push(subItem);
-                } else {
-                    if (bufferGroup.length > 0) {
-                        flattenedData.push(Buffer.concat(bufferGroup));
-                        bufferGroup = [];
-                    }
-
-                    flattenedData.push(subItem);
-                }
-            }
-
-        } else if (item instanceof Buffer) {
-
-            bufferGroup.push(item);
-
-        } else {
-
-            if (bufferGroup.length > 0) {
-                flattenedData.push(Buffer.concat(bufferGroup));
-                bufferGroup = [];
-            }
-
-            flattenedData.push(item);
-
-        }
-    }
-
-    if (bufferGroup.length > 0) {
-        flattenedData.push(Buffer.concat(bufferGroup));
-    }
-
-    return flattenedData;
-}
-
-
+// let head = "";
+
+// function process_block(block, context){
+//     function push(content){
+//         if(!content) return;
+//         context.append += content;
+//     }
+
+//     const misc = {
+//         default_attributes: context.default_attributes || {
+//             body: {}
+//         }
+//     }
+
+//     switch(block.name) {
+//         case "no-init": case "plain":
+//             context.plain = true
+//             head = ""
+//             break;
+
+//         case "dynamic":
+//             context.dynamic = Boolean(block.attributes[0])
+//             break;
+
+//         case "print":
+//             for(let attrib of block.attributes){
+//                 push(attrib.replace(/\$\w+/, () => { return "" }))
+//             }
+//             break;
+
+//         // case "import":
+//         //     if(!context.app.path) break;
+
+//         //     for(let item of block.attributes){
+//         //         try {
+//         //             push(parse_html_content({file: context.app.path + "/" + item, plain: true, app: context.app, compress: !!context.compress, url: context.url || null}))
+//         //         } catch (error) {
+//         //             console.warn("Failed to import: importing " + item, error)
+//         //         }
+//         //     }
+//         //     break;
+
+//         case "importRaw":
+//             if(!context.app.path) break;
+
+//             for(let item of block.attributes){
+//                 try {
+//                     let content = fs.readFileSync(context.app.path + "/" + item, "utf8");
+//                     push(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
+//                 } catch (error) {
+//                     console.warn("Failed to import (raw): importing " + item, error)
+//                 }
+//             }
+//             break;
+
+//         case "manifest":
+//             if(block.properties.title) {
+//                 push(`<title>${block.properties.title[0]}</title>`)
+//             }
+
+//             if(block.properties.favicon) {
+//                 const baseName = nodePath.basename(block.properties.favicon[0]);
+//                 let extension = baseName, lastIndex = baseName.lastIndexOf('.');
+
+//                 if (lastIndex !== -1) {
+//                     extension = baseName.slice(lastIndex + 1);
+//                 }
+
+//                 let mimeType = backend.mime.getType(extension) || "image/x-icon";
+
+//                 push(`<link rel="shortcut icon" href="${block.properties.favicon[0]}" type="${mimeType}">`)
+//             }
+
+//             if(block.properties.theme) {
+//                 misc.default_attributes.body["ls-theme"] = block.properties.theme[0]
+//             }
+
+//             if(block.properties.style) {
+//                 misc.default_attributes.body["ls-style"] = block.properties.style[0]
+//             }
+
+//             if(block.properties.accent) {
+//                 misc.default_attributes.body["ls-accent"] = block.properties.accent[0]
+//             }
+//             break;
+
+//         case "resources":
+//             if(block.properties["ls-js"]){
+//                 misc.default_attributes.body.ls = "";
+
+//                 let version = block.properties["ls-version"] && block.properties["ls-version"][0];
+//                 let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
+
+//                 if(!version) {
+//                     version = "4.0.1"
+//                     console.error("Warning for app " + context.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
+//                 } else if(version === "latest") version = latest_ls_version;
+
+//                 let url = `http${context.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-js"][0] === true? "": block.properties["ls-js"].join(",") + "/"}ls.${!backend.isDev && context.compress? "min." : ""}js`;
+
+//                 const part = `<script src="${url}"></script>`;
+//                 if(!context.plain) head += part; else push(part);
+//             }
+        
+//             if(block.properties["ls-css"]){
+//                 misc.default_attributes.body.ls = "";
+
+//                 let version = block.properties["ls-version"] && block.properties["ls-version"][0];
+//                 let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
+
+//                 if(!version) {
+//                     version = "4.0.1"
+//                     console.error("Warning for app " + context.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
+//                 } else if(version === "latest") version = latest_ls_version;
+
+//                 let url = `http${context.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-css"][0] === true? "": block.properties["ls-css"].join(",") + "/"}ls.${!backend.isDev && context.compress? "min." : ""}css`;
+                
+//                 const part = `<link rel=stylesheet href="${url}">`
+//                 if(!context.plain) head += part; else push(part);
+//             }
+
+//             if(block.properties.js) {
+//                 for(let resource of block.properties.js) {
+//                     const link = map_resource(resource, context.app.path);
+
+//                     if(link) {
+//                         const part = `<script src="${link}"></script>`
+//                         if(!context.plain) head += part; else push(part);
+//                     }
+//                 }
+//             }
+
+//             if(block.properties.css) {
+//                 for(let resource of block.properties.css) {
+//                     const link = map_resource(resource, context.app.path);
+
+//                     if(link) {
+//                         const part = `<link rel=stylesheet href="${link}">`
+//                         if(!context.plain) head += part; else push(part);
+//                     }
+//                 }
+//             }
+
+//             if(block.properties["bootstrap-icons"] || (block.properties.icons && block.properties.icons.includes("bootstrap"))) {
+//                 const part = `<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">`
+//                 if(!context.plain) head += part; else push(part);
+//             }
+
+//             if(block.properties["fa-icons"] || (block.properties.icons && block.properties.icons.includes("fa"))) {
+//                 const part = `<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.0/css/all.min.css">`
+//                 if(!context.plain) head += part; else push(part);
+//             }
+
+//             if(block.properties.fonts) {
+//                 const part = `<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin><link rel=stylesheet href="${`https://fonts.googleapis.com/css2?${block.properties.fonts.map(font => {
+//                     return "family=" + font.replaceAll(" ", "+") + ":wght@100;200;300;400;500;600;700;800;900"
+//                 }).join("&")}&display=swap`}">`
+
+//                 if(!context.plain) head += part; else push(part);
+//             }
+
+//             break;
+
+//         default:
+//             if(context.dynamic) push(block); else block = null;
+//     }
+// }
 
 
 
