@@ -74,7 +74,7 @@ console.log(parser.fromString(`
 // console.log(parser.fromFile(file_path, context).toString());
 
 
-const testDurationSeconds = 5; // run the test for 5 seconds
+const testDurationSeconds = 1;
 let iterations = 0;
 let totalRuntime = 0;
 
@@ -84,8 +84,8 @@ let currentTime = startTime;
 while ((currentTime - startTime) / 1000 < testDurationSeconds) {
     let iterationStartTime = performance.now();
 
-    // parser.fromFile(file_path);
-    parser.fromString(html_string, new HTMLParser.context);
+    parser.fromFile(file_path, context);
+    // parser.fromFile(file_path, new HTMLParser.context);
 
     let iterationEndTime = performance.now();
     totalRuntime += (iterationEndTime - iterationStartTime);

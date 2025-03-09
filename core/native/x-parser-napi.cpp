@@ -208,7 +208,7 @@ private:
         time_t currentTime = getFileLastModifiedTime(filePath);
         auto it = cache.find(filePath);
 
-        if (it != cache.end() && it->second.lastModifiedTime == currentTime && info.Length() < 2) {
+        if (it != cache.end() && it->second.lastModifiedTime == currentTime) {
             return it->second.parsedData;
         }
 

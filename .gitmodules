@@ -1,3 +1,7 @@
 [submodule "core/parser"]
 	path = core/parser
 	url = https://github.com/the-lstv/Atrium
+
+[submodule "core/native/external/xxHash"]
+	path = engines/native/external/xxHash
+	url = https://github.com/Cyan4973/xxHash
