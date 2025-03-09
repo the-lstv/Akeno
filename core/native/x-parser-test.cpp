@@ -8,27 +8,40 @@ int main() {
     std::ifstream file("./test.xw");
     std::string code((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
-    Parser<void*>::Options options;
+    HTMLParserOptions options(true);
 
     // options.onText = [&](std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view value, void* userData) {
     //     buffer += value;
     // };
 
-    options.buffer = true;
-    options.compact = true;
+    // options.compact = true;
 
     // options.header = "123";
 
-    Parser<void*> parser(options);
+    HTMLParsingContext ctx(options);
 
-    std::cout << parser.parse(code) << std::endl;
+    std::string result;
+
+    // std::string code = "<div/>";
+
+    ctx.write(code, &result);
+
+    ctx.write(code, &result);
+
+    ctx.end(&result);
+
+    std::cout << result << std::endl;
 
     // int iterations = 0;
     // auto start = std::chrono::high_resolution_clock::now();
     // auto end = start + std::chrono::seconds(5);
 
     // while (std::chrono::high_resolution_clock::now() < end) {
-    //     parser.parse(code);
+    //     // ctx.parse(code);
+    //     HTMLParsingContext ctx(options);
+    //     std::string result;
+    //     ctx.write(code, &result);
+    //     ctx.end(&result);
     //     iterations++;
     // }
 

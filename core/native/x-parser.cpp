@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <unordered_set>
 #include <functional>
+#include <optional>
 
 
 /*
@@ -37,12 +38,13 @@
 
 */
 
+
 std::unordered_set<std::string> voidElements = {
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
     "source", "track", "command", "frame", "param", "wbr"
 };
 
-enum State {
+enum HTMLParserState {
     TEXT,
     TAGNAME,
     ATTRIBUTE,
@@ -51,73 +53,118 @@ enum State {
     INLINE_VALUE
 };
 
-
-
 void* empty = nullptr;
 
 
-template<typename UserData>
-
-class Parser {
-
+class HTMLParserOptions {
 public:
-    struct Options {
-        // Collect and store/reconstruct chunks of the code back into a buffer
-        bool buffer = false;
+    // Whether to collect and store/reconstruct chunks of the code back into a buffer
+    const bool buffer;
 
-        // Minify the output
-        bool compact = false;
+    // Minify the output
+    bool compact = false;
 
-        // Use vanilla HTML parsing (drop custom syntax)
-        bool vanilla = false;
+    // Use vanilla HTML parsing (drop custom syntax)
+    bool vanilla = false;
 
-        std::string header = "";
-        std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, UserData&)> onText = nullptr;
-        std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, UserData&)> onOpeningTag = nullptr;
-        std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, UserData&)> onClosingTag = nullptr;
-        std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, UserData&)> onInline = nullptr;
+    std::string header = "";
+    std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, void*)> onText = nullptr;
+    std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, void*)> onOpeningTag = nullptr;
+    std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, void*)> onClosingTag = nullptr;
+    std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, void*)> onInline = nullptr;
+
+    HTMLParserOptions(bool buffer) : buffer(buffer) {
+        if(buffer) {
+            onText = _defaultOnText;
+            onOpeningTag = _defaultOnOpeningTag;
+            onClosingTag = _defaultOnClosingTag;
+            onInline = _defaultOnInline;
+        }
     };
 
-    static int noContext;
-
-    Parser() = default;
-
-    Parser(const Options& opts) : options(opts) {
-        if(options.buffer) {
-            if(!options.onText) options.onText = _defaultOnText;
-            if(!options.onOpeningTag) options.onOpeningTag = _defaultOnOpeningTag;
-            if(!options.onClosingTag) options.onClosingTag = _defaultOnClosingTag;
-            if(!options.onInline) options.onInline = _defaultOnInline;
-        }
+    static void _defaultOnText(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view value, void* userData) {
+        buffer += value;
     }
 
+    static void _defaultOnOpeningTag(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, void* userData) {
+        buffer += "<" + std::string(tag);
+    }
 
-    std::string parse(std::string_view str, UserData& userData = empty, std::string& buffer = *(new std::string())) {
-        std::stack<std::string_view> tagStack;
+    static void _defaultOnClosingTag(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, void* userData) {
+        buffer += "</" + std::string(tag) + ">";
+    }
 
-        State state = TEXT;
+    static void _defaultOnInline(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view value, void* userData) {
+        buffer += "<span data-reactive=\"" + std::string(value) + "\"></span>";
+    }
+};
 
-        const char* start = str.data();
-        const char* end = start + str.size();
+class HTMLParsingContext {
+public:
+    void write(std::string_view buf, std::string* output = nullptr, void* userData = nullptr) {
+        buffer = buf;
 
-        // Position of the current value
-        const char* value_start = start;
-        bool end_tag = false;
-
-        char string_char = 0;
-
-        std::string class_buffer;
-
-        bool space_broken = false;
-
-        bool flag_appendToClass = false;
-
-        if(options.buffer) {
-            buffer = options.buffer? ("<!DOCTYPE html>\n" + options.header + "<html>") : "";
-            buffer.reserve(str.size());
+        if (options.buffer && output == nullptr) {
+            throw std::invalid_argument("Output string cannot be undefined when buffer option is enabled.");
         }
 
-        for (const char* it = start; it < end; ++it) {
+        it = buf.data();
+        chunk_end = buf.data() + buf.size();
+        value_start = it;
+
+        if(userData) {
+            this->userData = userData;
+        }
+
+        resume(*output);
+    }
+
+    explicit HTMLParsingContext(std::string_view buf, HTMLParserOptions& options)
+        : options(options),
+        buffer(buf), it(buf.data()), chunk_end(buf.data() + buf.size()), value_start(buf.data()) {}
+    
+    explicit HTMLParsingContext(HTMLParserOptions& options)
+        : options(options) {}
+
+    void end(std::string* buffer = nullptr) {
+        if(options.onClosingTag) {
+            while (!tagStack.empty()) {
+                options.onClosingTag(*buffer, tagStack, tagStack.top(), userData);
+                tagStack.pop();
+            }
+        }
+
+        if(options.buffer) {
+            *buffer += "</html>";
+        }
+
+        state = TEXT;
+        string_char = 0;
+        space_broken = false;
+        flag_appendToClass = false;
+        end_tag = false;
+        class_buffer.clear();
+        tagStack = std::stack<std::string_view>();
+        reset = true;
+    }
+
+    std::string parse(std::string_view buf) {
+        std::string result;
+        write(buf, &result);
+        end(&result);
+        return result;
+    }
+
+    void resume(std::string& buffer = *(new std::string())) {
+        if(reset) {
+            if(options.buffer){
+                buffer = "<!DOCTYPE html>\n" + options.header + "<html>";
+                buffer.reserve(buffer.size() + this->buffer.size() + 64);
+            }
+            reset = false;
+        }
+
+        for (; it < chunk_end; ++it) {
 
             // Match strings
             if(string_char != 0 && *it != string_char) {
@@ -156,10 +203,10 @@ public:
 
                         if(!(it - value_start == 0)){
                             if(options.onText) {
-                                std::string_view text = trim(std::string_view(value_start, it - value_start));
+                                std::string_view text(value_start, it - value_start);
 
                                 if(text.size() > 0) {
-                                    options.onText(buffer, tagStack, text, userData);
+                                    options.onText(buffer, tagStack, trim(text), userData);
                                 }
                             }
                         }
@@ -183,12 +230,12 @@ public:
                     }
 
                     if (*it == '{' && it[1] == '{' && it[-1] != '\\') {
-                        if(!(end - value_start == 0)){
+                        if(!(chunk_end - value_start == 0)){
                             if(options.onText) {
-                                std::string_view text = trim(std::string_view(value_start, it - value_start));
+                                std::string_view text(value_start, it - value_start);
 
                                 if(text.size() > 0) {
-                                    options.onText(buffer, tagStack, text, userData);
+                                    options.onText(buffer, tagStack, trim(text), userData);
                                 }
                             }
                         }
@@ -247,7 +294,7 @@ public:
 
                         // We can simply ignore anything that is in the closing tag after the tag name.
                         // It should not happen, but well..
-                        if (*it != '>') while(it < end && *it != '>') ++it;
+                        if (*it != '>') while(it < chunk_end && *it != '>') ++it;
 
                         if(tagStack.empty() || tagStack.top() != closingTag) {
                             std::cout << "End tag mismatch: " << closingTag << " != " << tagStack.top() << std::endl;
@@ -312,7 +359,7 @@ public:
                             break;
                         }
 
-                        if(it + 1 < end && *it == '/' && it[1] == '>') {
+                        if(it + 1 < chunk_end && *it == '/' && it[1] == '>') {
                             state = TEXT;
                             ++it;
                             value_start = it + 1;
@@ -404,36 +451,40 @@ public:
             }
         }
 
-        while (!tagStack.empty()) {
-            if (options.onClosingTag) {
-                options.onClosingTag(buffer, tagStack, tagStack.top(), userData);
-            }
-            tagStack.pop();
-        }
+        if(state == TEXT && options.onText && !(chunk_end - value_start == 0)) {
+            std::string_view text(value_start, chunk_end - value_start);
 
-        if(state == TEXT) {
-            if(!(end - value_start == 0)){
-                if(options.onText) {
-                    std::string_view text = trim(std::string_view(value_start, end - value_start));
-
-                    if(text.size() > 0) {
-                        options.onText(buffer, tagStack, text, userData);
-                    }
-                }
+            if(text.size() > 0) {
+                options.onText(buffer, tagStack, trim(text), userData);
             }
         }
-
-        if(options.buffer) {
-            buffer += "</html>";
-        }
-
-        return buffer;
     }
 
 private:
-    Options options;
+    void* userData = nullptr;
 
-    void _endTag(State& state, std::string& buffer, std::string& class_buffer) {
+    const char* it;
+    const char* chunk_end;
+    const char* value_start;
+
+    bool reset = true;
+
+    std::string_view buffer;
+
+    HTMLParserState state = TEXT;
+
+    bool end_tag = false;
+    bool space_broken = false;
+    bool flag_appendToClass = false;
+
+    char string_char = 0;
+
+    std::string class_buffer;
+    std::stack<std::string_view> tagStack;
+
+    HTMLParserOptions& options;
+
+    void _endTag(HTMLParserState& state, std::string& buffer, std::string& class_buffer) {
         state = TEXT;
 
         if(options.buffer) {
@@ -461,23 +512,5 @@ private:
 
         size_t end = s.find_last_not_of(" \t\n\r\f\v");
         return s.substr(start, end - start + 1);
-    }
-
-    static void _defaultOnText(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view value, void* userData) {
-        buffer += value;
-    }
-
-    static void _defaultOnOpeningTag(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, void* userData) {
-        // std::cout << "Open tag: " << tag << ", parent: " << (tagStack.empty()? "none": tagStack.top()) << std::endl;
-        buffer += "<" + std::string(tag);
-    }
-
-    static void _defaultOnClosingTag(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, void* userData) {
-        // std::cout << "Close tag: " << tag << ", parent: " << (tagStack.empty()? "none": tagStack.top()) << std::endl;
-        buffer += "</" + std::string(tag) + ">";
-    }
-
-    static void _defaultOnInline(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view value, void* userData) {
-        buffer += "<span data-reactive=\"" + std::string(value) + "\"></span>";
     }
 };

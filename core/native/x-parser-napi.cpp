@@ -19,8 +19,9 @@ class ParserContext : public Napi::ObjectWrap<ParserContext> {
 public:
     static Napi::Object Init(Napi::Env env, Napi::Object exports) {
         exports.Set("context", DefineClass(env, "ParserContext", {
+            InstanceMethod("write", &ParserContext::onText),
             InstanceMethod("onText", &ParserContext::onText),
-            InstanceMethod("onBlock", &ParserContext::onBlock),
+            InstanceMethod("import", &ParserContext::import),
         }));
         return exports;
     }
@@ -44,11 +45,16 @@ public:
         }
 
         *result += info[0].As<Napi::String>().Utf8Value();
-        // return info.Env().Undefined();
     }
 
-    void onBlock(const Napi::CallbackInfo& info) {
-        *result += "<this is a test block>";
+    void import(const Napi::CallbackInfo& info) {
+        if (info.Length() < 1 || !info[0].IsObject()) {
+            Napi::TypeError::New(info.Env(), "Expected an object").ThrowAsJavaScriptException();
+            return;
+        }
+
+        Napi::Object obj = info[0].As<Napi::Object>();
+        this->Value().Set("data", obj);
     }
 };
 
@@ -63,12 +69,10 @@ public:
         return exports;
     }
 
-    ParserWrapper(const Napi::CallbackInfo& info) : Napi::ObjectWrap<ParserWrapper>(info) {
+    ParserWrapper(const Napi::CallbackInfo& info) : Napi::ObjectWrap<ParserWrapper>(info), parserOptions(info.Length() > 0 && info[0].IsObject() ? info[0].As<Napi::Object>().Get("buffer").ToBoolean(): false), ctx(parserOptions) {
         if (info.Length() > 0 && info[0].IsObject()) {
             Napi::Object opts = info[0].As<Napi::Object>();
-            if (opts.Has("buffer")) {
-                parserOptions.buffer = opts.Get("buffer").ToBoolean();
-            }
+
             if (opts.Has("compact")) {
                 parserOptions.compact = opts.Get("compact").ToBoolean();
             }
@@ -80,7 +84,11 @@ public:
             }
             if (opts.Has("onText")) {
                 onTextRef_ = Napi::Persistent(opts.Get("onText").As<Napi::Function>());
-                parserOptions.onText = [&](std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view value, Napi::Object& userData) {
+                parserOptions.onText = [&](std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view value, void* userData) {
+                    if (userData == nullptr) {
+                        return;
+                    }
+
                     Napi::Env env = onTextRef_.Env();
                     Napi::String valueStr = Napi::String::New(env, value.data(), value.size());
                     Napi::Value stackTop = env.Null();
@@ -89,7 +97,9 @@ public:
                         stackTop = Napi::String::New(env, top.data(), top.size());
                     }
 
-                    Napi::Value result = onTextRef_.Call({ valueStr, stackTop, userData });
+                    Napi::Object* obj = static_cast<Napi::Object*>(userData);
+
+                    Napi::Value result = onTextRef_.Call({ valueStr, stackTop, *obj });
                     if (result.IsString()) {
                         buffer += result.As<Napi::String>().Utf8Value();
                     }
@@ -97,7 +107,11 @@ public:
             }
             if (opts.Has("onOpeningTag")) {
                 onOpeningTagRef_ = Napi::Persistent(opts.Get("onOpeningTag").As<Napi::Function>());
-                parserOptions.onOpeningTag = [&](std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, Napi::Object& userData) {
+                parserOptions.onOpeningTag = [&](std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, void* userData) {
+                    if (userData == nullptr) {
+                        return;
+                    }
+
                     Napi::Env env = onOpeningTagRef_.Env();
                     Napi::String tagStr = Napi::String::New(env, tag.data(), tag.size());
                     Napi::Value stackTop = env.Null();
@@ -106,7 +120,9 @@ public:
                         stackTop = Napi::String::New(env, top.data(), top.size());
                     }
 
-                    Napi::Value result = onOpeningTagRef_.Call({ tagStr, stackTop, userData });
+                    Napi::Object* obj = static_cast<Napi::Object*>(userData);
+
+                    Napi::Value result = onOpeningTagRef_.Call({ tagStr, stackTop, *obj });
                     if (result.IsString()) {
                         buffer += result.As<Napi::String>().Utf8Value();
                     }
@@ -114,7 +130,11 @@ public:
             }
             if (opts.Has("onClosingTag")) {
                 onClosingTagRef_ = Napi::Persistent(opts.Get("onClosingTag").As<Napi::Function>());
-                parserOptions.onClosingTag = [&](std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, Napi::Object& userData) {
+                parserOptions.onClosingTag = [&](std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, void* userData) {
+                    if (userData == nullptr) {
+                        return;
+                    }
+
                     Napi::Env env = onClosingTagRef_.Env();
                     Napi::String tagStr = Napi::String::New(env, tag.data(), tag.size());
                     Napi::Value stackTop = env.Null();
@@ -123,7 +143,9 @@ public:
                         stackTop = Napi::String::New(env, top.data(), top.size());
                     }
 
-                    Napi::Value result = onClosingTagRef_.Call({ tagStr, stackTop, userData });
+                    Napi::Object* obj = static_cast<Napi::Object*>(userData);
+
+                    Napi::Value result = onClosingTagRef_.Call({ tagStr, stackTop, *obj });
                     if (result.IsString()) {
                         buffer += result.As<Napi::String>().Utf8Value();
                     }
@@ -131,7 +153,11 @@ public:
             }
             if (opts.Has("onInline")) {
                 onInlineRef_ = Napi::Persistent(opts.Get("onInline").As<Napi::Function>());
-                parserOptions.onInline = [&](std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, Napi::Object& userData) {
+                parserOptions.onInline = [&](std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, void* userData) {
+                    if (userData == nullptr) {
+                        return;
+                    }
+
                     Napi::Env env = onInlineRef_.Env();
                     Napi::String tagStr = Napi::String::New(env, tag.data(), tag.size());
                     Napi::Value stackTop = env.Null();
@@ -140,15 +166,15 @@ public:
                         stackTop = Napi::String::New(env, top.data(), top.size());
                     }
 
-                    Napi::Value result = onInlineRef_.Call({ tagStr, stackTop, userData });
+                    Napi::Object* obj = static_cast<Napi::Object*>(userData);
+
+                    Napi::Value result = onInlineRef_.Call({ tagStr, stackTop, *obj });
                     if (result.IsString()) {
                         buffer += result.As<Napi::String>().Utf8Value();;
                     }
                 };
             }
         }
-
-        parser = Parser<Napi::Object&>(parserOptions);
     }
 
 private:
@@ -165,8 +191,9 @@ private:
 
         std::string result;
         run->result = &result;
-        
-        parser.parse(source, ctxObj, result);
+
+        ctx.write(source, &result, &ctxObj);
+        ctx.end(&result);
 
         return Napi::Buffer<char>::Copy(info.Env(), result.data(), result.size());
     }
@@ -205,7 +232,8 @@ private:
         std::string result;
         run->result = &result;
 
-        parser.parse(std::string_view(buffer.data(), size), ctxObj, result);
+        ctx.write(std::string_view(buffer.data(), buffer.size()), &result, &ctxObj);
+        ctx.end(&result);
 
         auto storage = std::make_shared<std::string>(std::move(result));
 
@@ -215,8 +243,8 @@ private:
         return data;
     }
 
-    Parser<Napi::Object&>::Options parserOptions;
-    Parser<Napi::Object&> parser;
+    HTMLParserOptions parserOptions;
+    HTMLParsingContext ctx;
 
     struct CacheEntry {
         time_t lastModifiedTime;
