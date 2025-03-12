@@ -83,19 +83,19 @@ public:
     };
 
     static void _defaultOnText(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view value, void* userData) {
-        buffer += value;
+        buffer.append(value);
     }
 
     static void _defaultOnOpeningTag(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, void* userData) {
-        buffer += "<" + std::string(tag);
+        buffer.append("<").append(std::string(tag));
     }
 
     static void _defaultOnClosingTag(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view tag, void* userData) {
-        buffer += "</" + std::string(tag) + ">";
+        buffer.append("</").append(std::string(tag)).append(">");
     }
 
     static void _defaultOnInline(std::string& buffer, std::stack<std::string_view>& tagStack, std::string_view value, void* userData) {
-        buffer += "<span data-reactive=\"" + std::string(value) + "\"></span>";
+        buffer.append("<span data-reactive=\"").append(std::string(value)).append("\"></span>");
     }
 };
 
@@ -125,6 +125,9 @@ public:
     
     explicit HTMLParsingContext(HTMLParserOptions& options)
         : options(options) {}
+    
+    explicit HTMLParsingContext(HTMLParserOptions& options, bool nested)
+        : options(options), nested(nested) {}
 
     void end(std::string* buffer = nullptr) {
         if(options.onClosingTag) {
@@ -135,7 +138,7 @@ public:
         }
 
         if(options.buffer) {
-            *buffer += "</html>";
+            buffer->append("</html>");
         }
 
         state = TEXT;
@@ -144,6 +147,7 @@ public:
         flag_appendToClass = false;
         end_tag = false;
         class_buffer.clear();
+        body_attributes.clear();
         tagStack = std::stack<std::string_view>();
         reset = true;
     }
@@ -157,7 +161,7 @@ public:
 
     void resume(std::string& buffer = *(new std::string())) {
         if(reset) {
-            if(options.buffer){
+            if(options.buffer && buffer.size() == 0) {
                 buffer = "<!DOCTYPE html>\n" + options.header + "<html>";
                 buffer.reserve(buffer.size() + this->buffer.size() + 64);
             }
@@ -266,6 +270,10 @@ public:
                             value_start = it + 1;
                             space_broken = false;
 
+                            if (tag == "body" && !body_attributes.empty()) {
+                                buffer.append(" ").append(body_attributes);
+                            }
+
                             if(*it == '>' || *it == '/'){
                                 _endTag(state, buffer, class_buffer);
 
@@ -325,24 +333,24 @@ public:
 
                             if (attribute[0] == '#') {
 
-                                buffer += " id=\"" + attribute.substr(1) + "\"";
+                                buffer.append(" id=\"").append(attribute.substr(1)).append("\"");
 
                             } else if (attribute[0] == '.') {
 
                                 if(!class_buffer.empty()) {
-                                    class_buffer += " ";
+                                    class_buffer.append(" ");
                                 }
 
                                 std::replace(attribute.begin(), attribute.end(), '.', ' ');
 
-                                class_buffer += attribute.substr(1);
+                                class_buffer.append(attribute.substr(1));
 
                             } else if (attribute == "class") {
 
                                 flag_appendToClass = true;
 
                             } else {
-                                buffer += " " + attribute;
+                                buffer.append(" ").append(attribute);
                             }
                         }
 
@@ -401,18 +409,15 @@ public:
 
                             if(flag_appendToClass) {
                                 if(!class_buffer.empty()) {
-                                    class_buffer += " ";
+                                    class_buffer.append(" ");
                                 }
 
-                                class_buffer += value;
+                                class_buffer.append(value);
                                 flag_appendToClass = false;
                             } else {
                                 char quote = value.find('\'') != std::string_view::npos ? '"' : '\'';
 
-                                buffer += '=';
-                                buffer += quote;
-                                buffer += value;
-                                buffer += quote;
+                                buffer.append("=").append(1, quote).append(value).append(1, quote);
                             }
                         }
 
@@ -460,6 +465,10 @@ public:
         }
     }
 
+    std::stack<std::string_view> tagStack;
+
+    std::string body_attributes;
+
 private:
     void* userData = nullptr;
 
@@ -476,11 +485,11 @@ private:
     bool end_tag = false;
     bool space_broken = false;
     bool flag_appendToClass = false;
+    bool nested = false;
 
     char string_char = 0;
 
     std::string class_buffer;
-    std::stack<std::string_view> tagStack;
 
     HTMLParserOptions& options;
 
@@ -489,11 +498,11 @@ private:
 
         if(options.buffer) {
             if(!class_buffer.empty()) {
-                buffer += " class=\"" + class_buffer + "\"";
+                buffer.append(" class=\"").append(class_buffer).append("\"");
                 class_buffer.clear();
             }
 
-            buffer += ">";
+            buffer.append(">");
         }
     }
 

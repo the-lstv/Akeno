@@ -18,41 +18,42 @@ int main() {
 
     // options.header = "123";
 
+    // HTMLParsingContext ctx(options);
+
+    // std::string result;
+
+    // // std::string code = "<div/>";
+
+    // ctx.write(code, &result);
+
+    // ctx.write(code, &result);
+
+    // ctx.end(&result);
+
+    // std::cout << result << std::endl;
+
+    int iterations = 0;
+    auto start = std::chrono::high_resolution_clock::now();
+    auto end = start + std::chrono::seconds(5);
+
     HTMLParsingContext ctx(options);
 
-    std::string result;
+    while (std::chrono::high_resolution_clock::now() < end) {
+        // ctx.parse(code);
+        std::string result;
+        ctx.write(code, &result);
+        ctx.end(&result);
+        iterations++;
+    }
 
-    // std::string code = "<div/>";
+    auto duration = std::chrono::high_resolution_clock::now() - start;
+    auto duration_sec = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
+    int ops = iterations / static_cast<double>(duration_sec);
+    double avg_runtime = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() / static_cast<double>(iterations);
 
-    ctx.write(code, &result);
-
-    ctx.write(code, &result);
-
-    ctx.end(&result);
-
-    std::cout << result << std::endl;
-
-    // int iterations = 0;
-    // auto start = std::chrono::high_resolution_clock::now();
-    // auto end = start + std::chrono::seconds(5);
-
-    // while (std::chrono::high_resolution_clock::now() < end) {
-    //     // ctx.parse(code);
-    //     HTMLParsingContext ctx(options);
-    //     std::string result;
-    //     ctx.write(code, &result);
-    //     ctx.end(&result);
-    //     iterations++;
-    // }
-
-    // auto duration = std::chrono::high_resolution_clock::now() - start;
-    // auto duration_sec = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
-    // int ops = iterations / static_cast<double>(duration_sec);
-    // double avg_runtime = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() / static_cast<double>(iterations);
-
-    // std::cout << "Total iterations: " << iterations << std::endl;
-    // std::cout << "Operations per second: " << ops << std::endl;
-    // std::cout << "Average runtime per iteration (microseconds): " << avg_runtime << std::endl;
+    std::cout << "Total iterations: " << iterations << std::endl;
+    std::cout << "Operations per second: " << ops << std::endl;
+    std::cout << "Average runtime per iteration (microseconds): " << avg_runtime << std::endl;
 
     return 0;
 }

@@ -470,7 +470,7 @@ server = {
 
             switch(extension){
                 case "html":
-                    content = parser.fromFile(file, new HTMLParser.context({ url, app, secure: req.secure }))
+                    content = parser.fromFile(file, parser.createContext({ url, app, secure: req.secure }))
                 break;
 
                 case "js": case "css":
@@ -505,10 +505,7 @@ server = {
 
 
     /*
-        Optimized handler for dynamic server-side content generation, for when you need to generate data on every request.
-        Parsing is only done once and is fully cached for all dynamic requests - you only fill in the data.
-        Still, use with caution. Is still much slower than regular static files, and if you only need to update dynamic data
-        once in a while and they otherwise are the same for all requests, please avoid using it.
+        To be replaced with a more advanced dynamic content handler
     */
     ServeDynamicContent(req, res, content, headers, app, url){
         res.cork(() => {
@@ -527,7 +524,7 @@ server = {
                                 try {
                                     const path = app.path + "/" + item.replace("$original_path", req.original_url);
 
-                                    res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, new HTMLParser.context({ plain: true, dynamic: false, compress: true, app, url })))
+                                    res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, parser.createContext({ plain: true, dynamic: false, compress: true, app, url })))
                                 } catch (error) {
                                     console.warn("Failed to import: importing " + item, error)
                                 }
@@ -728,8 +725,6 @@ function initParser(header){
         }
     });
 
-    let head = "";
-
     HTMLParser.context.prototype.onBlock = function(block){
         // const misc = {
         //     default_attributes: this.default_attributes || {
@@ -737,159 +732,167 @@ function initParser(header){
         //     }
         // }
 
+        const parent = this.getTagName();
+
         switch(block.name) {
-            case "no-init": case "plain":
-                this.data.plain = true
-                head = ""
-                break;
+            case "use":
+                if(parent !== "head") {
+                    console.warn("Error in app " + this.app.path + ": @use can only be used in <head>.");
+                    break
+                }
 
-            case "dynamic":
-                this.data.dynamic = Boolean(block.attributes[0])
-                break;
+                // Modules
+                for(const entry of block.attributes){
+                    let attrib = typeof entry === "string"? entry: entry.name;
+                    const v_start_index = attrib.lastIndexOf(":");
 
-            case "print":
-                for(let attrib of block.attributes){
-                    this.onText(attrib.replace(/\$\w+/, () => { return "" }))
+                    const version = v_start_index !== -1? attrib.substring(v_start_index +1): null;
+                    if(v_start_index !== -1) attrib = attrib.substring(0, v_start_index);
+
+                    switch(attrib){
+                        case "ls": case "ls.js": case "ls.css":
+                            if(!version) {
+                                console.error("Error in app " + this.app.path + ": No version was specified for LS in your app. This is no longer supported - you must specify a version, eg. ls<" + latest_ls_version + ">");
+                                break;
+                            }
+
+                            if(attrib === "ls.css" || attrib === "ls") {
+                                this.write(`<link rel=stylesheet href="http${this.secure? "s": ""}://cdn.extragon.cloud/ls/${version}/ls.${!backend.isDev && this.compress? "min." : ""}css">`)
+                            }
+
+                            if(attrib === "ls.js" || attrib === "ls") {
+                                this.write(`<script src="http${this.secure? "s": ""}://cdn.extragon.cloud/ls/${version}/ls.${!backend.isDev && this.compress? "min." : ""}js"></script>`)
+                            }
+                            break;
+
+                        case "bootstrap-icons":
+                            this.write(`<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.11.3"}/font/bootstrap-icons.min.css">`)
+                            break;
+
+                        case "fa-icons":
+                            this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/all.min.css">`)
+                            break;
+                    }
                 }
                 break;
 
-            // case "import":
-            //     if(!context.app.path) break;
+            case "fonts":
+                if(parent !== "head") {
+                    console.warn("Error in app " + this.app.path + ": @fonts can only be used in <head>.");
+                    break
+                }
 
-            //     for(let item of block.attributes){
-            //         try {
-            //             push(parse_html_content({file: context.app.path + "/" + item, plain: true, app: context.app, compress: !!context.compress, url: context.url || null}))
-            //         } catch (error) {
-            //             console.warn("Failed to import: importing " + item, error)
-            //         }
-            //     }
-            //     break;
+                if(!this.flag_google_fonts_preconnect){
+                    this.write(`<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>`)
+                    this.flag_google_fonts_preconnect = true;
+                }
+
+                if(block.attributes.length > 0) this.write(`<link rel=stylesheet href="https://fonts.googleapis.com/css2?${block.attributes.map(font => "family=" + font.replaceAll(" ", "+")).join("&")}&display=swap">`)
+                break;
+
+            case "page":
+                if(parent !== "head") {
+                    console.warn("Error in app " + this.app.path + ": @page can only be used in <head>.");
+                    break
+                }
+
+                if(block.properties.title) {
+                    this.write(`<title>${block.properties.title[0]}</title>`)
+                }
+
+                if(block.properties.theme) {
+                    this.write(`<title>${block.properties.title[0]}</title>`)
+                }
+
+                if(block.properties.favicon) {
+                    const baseName = nodePath.basename(block.properties.favicon[0]);
+                    let extension = baseName, lastIndex = baseName.lastIndexOf('.');
+
+                    if (lastIndex !== -1) {
+                        extension = baseName.slice(lastIndex + 1);
+                    }
+
+                    let mimeType = backend.mime.getType(extension) || "image/x-icon";
+
+                    this.write(`<link rel="shortcut icon" href="${block.properties.favicon[0]}" type="${mimeType}">`)
+                }
+
+                this.setBodyAttributes('ls ls-style="flat"')
+
+                if(typeof block.properties.meta === "object"){
+                    // for(let key in block.properties.meta){
+                    //     this.write(`<meta name="${key}" content="${block.properties.meta[key]}">`)
+                    // }
+                }
+                break;
+
+            case "import":
+                if(!this.app.path) break;
+
+                for(let item of block.attributes){
+                    try {
+                        this.import(this.app.path + "/" + item)
+                        // push(parse_html_content({file: context.app.path + "/" + item, plain: true, app: context.app, compress: !!context.compress, url: context.url || null}))
+                    } catch (error) {
+                        console.warn("Failed to import: importing " + item, error)
+                    }
+                }
+                break;
 
             case "importRaw":
                 if(!this.app.path) break;
 
                 for(let item of block.attributes){
-                    // try {
-                    //     let content = fs.readFileSync(this.app.path + "/" + item, "utf8");
-                    //     this.onText(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
-                    // } catch (error) {
-                    //     console.warn("Failed to import (raw): importing " + item, error)
-                    // }
-                    this.include
+                    try {
+                        let content = fs.readFileSync(this.app.path + "/" + item, "utf8");
+                        this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
+                    } catch (error) {
+                        console.warn("Failed to import (raw): importing " + item, error)
+                    }
                 }
                 break;
 
-            // case "manifest":
-            //     if(block.properties.title) {
-            //         this.onText(`<title>${block.properties.title[0]}</title>`)
-            //     }
+            case "print":
+                for(let attrib of block.attributes){
+                    this.write(attrib.replace(/\$\w+/, () => { return "" }))
+                }
+                break;
 
-            //     if(block.properties.favicon) {
-            //         const baseName = nodePath.basename(block.properties.favicon[0]);
-            //         let extension = baseName, lastIndex = baseName.lastIndexOf('.');
+            case "not-resources":
+                if(block.properties.js) {
+                    for(let resource of block.properties.js) {
+                        const link = map_resource(resource, this.app.path);
 
-            //         if (lastIndex !== -1) {
-            //             extension = baseName.slice(lastIndex + 1);
-            //         }
+                        if(link) {
+                            const part = `<script src="${link}"></script>`
+                            if(!this.plain) head += part; else this.onText(part);
+                        }
+                    }
+                }
 
-            //         let mimeType = backend.mime.getType(extension) || "image/x-icon";
+                if(block.properties.css) {
+                    for(let resource of block.properties.css) {
+                        const link = map_resource(resource, this.app.path);
 
-            //         this.onText(`<link rel="shortcut icon" href="${block.properties.favicon[0]}" type="${mimeType}">`)
-            //     }
+                        if(link) {
+                            const part = `<link rel=stylesheet href="${link}">`
+                            if(!this.plain) head += part; else this.onText(part);
+                        }
+                    }
+                }
 
-            //     if(block.properties.theme) {
-            //         misc.default_attributes.body["ls-theme"] = block.properties.theme[0]
-            //     }
+                if(block.properties.fonts) {
+                    const part = `<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin><link rel=stylesheet href="${`https://fonts.googleapis.com/css2?${block.properties.fonts.map(font => {
+                        return "family=" + font.replaceAll(" ", "+") + ":wght@100;200;300;400;500;600;700;800;900"
+                    }).join("&")}&display=swap`}">`
 
-            //     if(block.properties.style) {
-            //         misc.default_attributes.body["ls-style"] = block.properties.style[0]
-            //     }
+                    if(!this.plain) head += part; else this.onText(part);
+                }
 
-            //     if(block.properties.accent) {
-            //         misc.default_attributes.body["ls-accent"] = block.properties.accent[0]
-            //     }
-            //     break;
-
-            // case "resources":
-            //     if(block.properties["ls-js"]){
-            //         misc.default_attributes.body.ls = "";
-
-            //         let version = block.properties["ls-version"] && block.properties["ls-version"][0];
-            //         let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
-
-            //         if(!version) {
-            //             version = "4.0.1"
-            //             console.error("Warning for app " + this.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
-            //         } else if(version === "latest") version = latest_ls_version;
-
-            //         let url = `http${this.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-js"][0] === true? "": block.properties["ls-js"].join(",") + "/"}ls.${!backend.isDev && this.compress? "min." : ""}js`;
-
-            //         const part = `<script src="${url}"></script>`;
-            //         if(!this.plain) head += part; else this.onText(part);
-            //     }
-            
-            //     if(block.properties["ls-css"]){
-            //         misc.default_attributes.body.ls = "";
-
-            //         let version = block.properties["ls-version"] && block.properties["ls-version"][0];
-            //         let devChannel = backend.isDev? (block.properties["ls-channel"] && block.properties["ls-channel"][0]) !== "prod": false;
-
-            //         if(!version) {
-            //             version = "4.0.1"
-            //             console.error("Warning for app " + this.app.path + ": No version was specified for LS in your app. This is deprecated and will stop working soon, please specify a version with ls-version. To explicitly set the latest version, set ls-version to latest. Defaulting to a LEGACY version (4.0.1) instead of " + latest_ls_version + ".");
-            //         } else if(version === "latest") version = latest_ls_version;
-
-            //         let url = `http${this.secure? "s" : ""}${devChannel? server.etc.ls_url_dev : server.etc.ls_url}${version}/${block.properties["ls-css"][0] === true? "": block.properties["ls-css"].join(",") + "/"}ls.${!backend.isDev && this.compress? "min." : ""}css`;
-                    
-            //         const part = `<link rel=stylesheet href="${url}">`
-            //         if(!this.plain) head += part; else this.onText(part);
-            //     }
-
-            //     if(block.properties.js) {
-            //         for(let resource of block.properties.js) {
-            //             const link = map_resource(resource, this.app.path);
-
-            //             if(link) {
-            //                 const part = `<script src="${link}"></script>`
-            //                 if(!this.plain) head += part; else this.onText(part);
-            //             }
-            //         }
-            //     }
-
-            //     if(block.properties.css) {
-            //         for(let resource of block.properties.css) {
-            //             const link = map_resource(resource, this.app.path);
-
-            //             if(link) {
-            //                 const part = `<link rel=stylesheet href="${link}">`
-            //                 if(!this.plain) head += part; else this.onText(part);
-            //             }
-            //         }
-            //     }
-
-            //     if(block.properties["bootstrap-icons"] || (block.properties.icons && block.properties.icons.includes("bootstrap"))) {
-            //         const part = `<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">`
-            //         if(!this.plain) head += part; else this.onText(part);
-            //     }
-
-            //     if(block.properties["fa-icons"] || (block.properties.icons && block.properties.icons.includes("fa"))) {
-            //         const part = `<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.0/css/all.min.css">`
-            //         if(!this.plain) head += part; else this.onText(part);
-            //     }
-
-            //     if(block.properties.fonts) {
-            //         const part = `<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin><link rel=stylesheet href="${`https://fonts.googleapis.com/css2?${block.properties.fonts.map(font => {
-            //             return "family=" + font.replaceAll(" ", "+") + ":wght@100;200;300;400;500;600;700;800;900"
-            //         }).join("&")}&display=swap`}">`
-
-            //         if(!this.plain) head += part; else this.onText(part);
-            //     }
-
-            //     break;
+                break;
 
             default:
                 block = null;
-                // if(this.dynamic) this.onText(block); else block = null;
         }
     }
 }

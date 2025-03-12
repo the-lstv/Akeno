@@ -1,45 +1,18 @@
 <head>
 
-    <!-- Legacy syntax, on by default for by .html, .htm (Akeno 1.2 - 1.5.6) -->
+    @use (ls:5.0.0[base], bootstrap-icons);
 
-    @manifest {
-        title: "Hello world!";
-
-        theme: dark;
-        style: flat;
-        accent: blue;
-    }
-
-    @resources {
-        css: /assets/style.css;
-        js: /assets/script.js;
-
-        fonts: Poppins;
-
-        ls-channel: prod;
-        ls-version: 5.0.0;
-        ls-js;
-        ls-css: flat;
-    }
-
-
-
-    <!-- Modern syntax (Akeno 1.6+) -->
-
-    <!-- @use (ls, reactivity);
-
-    @theme {
-        dark;
-        flat;
-        blue;
-    }
+    @fonts (Poppins, Rubik, "JetBrains Mono");
 
     @page {
-        # Proposed syntax, leveraging nested blocks
+        title: "Test page";
+        favicon: /assets/favicon.svg;
+
+        theme: dark;
+        accent: blue;
+        style: flat;
 
         resources {
-            fonts: Poppins :default;
-
             css: /assets/style.css;
             js: /assets/script.js;
         }
@@ -48,7 +21,7 @@
             description: "This is a simple hello world website.";
             keywords: "hello", "world", "website";
         }
-    } -->
+    }
 
 </head>
 
@@ -60,16 +33,8 @@
         }
     </style>
 
-    <!-- Reactivity test: {{ value }} <br>
+    Reactivity test: {{ value }} <br>
     
-    <button @click="value++">Increment</button>
-    <button @click="value--" .elevated>Decrement</button> -->
-
-
-    <!-- Compiled example: -->
-
-    Reactivity test: <strong data-source="value"></strong> <br>
-
     <button onclick="LS.Reactive.globalContext.object.value++">Increment</button>
     <button onclick="LS.Reactive.globalContext.object.value--" .elevated>Decrement</button>
 
@@ -104,7 +69,7 @@
 
             render(keys, cached = true){
                 for(let key of Array.isArray(keys)? keys: (keys? [keys]: Object.keys(this.object)))
-                for(let element of this.target.querySelectorAll(`[data-source='${key}']`)) element.textContent = String(this.object[key]);
+                for(let element of this.target.querySelectorAll(`[data-reactive='${key}']`)) element.textContent = String(this.object[key]);
             }
 
             static global(object, options){

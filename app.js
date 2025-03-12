@@ -4,13 +4,13 @@
 
     Last modified: 2024
     License: GPL-3.0
-    Version: 1.5.7
+    Version: 1.5.8
     See: https://github.com/the-lstv/akeno
 */
 
 
 let
-    version = "1.5.7",
+    version = "1.5.8",
 
     since_startup = performance.now(),
 
