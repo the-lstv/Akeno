@@ -1,4 +1,4 @@
-<img src="https://cdn.extragon.cloud/file/a6ee0da416b4eebcd4c9899fa9caa0d7.png" alt="Akeno icon"> <br>
+<img src="https://github.com/user-attachments/assets/4fdca083-82db-4682-97b6-40e915194134" alt="Akeno icon"> <br>
 
 Akeno is a really fast, modular server and web application runtime/framework, primarily intended for:<br>
 - Static and dynamic web sites/apps
