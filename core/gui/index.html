@@ -1,20 +1,13 @@
 <head>
 
-	@resources {
-		ls-version: 5.0.0;
-		ls-channel: prod;
-		ls-js;
-		ls-css: flat;
+	@use (ls:5.0.0[flat], bootstrap-icons, google-fonts[Poppins]);
 
-		fonts: "Poppins";
-		bootstrap-icons;
-	}
-
-	@manifest {
+	@page {
 		title: "Akeno Dashboard";
 		style: flat;
 		theme: dark;
 		accent: rusty-red;
+		font: Poppins;
 	}
 
 </head>
@@ -22,7 +15,7 @@
 <body>
 
 	<ls-div>
-		<ls-box #status></ls-box>
+		<ls-box #status />
 	</ls-div>
 
 	<br>
@@ -131,10 +124,6 @@
 	</script>
 
 	<style>
-		:root {
-			font-family: Poppins;
-		}
-
 		body {
 			padding: 32px;
 		}

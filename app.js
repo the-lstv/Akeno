@@ -71,8 +71,7 @@ let
 
     domainRouter = new Map,
 
-    // TODO: you know what to do :sob:
-    trustedOrigins = new Set(["https://lstv.space", "https://lstv.test", "http://lstv.test", "https://dev.lstv.test", "https://dev.lstv.space"])
+    trustedOrigins = new Set
 ;
 
 
@@ -195,9 +194,7 @@ function initialize(){
         })
     }
 
-    if (!server_enabled) return;
-
-    backend.log("Initializing the server...")
+    if (!server_enabled) return backend.log("Note; server is disabled, skipped loading.");
 
     for(let version of API.handlers.values()){
         if(version.Initialize) version.Initialize(backend)
@@ -391,7 +388,7 @@ function initialize(){
             segments: req.pathSegments,
 
             /** @deprecated */
-            shift: backend.helper.next(req),
+            shift: () => backend.helper.next(req),
 
             /** @deprecated */
             error: (error, code, status) => backend.helper.error(req, res, error, code, status)
@@ -1069,9 +1066,17 @@ const handlers = {
 
 
 for (const block of backend.config.blocks("route")) {
-    for(const name of block.attributes) {
-        domainRouter.set(name, handlers[block.get("to", String)])
+    for(const route of block.attributes) {
+        if(typeof route !== "object") continue;
+        for(const domain of route.values){
+            domainRouter.set(domain, handlers[route.name])
+        }
     }
+}
+
+
+for(const origin of backend.config.block("server").get("trustedOrigins", Array)){
+    trustedOrigins.add(origin)
 }
 
 
@@ -1089,8 +1094,6 @@ backend.isDev = isDev;
 backend.logLevel = backend.config.block("system").get("logLevel", Number) || isDev? 5 : 3;
 
 if(isDev){
-    backend.log("NOTE: API is running in development mode.")
-
     if(devInspecting){
         console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
         console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")

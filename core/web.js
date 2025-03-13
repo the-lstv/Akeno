@@ -80,13 +80,13 @@ server = {
 
         backend.exposeToDebugger("parser", parser);
 
-        server.reload()
+        server.reload(null, true);
     },
 
-    async reload(specific_app){
+    async reload(specific_app, skip_refresh){
         if(specific_app) return server.load(specific_app);
 
-        backend.refreshConfig();
+        if(!skip_refresh) backend.refreshConfig();
 
         const start = performance.now();
 
@@ -121,7 +121,7 @@ server = {
             server.load(location)
         }
 
-        server.log(`Loaded ${locations.length} web application${locations.length > 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
+        server.log(`Loaded ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
     },
 
 
@@ -705,6 +705,16 @@ function checkSupportedBrowser(userAgent, properties) {
 }
 
 
+const latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "5.0.0";
+
+const ls_components = {
+    // JS-only components
+    js: ["reactivity"],
+
+    // CSS-only components
+    css: ["flat"]
+};
+
 
 function initParser(header){
     parser = new HTMLParser.parser({
@@ -734,8 +744,6 @@ function initParser(header){
 
     parserContext = parser.createContext();
 
-    const ls = [];
-
     HTMLParser.context.prototype.onBlock = function(block){
         const parent = this.getTagName();
 
@@ -759,7 +767,7 @@ function initParser(header){
                     if(has_component_list) {
                         let last = null;
                         for (let v of entry.values.sort()) {
-                            let lower = v.toLowerCase();
+                            let lower = attrib == "google-fonts"? v: v.toLowerCase();
                             if (v && lower !== last) {
                                 components.push(lower);
                                 last = lower;
@@ -767,32 +775,48 @@ function initParser(header){
                         }
                     }
 
-                    console.log(components);
-                    
-
                     const v_start_index = attrib.lastIndexOf(":");
 
-                    const version = v_start_index !== -1? attrib.substring(v_start_index +1): null;
+                    let version = v_start_index !== -1? attrib.substring(v_start_index +1): null;
                     if(v_start_index !== -1) attrib = attrib.substring(0, v_start_index);
 
                     if(attrib === "ls" || attrib.startsWith("ls.")){
                         if(!version) {
-                            console.error("Error in app " + this.data.app.path + ": No version was specified for LS in your app. This is no longer supported - you must specify a version, eg. ls<" + latest_ls_version + ">");
-                            break;
+                            if(this.data.ls_version) {
+                                version = this.data.ls_version;
+                            } else {
+                                console.error(`Error in app "${this.data.app.path}": No version was specified for LS in your app. This is no longer supported - you must specify a version, for example ${attrib}:${latest_ls_version}. To enforce the latest version, use ${attrib}:latest`);
+                                break;
+                            }
+                        }
+
+                        if(version === "latest") version = latest_ls_version;
+
+                        this.data.ls_version = version;
+
+                        const is_merged = attrib === "ls";
+
+                        let components_string;
+
+                        if(is_merged || attrib === "ls.css") {
+                            components_string = (is_merged? components.filter(value => !ls_components.js.includes(value)): components).join();
+
+                            if(!(components_string.length === 0 && this.data.using_ls_css)) {
+                                this.write(`<link rel=stylesheet href="http${this.data.secure? "s": ""}://cdn.extragon.test/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_css? "bundle": "ls"}.${!backend.isDev && this.data.compress? "min." : ""}css">`);
+                                this.data.using_ls_css = true;
+                            }
+                        }
+                        
+                        if(is_merged || attrib === "ls.js") {
+                            components_string = (is_merged? components.filter(value => !ls_components.css.includes(value)): components).join();
+
+                            if(!(components_string.length === 0 && this.data.using_ls_js)) {
+                                this.write(`<script src="http${this.secure? "s": ""}://cdn.extragon.test/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_js? "bundle": "ls"}.${!backend.isDev && this.data.compress? "min." : ""}js"></script>`);
+                                this.data.using_ls_js = true;
+                            }
                         }
 
                         this.data.using_ls = true;
-                        this.data.using_ls_js = attrib === "ls" || attrib === "ls.js";
-                        this.data.using_ls_css = attrib === "ls" || attrib === "ls.css";
-
-                        if(this.data.using_ls_css || attrib.startsWith("ls.js.")) {
-                            this.write(`<link rel=stylesheet href="http${this.data.secure? "s": ""}://cdn.extragon.test/ls/${version}/ls.${!backend.isDev && this.data.compress? "min." : ""}css">`)
-                        }
-
-                        if(this.data.using_ls_js || attrib.startsWith("ls.css.")) {
-                            this.write(`<script src="http${this.secure? "s": ""}://cdn.extragon.test/ls/${version}/${this.data.using_ls? "ls": "bundle"}.${!backend.isDev && this.data.compress? "min." : ""}js"></script>`)
-                        }
-
                         continue;
                     }
 
@@ -805,22 +829,24 @@ function initParser(header){
                         case "fa-icons":
                             this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/all.min.css">`)
                             break;
+                        
+                        case "fa-brands":
+                            this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/brands.min.css">`)
+                            break;
+                        
+                        case "google-fonts":
+                            if(!this.data.flag_google_fonts_preconnect){
+                                this.write(`<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>`)
+                                this.data.flag_google_fonts_preconnect = true;
+                            }
+
+                            if(components.length > 0) this.write(`<link rel=stylesheet href="https://fonts.googleapis.com/css2?${components.map(font => "family=" + font.replaceAll(" ", "+")).join("&")}&display=swap">`)
+                            break;
+
+                        default:
+                            this.write(`\n<!-- Error in @use: Unknown module "${attrib}" -->\n`);
                     }
                 }
-                break;
-
-            case "fonts":
-                if(parent !== "head") {
-                    console.warn("Error in app " + this.data.app.path + ": @fonts can only be used in <head>.");
-                    break
-                }
-
-                if(!this.data.flag_google_fonts_preconnect){
-                    this.write(`<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>`)
-                    this.data.flag_google_fonts_preconnect = true;
-                }
-
-                if(block.attributes.length > 0) this.write(`<link rel=stylesheet href="https://fonts.googleapis.com/css2?${block.attributes.map(font => "family=" + font.replaceAll(" ", "+")).join("&")}&display=swap">`)
                 break;
 
             case "page":
@@ -850,7 +876,7 @@ function initParser(header){
                 }
 
                 if(block.properties.font) {
-                    bodyAttributes += this.data.using_ls_css? ` style="--font:${block.properties.font[0]}"`: ` style="font-family:${block.properties.font[0]}"`;
+                    bodyAttributes += this.data.using_ls_css? ` style="--font:${block.properties.font.join()}"`: ` style="font-family:${block.properties.font.join()}"`;
                 }
 
                 if(block.properties.favicon) {

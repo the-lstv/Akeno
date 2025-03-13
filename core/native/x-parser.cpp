@@ -44,13 +44,18 @@ std::unordered_set<std::string> voidElements = {
     "source", "track", "command", "frame", "param", "wbr"
 };
 
+std::unordered_set<std::string> rawElements = {
+    "script", "style", "xmp", "textarea", "title"
+};
+
 enum HTMLParserState {
     TEXT,
     TAGNAME,
     ATTRIBUTE,
     ATTRIBUTE_VALUE,
     COMMENT,
-    INLINE_VALUE
+    INLINE_VALUE,
+    RAW_ELEMENT
 };
 
 void* empty = nullptr;
@@ -142,7 +147,7 @@ public:
             options.onEnd(userData);
         }
 
-        if(options.buffer) {
+        if(!nested && options.buffer) {
             buffer->append("</html>");
         }
 
@@ -154,6 +159,7 @@ public:
         class_buffer.clear();
         body_attributes.clear();
         tagStack = std::stack<std::string_view>();
+        inside_head = false;
         reset = true;
     }
 
@@ -166,7 +172,7 @@ public:
 
     void resume(std::string& buffer = *(new std::string())) {
         if(reset) {
-            if(options.buffer && buffer.size() == 0) {
+            if(!nested && options.buffer && buffer.size() == 0) {
                 buffer = "<!DOCTYPE html>\n" + options.header + "<html>";
                 buffer.reserve(buffer.size() + this->buffer.size() + 64);
             }
@@ -209,16 +215,7 @@ public:
 
                 case TEXT:
                     if (*it == '<') {
-
-                        if(!(it - value_start == 0)){
-                            if(options.onText) {
-                                std::string_view text(value_start, it - value_start);
-
-                                if(text.size() > 0) {
-                                    options.onText(buffer, tagStack, trim(text), userData);
-                                }
-                            }
-                        }
+                        pushText(buffer);
 
                         if (it[1] == '!' && it[2] == '-' && it[3] == '-') {
                             state = COMMENT;
@@ -239,15 +236,7 @@ public:
                     }
 
                     if (*it == '{' && it[1] == '{' && it[-1] != '\\') {
-                        if(!(chunk_end - value_start == 0)){
-                            if(options.onText) {
-                                std::string_view text(value_start, it - value_start);
-
-                                if(text.size() > 0) {
-                                    options.onText(buffer, tagStack, trim(text), userData);
-                                }
-                            }
-                        }
+                        pushText(buffer);
 
                         state = INLINE_VALUE;
 
@@ -256,6 +245,27 @@ public:
                         space_broken = false;
 
                         continue;
+                    }
+                    break;
+
+                case RAW_ELEMENT:
+                    if (*it == '<' && it[1] == '/') {
+                        std::string_view topTag = tagStack.top();
+
+                        if (it[topTag.size() +2] == '>' && std::string_view(it + 2, topTag.size()) == topTag) {
+                            pushText(buffer);
+
+                            tagStack.pop();
+
+                            if (options.onClosingTag) {
+                                options.onClosingTag(buffer, tagStack, topTag, userData);
+                            }
+
+                            state = TEXT;
+
+                            it += topTag.size() + 3;
+                            value_start = it;
+                        }
                     }
                     break;
 
@@ -293,8 +303,15 @@ public:
                                 state = ATTRIBUTE;
                             }
 
+                            
                             if(!(voidElements.find(std::string(tag)) != voidElements.end())) {
                                 tagStack.push(tag);
+
+                                if(tag == "head") {
+                                    inside_head = true;
+                                } else if(rawElements.find(std::string(tag)) != rawElements.end()) {
+                                    state = RAW_ELEMENT;
+                                }
                             }
 
                             continue;
@@ -318,6 +335,10 @@ public:
                         
                         if (options.onClosingTag) {
                             options.onClosingTag(buffer, tagStack, closingTag, userData);
+                        }
+
+                        if(closingTag == "head") {
+                            inside_head = false;
                         }
 
                         value_start = it + 1;
@@ -461,12 +482,8 @@ public:
             }
         }
 
-        if(state == TEXT && options.onText && !(chunk_end - value_start == 0)) {
-            std::string_view text(value_start, chunk_end - value_start);
-
-            if(text.size() > 0) {
-                options.onText(buffer, tagStack, trim(text), userData);
-            }
+        if(state == TEXT) {
+            pushText(buffer);
         }
     }
 
@@ -491,7 +508,19 @@ private:
     bool space_broken = false;
     bool flag_appendToClass = false;
     bool nested = false;
+    bool inside_head = false;
 
+    void pushText(std::string& buffer) {
+        if(options.onText && !(it - value_start == 0)){
+            std::string_view text(value_start, it - value_start);
+            text = (!options.compact && !inside_head)? text: trim(text);
+
+            if(text.size() > 0) {
+                options.onText(buffer, tagStack, text, userData);
+            }
+        }
+    }
+    
     char string_char = 0;
 
     std::string class_buffer;
@@ -517,10 +546,6 @@ private:
     }
 
     std::string_view trim(std::string_view s) {
-        if(!options.compact) {
-            return s;
-        }
-
         size_t start = s.find_first_not_of(" \t\n\r\f\v");
         if (start == std::string_view::npos) return ""; // String is all whitespace
 

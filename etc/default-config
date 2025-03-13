@@ -26,11 +26,12 @@ server {
 # Webserver configuration
 web {
     locations:
-        # Website locations - * searches all subdirectories.
-        # A website/webapp becomes valid when it contains an app.conf file.
+        # Website locations - * looks at all subdirectories (non-recursively).
+        # A website/app is valid once it has an app.conf file.
         "/var/www/akeno/*",
         "./examples/hello-world-website",
-        "./core/gui"
+
+        "./core/gui" # This is the experimental GUI for Akeno management - comment this line to disable.
     ;
 }
 
@@ -46,7 +47,10 @@ api.version(1) {
 }
 
 # Setup domains to route to API:
-route ("api.example.com") { to: api }
+route (
+    api["api.example.com"]
+);
+
 # More spefic routing can be set later within web applications.
 
 

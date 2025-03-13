@@ -1,87 +1,25 @@
 <head>
 
-    @use (ls:5.0.0[base], bootstrap-icons);
-
-    @fonts (Poppins, Rubik, "JetBrains Mono");
+    @use (bootstrap-icons:1.11.3, ls.css:5.0.0, google-fonts[Poppins]);
 
     @page {
-        title: "Test page";
-        favicon: /assets/favicon.svg;
+        title: "Hello world!";
+        favicon: /icon.svg;
 
-        theme: dark;
-        accent: blue;
-        style: flat;
-
-        resources {
-            css: /assets/style.css;
-            js: /assets/script.js;
-        }
-
-        meta {
-            description: "This is a simple hello world website.";
-            keywords: "hello", "world", "website";
-        }
+        # Apply the added font
+        font: Poppins;
     }
 
 </head>
 
 <body>
+    <div #id .class>
+        <h1>Hello world! <i .bi-stars /></h1>
+    </div>
 
     <style>
-        :root {
-            --font: Poppins;
+        body {
+            padding: 0 1rem;
         }
     </style>
-
-    Reactivity test: {{ value }} <br>
-    
-    <button onclick="LS.Reactive.globalContext.object.value++">Increment</button>
-    <button onclick="LS.Reactive.globalContext.object.value--" .elevated>Decrement</button>
-
-    <script>
-        LS.LoadComponent(class Reactive extends LS.Component {
-            constructor(object = {}, options = {}){
-                super()
-
-                this.target = options.target || document.body;
-
-                this.object = new Proxy(object, {
-                    set: (target, key, value) => {
-                        target[key] = value;
-                        this.render(key);
-                    },
-
-                    get: (target, key) => target[key],
-
-                    deleteProperty: (target, key) => {
-                        delete target[key];
-                        this.render(key);
-                    }
-                })
-
-                this.render(null, false);
-            }
-
-            assign(object, options){
-                Object.assign(this.object, object);
-                this.render();
-            }
-
-            render(keys, cached = true){
-                for(let key of Array.isArray(keys)? keys: (keys? [keys]: Object.keys(this.object)))
-                for(let element of this.target.querySelectorAll(`[data-reactive='${key}']`)) element.textContent = String(this.object[key]);
-            }
-
-            static global(object, options){
-                return this.globalContext? this.globalContext.assign(object, options) : (this.globalContext = new this(object, options));
-            }
-        }, { name: "Reactive", global: true })
-
-
-        LS.Reactive.global({
-            value: 0
-        });
-
-    </script>
-
 </body>
