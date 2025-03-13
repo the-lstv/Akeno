@@ -286,6 +286,18 @@ ParserWrapper::ParserWrapper(const Napi::CallbackInfo& info)
                 }
             };
         }
+
+        if (opts.Has("onEnd")) {
+            onEndRef_ = Napi::Persistent(opts.Get("onEnd").As<Napi::Function>());
+            parserOptions.onEnd = [&](void* userData) {
+                if (userData == nullptr) {
+                    return;
+                }
+
+                Napi::Object* obj = static_cast<Napi::Object*>(userData);
+                Napi::Value result = onEndRef_.Call({ *obj });
+            };
+        }
     }
 }
 

@@ -24,6 +24,7 @@ private:
     Napi::FunctionReference onOpeningTagRef_;
     Napi::FunctionReference onClosingTagRef_;
     Napi::FunctionReference onInlineRef_;
+    Napi::FunctionReference onEndRef_;
 
     Napi::Value createContext(const Napi::CallbackInfo& info);
     Napi::Value fromString(const Napi::CallbackInfo& info);

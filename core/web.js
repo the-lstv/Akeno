@@ -22,6 +22,7 @@ let
 
     HTMLParser = require("./native/dist/html-parser"),
     parser, // Will be defined later
+    parserContext,
 
     // Local libraries
     { parse, configTools } = require("./parser"),
@@ -470,7 +471,8 @@ server = {
 
             switch(extension){
                 case "html":
-                    content = parser.fromFile(file, parser.createContext({ url, app, secure: req.secure }))
+                    parserContext.data = { url, app, secure: req.secure };
+                    content = parser.fromFile(file, parserContext)
                 break;
 
                 case "js": case "css":
@@ -524,7 +526,8 @@ server = {
                                 try {
                                     const path = app.path + "/" + item.replace("$original_path", req.original_url);
 
-                                    res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, parser.createContext({ plain: true, dynamic: false, compress: true, app, url })))
+                                    parserContext.data = { plain: true, dynamic: false, compress: true, app, url };
+                                    res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, parserContext))
                                 } catch (error) {
                                     console.warn("Failed to import: importing " + item, error)
                                 }
@@ -722,49 +725,79 @@ function initParser(header){
 
             // Parse with Atrium, text gets sent back to C++, blocks get handled via onBlock
             parse(text, context)
+        },
+
+        onEnd(context){
+            context.data = null;
         }
     });
 
-    HTMLParser.context.prototype.onBlock = function(block){
-        // const misc = {
-        //     default_attributes: this.default_attributes || {
-        //         body: {}
-        //     }
-        // }
+    parserContext = parser.createContext();
 
+    const ls = [];
+
+    HTMLParser.context.prototype.onBlock = function(block){
         const parent = this.getTagName();
 
         switch(block.name) {
             case "use":
                 if(parent !== "head") {
-                    console.warn("Error in app " + this.app.path + ": @use can only be used in <head>.");
+                    console.warn("Error in app " + this.data.app.path + ": @use can only be used in <head>.");
                     break
                 }
 
                 // Modules
                 for(const entry of block.attributes){
-                    let attrib = typeof entry === "string"? entry: entry.name;
+                    const has_component_list = typeof entry !== "string";
+
+                    let attrib = has_component_list? entry.name: entry;
+
+                    const components = has_component_list && entry.values.length > 0? []: backend.constants.EMPTY_ARRAY;
+
+                    // We sort alphabetically and remove duplicates to maximize cache hits
+                    // This is the fastest method based on my benchmark: https://jsbm.dev/Au74tivWZWKEo
+                    if(has_component_list) {
+                        let last = null;
+                        for (let v of entry.values.sort()) {
+                            let lower = v.toLowerCase();
+                            if (v && lower !== last) {
+                                components.push(lower);
+                                last = lower;
+                            }
+                        }
+                    }
+
+                    console.log(components);
+                    
+
                     const v_start_index = attrib.lastIndexOf(":");
 
                     const version = v_start_index !== -1? attrib.substring(v_start_index +1): null;
                     if(v_start_index !== -1) attrib = attrib.substring(0, v_start_index);
 
-                    switch(attrib){
-                        case "ls": case "ls.js": case "ls.css":
-                            if(!version) {
-                                console.error("Error in app " + this.app.path + ": No version was specified for LS in your app. This is no longer supported - you must specify a version, eg. ls<" + latest_ls_version + ">");
-                                break;
-                            }
-
-                            if(attrib === "ls.css" || attrib === "ls") {
-                                this.write(`<link rel=stylesheet href="http${this.secure? "s": ""}://cdn.extragon.cloud/ls/${version}/ls.${!backend.isDev && this.compress? "min." : ""}css">`)
-                            }
-
-                            if(attrib === "ls.js" || attrib === "ls") {
-                                this.write(`<script src="http${this.secure? "s": ""}://cdn.extragon.cloud/ls/${version}/ls.${!backend.isDev && this.compress? "min." : ""}js"></script>`)
-                            }
+                    if(attrib === "ls" || attrib.startsWith("ls.")){
+                        if(!version) {
+                            console.error("Error in app " + this.data.app.path + ": No version was specified for LS in your app. This is no longer supported - you must specify a version, eg. ls<" + latest_ls_version + ">");
                             break;
+                        }
 
+                        this.data.using_ls = true;
+                        this.data.using_ls_js = attrib === "ls" || attrib === "ls.js";
+                        this.data.using_ls_css = attrib === "ls" || attrib === "ls.css";
+
+                        if(this.data.using_ls_css || attrib.startsWith("ls.js.")) {
+                            this.write(`<link rel=stylesheet href="http${this.data.secure? "s": ""}://cdn.extragon.test/ls/${version}/ls.${!backend.isDev && this.data.compress? "min." : ""}css">`)
+                        }
+
+                        if(this.data.using_ls_js || attrib.startsWith("ls.css.")) {
+                            this.write(`<script src="http${this.secure? "s": ""}://cdn.extragon.test/ls/${version}/${this.data.using_ls? "ls": "bundle"}.${!backend.isDev && this.data.compress? "min." : ""}js"></script>`)
+                        }
+
+                        continue;
+                    }
+
+
+                    switch(attrib){
                         case "bootstrap-icons":
                             this.write(`<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.11.3"}/font/bootstrap-icons.min.css">`)
                             break;
@@ -778,13 +811,13 @@ function initParser(header){
 
             case "fonts":
                 if(parent !== "head") {
-                    console.warn("Error in app " + this.app.path + ": @fonts can only be used in <head>.");
+                    console.warn("Error in app " + this.data.app.path + ": @fonts can only be used in <head>.");
                     break
                 }
 
-                if(!this.flag_google_fonts_preconnect){
+                if(!this.data.flag_google_fonts_preconnect){
                     this.write(`<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>`)
-                    this.flag_google_fonts_preconnect = true;
+                    this.data.flag_google_fonts_preconnect = true;
                 }
 
                 if(block.attributes.length > 0) this.write(`<link rel=stylesheet href="https://fonts.googleapis.com/css2?${block.attributes.map(font => "family=" + font.replaceAll(" ", "+")).join("&")}&display=swap">`)
@@ -792,7 +825,7 @@ function initParser(header){
 
             case "page":
                 if(parent !== "head") {
-                    console.warn("Error in app " + this.app.path + ": @page can only be used in <head>.");
+                    console.warn("Error in app " + this.data.app.path + ": @page can only be used in <head>.");
                     break
                 }
 
@@ -800,8 +833,24 @@ function initParser(header){
                     this.write(`<title>${block.properties.title[0]}</title>`)
                 }
 
-                if(block.properties.theme) {
-                    this.write(`<title>${block.properties.title[0]}</title>`)
+                let bodyAttributes = this.data.using_ls_css? "ls": "";
+
+                if(this.data.using_ls_css) {
+                    if(block.properties.theme) {
+                        bodyAttributes += ` ls-theme="${block.properties.theme[0]}"`;
+                    }
+    
+                    if(block.properties.accent) {
+                        bodyAttributes += ` ls-accent="${block.properties.accent[0]}"`;
+                    }
+    
+                    if(block.properties.style) {
+                        bodyAttributes += ` ls-style="${block.properties.style[0]}"`;
+                    }    
+                }
+
+                if(block.properties.font) {
+                    bodyAttributes += this.data.using_ls_css? ` style="--font:${block.properties.font[0]}"`: ` style="font-family:${block.properties.font[0]}"`;
                 }
 
                 if(block.properties.favicon) {
@@ -817,7 +866,7 @@ function initParser(header){
                     this.write(`<link rel="shortcut icon" href="${block.properties.favicon[0]}" type="${mimeType}">`)
                 }
 
-                this.setBodyAttributes('ls ls-style="flat"')
+                this.setBodyAttributes(bodyAttributes)
 
                 if(typeof block.properties.meta === "object"){
                     // for(let key in block.properties.meta){
@@ -827,11 +876,11 @@ function initParser(header){
                 break;
 
             case "import":
-                if(!this.app.path) break;
+                if(!this.data.app.path) break;
 
                 for(let item of block.attributes){
                     try {
-                        this.import(this.app.path + "/" + item)
+                        this.import(this.data.app.path + "/" + item)
                         // push(parse_html_content({file: context.app.path + "/" + item, plain: true, app: context.app, compress: !!context.compress, url: context.url || null}))
                     } catch (error) {
                         console.warn("Failed to import: importing " + item, error)
@@ -840,11 +889,11 @@ function initParser(header){
                 break;
 
             case "importRaw":
-                if(!this.app.path) break;
+                if(!this.data.app.path) break;
 
                 for(let item of block.attributes){
                     try {
-                        let content = fs.readFileSync(this.app.path + "/" + item, "utf8");
+                        let content = fs.readFileSync(this.data.app.path + "/" + item, "utf8");
                         this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
                     } catch (error) {
                         console.warn("Failed to import (raw): importing " + item, error)

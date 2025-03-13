@@ -72,6 +72,7 @@ public:
     std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, void*)> onOpeningTag = nullptr;
     std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, void*)> onClosingTag = nullptr;
     std::function<void(std::string&, std::stack<std::string_view>&, std::string_view, void*)> onInline = nullptr;
+    std::function<void(void*)> onEnd = nullptr;
 
     HTMLParserOptions(bool buffer) : buffer(buffer) {
         if(buffer) {
@@ -135,6 +136,10 @@ public:
                 options.onClosingTag(*buffer, tagStack, tagStack.top(), userData);
                 tagStack.pop();
             }
+        }
+
+        if (options.onEnd) {
+            options.onEnd(userData);
         }
 
         if(options.buffer) {

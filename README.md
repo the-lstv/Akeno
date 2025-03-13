@@ -1,28 +1,32 @@
 <img src="https://cdn.extragon.cloud/file/a6ee0da416b4eebcd4c9899fa9caa0d7.png" alt="Akeno icon"> <br>
 
-Akeno is a really fast, modular server, primarily intended for:<br>
-- Efficient APIs
+Akeno is a really fast, modular server and web application runtime/framework, primarily intended for:<br>
 - Static and dynamic web sites/apps
 - Realtime web apps
+- Low-latency APIs
 - Content delivery
 - User management
 
 It supports various configurations for HTTP, HTTPS, HTTP3 (experimental), and WebSocket protocols.<br>
 Though thanks to its modularity, it can be easily expanded.
-<br><br>
-It also has a built-in webserver, which is extremely optimized and has some very nice features that make developing and deploying websites or apps really simple!
-<br><br>**NOTE:** At this time Akeno only works on Linux. Windows support is not planned yet due to no interest. Note that thanks to the modular nature of Akeno, some features may work on Windows just fine.<br>
+
+
+The most interesting part is its webserver, which is extremely optimized and has some very nice features that make developing and deploying websites or apps really simple!
+
 
 ---
-Quick installation (on Linux) - requires node, npm, git, gcc, g++, and python (attempts to install automatically if not found)<br>
+### Quick installation
+Requires node, npm, git, gcc, g++, and python (attempts to install automatically if not found). We plan to reduce the amount of dependencies to just two in future updates by packaging prebuilt binaries.<br>
+
+**NOTE:** At this time Akeno only works on Linux x86_64. Official Windows support is not planned yet. While Akeno may run on Windows, its support is highly experimental and may not fully work up to expectations.<br>
 ```sh
 curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
 ```
-You can start Akeno with
+You can then start Akeno with
 ```sh
 akeno start
 ```
-To run under a process manager (recommended):
+Or, to run under a process manager (recommended):
 ```sh
 sudo pm2 start /usr/lib/akeno/app.js --name Akeno
 ```
@@ -33,18 +37,27 @@ sudo pm2 start /usr/lib/akeno/app.js --name Akeno
 ![🚀 Fast](https://github.com/the-lstv/Akeno/assets/62482747/d7f3466c-c833-4fca-a57b-e93f7aca0882)
 ---
 
-Akeno is focused on speed and efficiency.
+Akeno is heavily focused on speed, efficiency and low-latency, making it very scalable and responsive, so you and your clients no longer have to deal with slow web apps.
 
-The entire server is started and ready in **10ms** on average, depending on added modules (making it faster than most modern large servers), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
+The entire server is started and ready in a few milliseconds on average, depending on loaded modules. This is already miles ahead of most full-featured servers.
 
-Even with a full setup with routing and caching, it is still multiple times faster than even the most minimal express server, out of the box. 
+For HTTP and WebSocket traffic, we use [uWebSockets](https://github.com/uNetworking/uWebSockets.js) (a low-level, incredibly optimized web server written in C++) - which is one of the fastest standard-compliant servers in the world, **~8.5x** faster than the already fast framework Fastify.
 
-On top of that, Akeno automatically handles cache, and adds an ?mtime query parametter for file changes for your static JS/CSS resources with no code changes required, so you dont have to worry about your clients getting outdated content, while still utilizing caching to the fullest.
+Even with a full setup including routing, caching, dynamic content and encryption, Akeno is still multiple times faster than even the most minimal express server, out of the box.
 
-Akeno can also automatically compresses all of your HTML, CSS and JS code on the fly - saving you the hassle of having to make copies or compress yourself.<br>
-Just write the code and watch the magic happen in real time.<br><br>
+Akeno's powerful content preprocessor, which can handle advanced HTML templates in real time or even our custom application syntax, can prepare a full response including compilation without cache in less than 1-2ms. This is even faster for basic HTML documents simpler transformations like compression.
+This makes Akeno faster than most frameworks out there!
+With memory cache (which is automatic and based on file changes), the response can be prepared in as low as a few microseconds.
 
-Akeno is also faster than popular servers like Nginx for both static and dynamic content.<br>
+Akeno automatically handles cache for websites and assets, having both server-side compilation cache and client-side cache via an ?mtime query parametter, which is added automatically to all assets and resources.
+
+This means that you no longer have to worry about caching or cache busting - Akeno ensures that your clients always get the latest version of your content, while still utilizing caching to the fullest extent.
+
+Akeno can also compresses all of your code on the fly.<br>
+
+Just write your code and let Akeno optimize it in real time, without any extra hassles.<br><br>
+
+Akeno is faster than popular servers like Nginx for both static and dynamic content.<br>
 
 
 <br><br>
@@ -65,11 +78,6 @@ Akeno offers a full-featured command line interface that you can use to control 
 
 <br>
 
-## Updates: New in 1.5.4
-- Parser performance increased over 32x 🚀
-- Moved the parser to a separate [repo](https://github.com/the-lstv/Atrium) and now included as a submodule
-<br><br>
-
 ## Examples
 - ### Creating a simple web app (minimal example, 4 steps)
 1. Create a new directory for your app in a directory that is defined in your config.
@@ -82,37 +90,41 @@ Akeno offers a full-featured command line interface that you can use to control 
 
    # ...
    ```
-4. Reload akeno (either `akeno reload --hot` or `akeno reload` for full reload)<br>
-And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP. No further configuration needed.
+4. Reload akeno (With `akeno reload`, or `akeno restart` for full server restart)<br>
+And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP. No further configuration needed - its that easy.
 
 
 <br>
 
 
 - ### Say hello to the builtin custom dynamic syntax
-Tired of the repetetive and long HTML templates? How about doing it the Akeno way instead!<br>
-Let's say that you want to make a simple site with a title, favicon and a font from Google fonts, and a script:
+Tired of the messy, repetetive and long HTML templates? How about doing it the Akeno way instead!<br>
+Let's say that you want to make a simple page with a title, favicon and a font from Google fonts, and want to use Bootstrap icons:
 ```html
 <head>
 
-    @manifest {
-         title: "This is an example :)";
-         favicon: /icon.svg;
-    }
+    @use (bootstrap-icons:1.11.3);
 
-    @resources {
-         fonts: Poppins; # Defaults to Google fonts
-         js: /main.js;
+    @fonts (Poppins);
+
+    @page {
+        title: "Hello world!";
+        favicon: /icon.svg;
+
+        # Apply the added font
+        font: Poppins;
     }
 
 </head>
 
 <body>
-    Hello world!
+    <div #id .class>
+        <h1>Hello world! <i .bi-stars /></h1>
+    </div>
 </body>
 ```
-That's it! All the repetetive work is done for you. Akeno even cleans and compresses the code for you (HTML, CSS, and JS).<br>
-Also, Akeno will automatically check for local changes and assign a `?mtime` query which, to efficiently keep cache functional while making sure the content is always up-to-date for your users.
+Simply use .xw instead of .html as your file extension and this syntax will autmatically work.<br>
+That's it! Much cleaner and easier to write & read. All the boring stuff is done for you. Akeno even cleans and compresses the code for you (HTML, CSS, and JS).
 <br>
 
 
