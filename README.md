@@ -123,30 +123,6 @@ Let's say that you want to make a simple page with a title, favicon and a font f
 ```
 Simply use .xw instead of .html as your file extension and this syntax will autmatically work.<br>
 That's it! Much cleaner and easier to write & read. All the boring stuff is done for you. Akeno even cleans and compresses the code for you (HTML, CSS, and JS).
-<br>
-
-
-
 <br><br>
-## Debug Akeno easily with DevTools (or other inspectors)! 
-![Debugger](https://github.com/user-attachments/assets/c659ef12-eb18-4679-a94c-6bc1f7ff4bbd) <br>
-Starting with version 1.5, Akeno is compatible with the node `--inspect` flag and allows you to debug or test your server with DevTools!<br><br>
-### How to enable:
-1. Open chrome://inspect/ and click "Open dedicated DevTools for Node"
-2. Start Akeno in dev mode and with the `--inspect` flag (`akeno start --inspect`)
-3. Enjoy debugging! The process will be detected and attached automatically. You can directly access the backend (`backend` is a global getter to the backend object).
 
-Exposed properties by default:
-- Backend as `backend`
-- AddonCache as `addons`
-- API as `api`
-- resolve as `router` (core HTTP router)
-- proxyReq as `proxyRouter` (proxy router)
-- app as `uws` (uWebSockets instance)
-- SSLApp as `uws_ssl` (only if SSL is enabled)<br>
-- H3App as `uws_h3` (only if H3 is enabled)<br>
-
-Any other variables are *not* acessible to the debugger even if global, unless you expose them manually!<br>
-
-From within your addons, scripts or handlers you can use `backend.exposeToDebugger(key, value)` to expose an object globally (as a getter to prevent copying - readonly).<br>
-This method will silently do nothing if inspect is disabled, so you can call it even in production.
+_The only thing left is to pair it with [LS](https://github.com/the-lstv/LS/) ;)_
