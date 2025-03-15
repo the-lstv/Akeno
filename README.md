@@ -1,8 +1,8 @@
 <img src="https://github.com/user-attachments/assets/4fdca083-82db-4682-97b6-40e915194134" alt="Akeno icon"> <br>
 
-Akeno is a really fast, modular server and web application runtime/framework, primarily intended for:<br>
+Akeno is a really fast, modular server and web application runtime/framework written in C++ and JavaScript, primarily intended for:<br>
 - Static and dynamic web sites/apps
-- Realtime web apps
+- Realtime web apps of nearly any scale
 - Low-latency APIs
 - Content delivery
 - User management
@@ -11,7 +11,7 @@ It supports various configurations for HTTP, HTTPS, HTTP3 (experimental), and We
 Though thanks to its modularity, it can be easily expanded.
 
 
-The most interesting part is its webserver, which is extremely optimized and has some very nice features that make developing and deploying websites or apps really simple!
+The most interesting part is its powerful webserver, which is highly optimized and has some very cool features that make developing and deploying websites or apps really simple!
 
 
 ---
@@ -32,16 +32,15 @@ sudo pm2 start /usr/lib/akeno/app.js --name Akeno
 ```
 
 ---
-<br>
+<br><br>
 
-![🚀 Fast](https://github.com/the-lstv/Akeno/assets/62482747/d7f3466c-c833-4fca-a57b-e93f7aca0882)
----
+<img src="https://github.com/user-attachments/assets/99f5da80-56ab-471b-8203-3cebbc98f659" width="650"><br>
 
 Akeno is heavily focused on speed, efficiency and low-latency, making it very scalable and responsive, so you and your clients no longer have to deal with slow web apps.
 
 The entire server is started and ready in a few milliseconds on average, depending on loaded modules. This is already miles ahead of most full-featured servers.
 
-For HTTP and WebSocket traffic, we use [uWebSockets](https://github.com/uNetworking/uWebSockets.js) (a low-level, incredibly optimized web server written in C++) - which is one of the fastest standard-compliant servers in the world, **~8.5x** faster than the already fast framework Fastify.
+For HTTP and WebSocket traffic, we use [uWebSockets](https://github.com/uNetworking/uWebSockets) (a low-level, incredibly optimized web server written in C++) - which is one of the fastest standard-compliant servers in the world, **~8.5x** faster than the already fast framework Fastify.
 
 Even with a full setup including routing, caching, dynamic content and encryption, Akeno is still multiple times faster than even the most minimal express server, out of the box.
 
@@ -62,19 +61,18 @@ Akeno is faster than popular servers like Nginx for both static and dynamic cont
 
 <br><br>
 
+<img src="https://github.com/user-attachments/assets/33f241f6-ffca-4ab2-844b-cd60dbc8c782" width="650"><br>
 
-![🗃️ Modular](https://github.com/the-lstv/Akeno/assets/62482747/dceb9b55-d46d-468b-9338-95369bb568d7)
----
 Akeno is fully modular. On first startup, it only loads what is necesarry. Everything else is loaded as requested, on the fly.
 This includes API extensions - simply create a JS file with your server-side API in your web app's directory, hot-reload the config and your API is ready to use.
 
 
 <br><br>
 
+<img src="https://github.com/user-attachments/assets/18f7f7e4-cc63-4da5-a740-4b5bcb2b7719" width="650"><br>
 
-![🖥️ CLI](https://github.com/the-lstv/Akeno/assets/62482747/924f2a21-91f4-4a42-9c22-bbe25f44ec48)
----
-Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats and manage apps.
+Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats and manage apps.<br>
+It also offers modules and libraries you can use to control and manage the server externally with ease!
 
 <br>
 
