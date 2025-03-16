@@ -379,8 +379,6 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
 
 
 
-
-
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     ParserWrapper::Init(env, exports);
     ParserContext::Init(env, exports);

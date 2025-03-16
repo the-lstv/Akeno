@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <unordered_set>
 #include <functional>
-#include <optional>
 
 
 /*
@@ -159,7 +158,10 @@ public:
         class_buffer.clear();
         body_attributes.clear();
         tagStack = std::stack<std::string_view>();
+        template_scope = std::string_view();
         inside_head = false;
+        is_template = false;
+        is_raw = false;
         reset = true;
     }
 
@@ -173,7 +175,7 @@ public:
     void resume(std::string& buffer = *(new std::string())) {
         if(reset) {
             if(!nested && options.buffer && buffer.size() == 0) {
-                buffer = "<!DOCTYPE html>\n" + options.header + "<html>";
+                buffer = "<!DOCTYPE html>\n" + options.header + "\n<html>";
                 buffer.reserve(buffer.size() + this->buffer.size() + 64);
             }
             reset = false;
@@ -224,7 +226,9 @@ public:
                         }
 
                         state = TAGNAME;
+                        is_template = false;
                         end_tag = it[1] == '/';
+                        is_raw = false;
 
                         value_start = it + (end_tag? 2: 1);
 
@@ -270,6 +274,16 @@ public:
                     break;
 
                 case TAGNAME:
+                    // Templates
+                    if(!is_template && *it == ':' && it[1] == ':') {
+                        template_scope = std::string_view(value_start, it - value_start);
+                        is_template = true;
+
+                        value_start = it + 2;
+                        it += 1;
+                        continue;
+                    }
+
                     if (*it == '>' || *it == '/' || std::isspace(*it)) {
 
                         if(!end_tag) {
@@ -310,7 +324,11 @@ public:
                                 if(tag == "head") {
                                     inside_head = true;
                                 } else if(rawElements.find(std::string(tag)) != rawElements.end()) {
-                                    state = RAW_ELEMENT;
+                                    if(*it == '>') {
+                                        state = RAW_ELEMENT;
+                                    } else {
+                                        is_raw = true;
+                                    }
                                 }
                             }
 
@@ -326,9 +344,13 @@ public:
                         // It should not happen, but well..
                         if (*it != '>') while(it < chunk_end && *it != '>') ++it;
 
-                        if(tagStack.empty() || tagStack.top() != closingTag) {
-                            std::cout << "End tag mismatch: " << closingTag << " != " << tagStack.top() << std::endl;
-                            throw std::runtime_error("Tag mismatch error");
+                        value_start = it + 1;
+                        state = TEXT;
+
+                        if(tagStack.empty()) continue;
+
+                        if(tagStack.top() != closingTag) {
+                            continue;
                         }
 
                         tagStack.pop();
@@ -341,17 +363,16 @@ public:
                             inside_head = false;
                         }
 
-                        value_start = it + 1;
-                        state = TEXT;
-
                         break;
                     }
 
                     break;
 
                 case ATTRIBUTE: {
-                    if(*it == '=' || *it == '>' || *it == '/' || std::isspace(*it)) {
-                        if(!(it - value_start == 0)){
+                    bool isInline = *it == '{' && it[1] == '{';
+
+                    if(*it == '=' || *it == '>' || *it == '/' || std::isspace(*it) || isInline) {
+                        if(options.buffer && !(it - value_start == 0)){
                             // Handle attributes
 
                             std::string attribute(value_start, it - value_start);
@@ -385,6 +406,20 @@ public:
                             value_start = it + 1;
                             space_broken = false;
                             break;
+                        }
+                        
+                        if(isInline) {
+                            it++;
+                            value_start = it + 1;
+
+                            while(it < chunk_end && !(*it == '}' && it[1] == '}')) ++it;
+
+                            if(options.buffer && !(it - value_start == 0)){
+                                buffer.append(" data-reactive=\"").append(trim(std::string_view(value_start, it - value_start))).append("\"");
+                            }
+
+                            it += 2;
+                            value_start = it + 1;
                         }
 
                         if(*it == '>') {
@@ -490,6 +525,7 @@ public:
     std::stack<std::string_view> tagStack;
 
     std::string body_attributes;
+    bool inside_head = false;
 
 private:
     void* userData = nullptr;
@@ -508,12 +544,13 @@ private:
     bool space_broken = false;
     bool flag_appendToClass = false;
     bool nested = false;
-    bool inside_head = false;
+    bool is_template = false;
+    bool is_raw = false;
 
     void pushText(std::string& buffer) {
         if(options.onText && !(it - value_start == 0)){
             std::string_view text(value_start, it - value_start);
-            text = (!options.compact && !inside_head)? text: trim(text);
+            text = (!options.compact && !inside_head)? text: trim(text, true);
 
             if(text.size() > 0) {
                 options.onText(buffer, tagStack, text, userData);
@@ -524,11 +561,12 @@ private:
     char string_char = 0;
 
     std::string class_buffer;
+    std::string_view template_scope;
 
     HTMLParserOptions& options;
 
     void _endTag(HTMLParserState& state, std::string& buffer, std::string& class_buffer) {
-        state = TEXT;
+        state = is_raw? RAW_ELEMENT: TEXT;
 
         if(options.buffer) {
             if(!class_buffer.empty()) {
@@ -545,11 +583,19 @@ private:
         return (end == std::string_view::npos) ? "" : s.substr(0, end + 1);
     }
 
-    std::string_view trim(std::string_view s) {
+    std::string_view trim(std::string_view s, bool leave_one = false) {
+        if(inside_head) leave_one = false;
+
         size_t start = s.find_first_not_of(" \t\n\r\f\v");
-        if (start == std::string_view::npos) return ""; // String is all whitespace
+        if (start == std::string_view::npos) return (leave_one && s.size() > 0)? " ": "";
 
         size_t end = s.find_last_not_of(" \t\n\r\f\v");
+
+        if (leave_one) {
+            if (start > 0) --start; // Keep one space at the start if any
+            if (end < s.size() - 1) ++end; // Keep one space at the end if any
+        }
+
         return s.substr(start, end - start + 1);
     }
 };

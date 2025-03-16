@@ -20,7 +20,8 @@ let
 
     picomatch = require('picomatch'),
 
-    HTMLParser = require("./native/dist/html-parser"),
+    WebNative = require("./native/dist/akeno-web"),
+
     parser, // Will be defined later
     parserContext,
 
@@ -55,7 +56,7 @@ let
 
 // Note: Some of the following options cannot be changed at runtime and require a restart.
 const contentSettings = {
-    compress: null, // If null, set based on dev mode
+    compress: true, // If null, set based on dev mode
 }
 
 
@@ -372,7 +373,7 @@ server = {
         let url = req.original_url = `/${segments.join("/")}`;
 
 
-        // Redirects
+        // Redirects (simple URL redirects)
         if(app.config.data.has("redirect")) for(const handle of app.config.blocks("redirect")){
             const target = handle.get("to", String);
 
@@ -383,7 +384,7 @@ server = {
         }
 
 
-        // Redirect handles
+        // Redirect handles (when an URL points to a whole another point in the server)
         if(app.config.data.has("handle")) for(const handle of app.config.blocks("handle")){
             const target = handle.get("path", String);
             const domain = handle.get("as", String);
@@ -411,7 +412,7 @@ server = {
         }
 
 
-        // Finally, handle content
+        // *Finally*, handle content (don't worry routes will be cached)
         try {
 
             let file = files_try(app.path + url + ".html", app.path + url + "/index.html", app.path + url);
@@ -423,7 +424,7 @@ server = {
                     return backend.helper.send(req, res, url + " not found", null, "404 Not Found");
                 } else file = app.path + file
             }
-            
+
             file = nodePath.normalize(file);
 
             if(fs.statSync(file).isDirectory()){
@@ -431,11 +432,16 @@ server = {
             }
 
 
-            // TODO: Once uWS implements low-level cache, add support for it
+            // TODO: Once uWS implements low-level cache, add support for it OR compile a custom build with a more dynamic C++ router
 
             // Check if the file has not been changed since
             const cache = requestCachedFile(file);
 
+            /**
+             * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit.
+            */
+
+            // const cache = WebNative.requestCache(file, res);
 
             // In case that we do not have the headers yet, well have to wait for them.
             if(!cache.refresh && cache.headers) {
@@ -529,7 +535,7 @@ server = {
                                     parserContext.data = { plain: true, dynamic: false, compress: true, app, url };
                                     res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, parserContext))
                                 } catch (error) {
-                                    console.warn("Failed to import: importing " + item, error)
+                                    server.log.warn("Failed to import: importing " + item, error)
                                 }
                             }
                             break;
@@ -705,19 +711,43 @@ function checkSupportedBrowser(userAgent, properties) {
 }
 
 
-const latest_ls_version = fs.existsSync("/www/content/akeno/cdn/ls/source/version")? fs.readFileSync("/www/content/akeno/cdn/ls/source/version", "utf8").trim(): "5.0.0";
-
+const ls_path = "/www/content/akeno" + "/cdn/ls"; // should be backend.path
+const latest_ls_version = fs.existsSync(ls_path + "/version")? fs.readFileSync(ls_path + "/version", "utf8").trim(): "5.1.0";
 const ls_components = {
     // JS-only components
-    js: ["reactivity"],
+    js: [
+        'reactive',
+        'network',
+        'reactive',
+        'tabs',
+        'toast',
+        'tooltips',
+        'v4compat'
+    ],
 
     // CSS-only components
     css: ["flat"]
 };
 
+// if(fs.existsSync(ls_path)) {
+//     for (const file of fs.readdirSync(ls_path + "/dist/dev/js")) {
+//         if (file.endsWith(".js")) {
+//             ls_components.js.push(nodePath.basename(file, ".js"));
+//         }
+//     }
+
+//     for (const file of fs.readdirSync(ls_path + "/dist/dev/css")) {
+//         if (file.endsWith(".css")) {
+//             ls_components.css.push(nodePath.basename(file, ".css"));
+//         }
+//     }
+
+//     console.log("Found components: ", ls_components);
+// }
+
 
 function initParser(header){
-    parser = new HTMLParser.parser({
+    parser = new WebNative.parser({
         header,
         buffer: true,
         compact: contentSettings.compress,
@@ -726,7 +756,7 @@ function initParser(header){
             // Inline script/style compression
             switch (parent){
                 case "script":
-                    // if(script_type && script_type !== "text/javascript") break;
+                    // if(script_type && script_type !== "text/javascript") break; # TODO: Add back support for other script types
                     return text ?? (context.compress? backend.compression.code(text) : text);
 
                 case "style":
@@ -744,15 +774,15 @@ function initParser(header){
 
     parserContext = parser.createContext();
 
-    HTMLParser.context.prototype.onBlock = function(block){
+    WebNative.context.prototype.onBlock = function(block){
         const parent = this.getTagName();
 
         switch(block.name) {
             case "use":
-                if(parent !== "head") {
-                    console.warn("Error in app " + this.data.app.path + ": @use can only be used in <head>.");
-                    break
-                }
+                // if(parent !== "head") {
+                //     server.log.warn("Error in app " + this.data.app.path + ": @use can only be used in <head>.");
+                //     break
+                // }
 
                 // Modules
                 for(const entry of block.attributes){
@@ -767,7 +797,7 @@ function initParser(header){
                     if(has_component_list) {
                         let last = null;
                         for (let v of entry.values.sort()) {
-                            let lower = attrib == "google-fonts"? v: v.toLowerCase();
+                            let lower = attrib === "google-fonts"? v: v.toLowerCase();
                             if (v && lower !== last) {
                                 components.push(lower);
                                 last = lower;
@@ -844,14 +874,35 @@ function initParser(header){
                             break;
 
                         default:
-                            this.write(`\n<!-- Error in @use: Unknown module "${attrib}" -->\n`);
+                            if(attrib.includes("/")){
+                                if(attrib.startsWith("http")){
+                                    server.log.warn("Error in app " + this.data.app.path + ": @use does not allow direct URL imports (\"" + attrib + "\") - please define a custom @source or use a different way to import your content.");
+                                    break;
+                                }
+
+                                if(fs.existsSync(this.data.app.path + "/" + attrib)){
+                                    const link = map_resource(attrib, this.data.app.path);
+
+                                    if(link) {
+                                        const extension = attrib.slice(attrib.lastIndexOf('.') + 1);
+
+                                        if(extension === "js") {
+                                            this.write(`<script src="${link}"></script>`)
+                                        } else if(extension === "css") {
+                                            this.write(`<link rel=stylesheet href="${link}">`)
+                                        }
+                                    }
+                                }
+                            } else {
+                                server.log.warn("Error in app " + this.data.app.path + ": Unknown module \"" + attrib + "\"");
+                            }
                     }
                 }
                 break;
 
             case "page":
                 if(parent !== "head") {
-                    console.warn("Error in app " + this.data.app.path + ": @page can only be used in <head>.");
+                    server.log.warn("Error in app " + this.data.app.path + ": @page can only be used in <head>.");
                     break
                 }
 
@@ -906,10 +957,9 @@ function initParser(header){
 
                 for(let item of block.attributes){
                     try {
-                        this.import(this.data.app.path + "/" + item)
-                        // push(parse_html_content({file: context.app.path + "/" + item, plain: true, app: context.app, compress: !!context.compress, url: context.url || null}))
+                        this.import(this.data.app.path + "/" + item);
                     } catch (error) {
-                        console.warn("Failed to import: importing " + item, error)
+                        server.log.warn("Failed to import: importing " + item, error)
                     }
                 }
                 break;
@@ -922,7 +972,7 @@ function initParser(header){
                         let content = fs.readFileSync(this.data.app.path + "/" + item, "utf8");
                         this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
                     } catch (error) {
-                        console.warn("Failed to import (raw): importing " + item, error)
+                        server.log.warn("Failed to import (raw): importing " + item, error)
                     }
                 }
                 break;
@@ -931,39 +981,6 @@ function initParser(header){
                 for(let attrib of block.attributes){
                     this.write(attrib.replace(/\$\w+/, () => { return "" }))
                 }
-                break;
-
-            case "not-resources":
-                if(block.properties.js) {
-                    for(let resource of block.properties.js) {
-                        const link = map_resource(resource, this.app.path);
-
-                        if(link) {
-                            const part = `<script src="${link}"></script>`
-                            if(!this.plain) head += part; else this.onText(part);
-                        }
-                    }
-                }
-
-                if(block.properties.css) {
-                    for(let resource of block.properties.css) {
-                        const link = map_resource(resource, this.app.path);
-
-                        if(link) {
-                            const part = `<link rel=stylesheet href="${link}">`
-                            if(!this.plain) head += part; else this.onText(part);
-                        }
-                    }
-                }
-
-                if(block.properties.fonts) {
-                    const part = `<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin><link rel=stylesheet href="${`https://fonts.googleapis.com/css2?${block.properties.fonts.map(font => {
-                        return "family=" + font.replaceAll(" ", "+") + ":wght@100;200;300;400;500;600;700;800;900"
-                    }).join("&")}&display=swap`}">`
-
-                    if(!this.plain) head += part; else this.onText(part);
-                }
-
                 break;
 
             default:
