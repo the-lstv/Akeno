@@ -304,7 +304,7 @@ public:
                             }
 
                             if(*it == '>' || *it == '/'){
-                                _endTag(state, buffer, class_buffer);
+                                _endTag(buffer);
 
                                 if(*it == '/') {
                                     if (options.onClosingTag) {
@@ -424,7 +424,7 @@ public:
 
                         if(*it == '>') {
                             value_start = it + 1;
-                            _endTag(state, buffer, class_buffer);
+                            _endTag(buffer);
                             break;
                         }
 
@@ -433,7 +433,7 @@ public:
                             ++it;
                             value_start = it + 1;
 
-                            _endTag(state, buffer, class_buffer);
+                            _endTag(buffer);
                             if (options.onClosingTag) {
                                 options.onClosingTag(buffer, tagStack, tagStack.top(), userData);
                             }
@@ -484,7 +484,7 @@ public:
 
                         if(*it == '>') {
                             value_start = it + 1;
-                            _endTag(state, buffer, class_buffer);
+                            _endTag(buffer);
                             break;
                         }
 
@@ -565,7 +565,7 @@ private:
 
     HTMLParserOptions& options;
 
-    void _endTag(HTMLParserState& state, std::string& buffer, std::string& class_buffer) {
+    void _endTag(std::string& buffer) {
         state = is_raw? RAW_ELEMENT: TEXT;
 
         if(options.buffer) {
@@ -575,6 +575,10 @@ private:
             }
 
             buffer.append(">");
+        }
+
+        if(is_template) {
+            buffer.append("#template ").append(template_scope).append("\n");
         }
     }
 

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sys/stat.h>
 #include <memory>
+#include <utility>
 
 #include "../external/xxHash/xxh3.h"
 
@@ -34,26 +35,24 @@ std::unordered_map<XXH64_hash_t, CacheEntry> cache;
     TODO optimizations:
     - Use a buffer for the input/result string
     - Use StringView on the JS side to avoid copying strings
-
-    Example:
-    class StringView {
-        constructor(data) {
-            if(!(typeof Buffer !== 'undefined' && obj instanceof Buffer) || (typeof Uint8Array !== 'undefined' && obj instanceof Uint8Array)) {
-                throw new TypeError("Expected an Uint8Array or Buffer");
-            }
-
-            this.data = data;
-        }
-
-        charCodeAt(index) {
-            return this[index];
-        }
-
-        substring(start, end) {
-            return new StringView(this.subarray(start, end));
-        }
-    }
 */
+
+
+
+
+
+std::pair<XXH64_hash_t, CacheEntry*> getCached(std::string& filePath) {
+    time_t currentTime = getFileLastModifiedTime(filePath);
+    XXH64_hash_t hash = XXH3_64bits(filePath.c_str(), filePath.size());
+
+    auto it = cache.find(hash);
+
+    if (it != cache.end() && it->second.lastModifiedTime == currentTime) {
+        return std::make_pair(hash, it->second);
+    }
+
+    return std::make_pair(hash, nullptr);
+}
 
 
 
@@ -332,13 +331,10 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
     }
 
     std::string filePath = info[0].As<Napi::String>().Utf8Value();
-    time_t currentTime = getFileLastModifiedTime(filePath);
-    XXH64_hash_t hash = XXH3_64bits(filePath.c_str(), filePath.size());
 
-    auto it = cache.find(hash);
-
-    if (it != cache.end() && it->second.lastModifiedTime == currentTime) {
-        return it->second.parsedData;
+    auto cache_result = getCached(filePath);
+    if (cache_result.second != nullptr) {
+        return cache_result.second->parsedData;
     }
 
     std::ifstream file(filePath, std::ios::in | std::ios::binary | std::ios::ate);
@@ -368,7 +364,7 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
 
     Napi::Value data = Napi::Buffer<char>::New(info.Env(), const_cast<char*>(storage->data()), storage->size());
 
-    cache[hash] = { currentTime, data, storage };
+    cache[cache_result.first] = { currentTime, data, storage };
     return data;
 }
 
