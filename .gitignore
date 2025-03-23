@@ -6,14 +6,16 @@ etc/generated
 archive
 config
 
-cdn/*
-!cdn/lib/example
-
 api/*
 !api/v1.example.js
 
 addons/*
-!addons/cdn.js
+
+!addons/cdn
+addons/cdn/*
+!addons/cdn/index.js
+
+!addons/gui
 
 db/*
 !db/cache/.gitkeep
