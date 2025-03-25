@@ -641,8 +641,13 @@ const backend = {
                 req.contentType = this.type;
 
                 if(!backend.helper.bodyParser.hasBody(req)){
-                    req.fullBody = Buffer.alloc(0);
-                    callback(this);
+                    req.hasBody = false;
+                    if(stream) {
+                        callback(null, true);
+                    } else {
+                        callback(this);
+                    }
+                    return
                 }
 
                 if(!stream){
