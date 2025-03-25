@@ -321,23 +321,6 @@ function initialize(){
             // Handle proxied requests
             // if(shouldProxy(req, res, flags)) return;
 
-            // Receive POST body
-            if(req.method === "POST" || (req.hasBody && req.transferProtocol === "qblaze")){
-                req.fullBody = Buffer.alloc(0);
-
-                req.hasFullBody = false;
-                req.contentType = req.getHeader('content-type');
-
-                res.onData((chunk, isLast) => {
-                    req.fullBody = Buffer.concat([req.fullBody, Buffer.from(chunk)]);
-
-                    if (isLast) {
-                        req.hasFullBody = true;
-                        if(req.onFullData) req.onFullData();
-                    }
-                })
-            }
-
 
             // Default 15s timeout when the request doesnt get answered
             res.timeout = setTimeout(() => {
@@ -651,32 +634,38 @@ const backend = {
         },
 
         bodyParser: class {
-            constructor(req, res, callback){
+            constructor(req, res, callback, stream = false){
                 this.req = req;
                 this.res = res;
-                this.callback = callback;
-            }
 
-            get type(){
-                return this.req.getHeader("content-type")
-            }
+                req.contentType = this.type;
 
-            get length(){
-                return this.req.getHeader("content-length")
-            }
-
-            upload(key = "file", hash){
-
-                function done(){
-                    let parts = uws.getParts(this.req.fullBody, this.req.contentType);
-                    this.processFiles(parts, hash, this.callback);
+                if(!backend.helper.bodyParser.hasBody(req)){
+                    req.fullBody = Buffer.alloc(0);
+                    callback(this);
                 }
 
-                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
-
+                if(!stream){
+                    req.fullBody = Buffer.alloc(0);    
+    
+                    res.onData((chunk, isLast) => {
+                        req.fullBody = Buffer.concat([req.fullBody, Buffer.from(chunk)]);
+    
+                        if (isLast) {
+                            callback(this);
+                        }
+                    })
+                } else {
+                    res.onData(callback);
+                }
             }
 
-            processFiles(files, hash, callback){
+            upload(hash){
+                let parts = uws.getParts(this.req.fullBody, this.req.contentType);
+                return this.processFiles(parts, hash);
+            }
+
+            processFiles(files, hash){
                 for(let part of files){
                     part.data = Buffer.from(part.data)
 
@@ -690,55 +679,44 @@ const backend = {
                     }
                 }
 
-                callback(files)
+                return files
             }
 
             parts(){
-
-                function done(){
-                    let parts = uws.getParts(this.req.fullBody, this.req.contentType);
-
-                    this.callback(parts)
-                }
-
-                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
-
+                return uws.getParts(this.req.fullBody, this.req.contentType);
             }
 
-            data(){
-                function done(){
-                    this.req.body = {
-                        get data(){
-                            return this.req.fullBody
-                        },
+            static hasBody(req){
+                return req.method === "POST" || (req.hasBody && req.transferProtocol === "qblaze")
+            }
 
-                        get string(){
-                            return this.req.fullBody.toString('utf8');
-                        },
+            get type(){
+                return this.req.getHeader("content-type");
+            }
 
-                        get json(){
-                            let data;
+            get length(){
+                return this.req.getHeader("content-length");
+            }
 
-                            try{
-                                data = JSON.parse(this.req.fullBody.toString('utf8'));
-                            } catch {
-                                return null
-                            }
+            get data(){
+                return this.req.fullBody
+            }
 
-                            return data
-                        }
-                    }
+            get string(){
+                return this.req.fullBody.toString('utf8');
+            }
 
-                    this.callback(this.req.body)
+            get json(){
+                let data;
+
+                try{
+                    data = JSON.parse(this.req.fullBody.toString('utf8'));
+                } catch {
+                    return null
                 }
 
-
-                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
+                return data
             }
-        },
-
-        parseBody(req, res, callback){
-            return new backend.helper.bodyParser(req, res, callback)
         }
     },
 
