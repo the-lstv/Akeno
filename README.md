@@ -16,7 +16,7 @@ It also has a built-in webserver, which is extremely optimized and has some very
 ---
 Quick installation (on Linux) - requires node, npm, git, gcc, g++, and python (attempts to install automatically if not found)<br>
 ```sh
-curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
+# We are currently revising the installation script! Please be patient, I appologize for the inconvenience
 ```
 You can start Akeno with
 ```sh
