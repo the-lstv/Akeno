@@ -20,7 +20,7 @@ Requires node, npm, git, gcc, g++, and python (attempts to install automatically
 
 **NOTE:** At this time Akeno only works on Linux x86_64. Official Windows support is not planned yet. While Akeno may run on Windows, its support is highly experimental and may not fully work up to expectations.<br>
 ```sh
-curl run.lstv.space/install-akeno -s -o /tmp/akeno-setup && sudo bash /tmp/akeno-setup
+# We are currently revising the installation script! Please be patient, I appologize for the inconvenience
 ```
 You can then start Akeno with
 ```sh
