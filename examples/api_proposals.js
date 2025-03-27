@@ -1,8 +1,6 @@
 const backend = require("akeno-backend");
 
-const addon = new backend.Addon();
-
-addon.router("api.v1", "/*", {
+const addon = new backend.Addon({
     onRequest(req, res) {
         new backend.helper.bodyParser(req, res, (body) => {
             if(!req.hasBody) {
@@ -13,4 +11,8 @@ addon.router("api.v1", "/*", {
             const json = body.json;
         });
     }
-})
+});
+
+backend.route("api.v1", "/proposals", addon);
+
+module.exports = addon;
