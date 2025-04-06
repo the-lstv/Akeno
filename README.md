@@ -1,74 +1,80 @@
-<img src="https://cdn.extragon.cloud/file/a6ee0da416b4eebcd4c9899fa9caa0d7.png" alt="Akeno icon"> <br>
+<img src="https://github.com/user-attachments/assets/4fdca083-82db-4682-97b6-40e915194134" alt="Akeno icon"> <br>
 
-Akeno is a really fast, modular server, primarily intended for:<br>
-- Efficient APIs
+Akeno is a really fast, modular server and web application runtime/framework written in C++ and JavaScript, primarily intended for:<br>
 - Static and dynamic web sites/apps
-- Realtime web apps
+- Realtime web apps of nearly any scale
+- Low-latency APIs
 - Content delivery
 - User management
 
 It supports various configurations for HTTP, HTTPS, HTTP3 (experimental), and WebSocket protocols.<br>
 Though thanks to its modularity, it can be easily expanded.
-<br><br>
-It also has a built-in webserver, which is extremely optimized and has some very nice features that make developing and deploying websites or apps really simple!
-<br><br>**NOTE:** At this time Akeno only works on Linux. Windows support is not planned yet due to no interest. Note that thanks to the modular nature of Akeno, some features may work on Windows just fine.<br>
+
+
+The most interesting part is its powerful webserver, which is highly optimized and has some very cool features that make developing and deploying websites or apps really simple!
+
 
 ---
-Quick installation (on Linux) - requires node, npm, git, gcc, g++, and python (attempts to install automatically if not found)<br>
+### Quick installation
+Requires node, npm, git, gcc, g++, and python (attempts to install automatically if not found). We plan to reduce the amount of dependencies to just two in future updates by packaging prebuilt binaries.<br>
+
+**NOTE:** At this time Akeno only works on Linux x86_64. Official Windows support is not planned yet. While Akeno may run on Windows, its support is highly experimental and may not fully work up to expectations.<br>
 ```sh
 # We are currently revising the installation script! Please be patient, I appologize for the inconvenience
 ```
-You can start Akeno with
+You can then start Akeno with
 ```sh
 akeno start
 ```
-To run under a process manager (recommended):
+Or, to run under a process manager (recommended):
 ```sh
 sudo pm2 start /usr/lib/akeno/app.js --name Akeno
 ```
 
 ---
-<br>
+<br><br>
 
-![🚀 Fast](https://github.com/the-lstv/Akeno/assets/62482747/d7f3466c-c833-4fca-a57b-e93f7aca0882)
----
+<img src="https://github.com/user-attachments/assets/99f5da80-56ab-471b-8203-3cebbc98f659" width="650"><br>
 
-Akeno is focused on speed and efficiency.
+Akeno is heavily focused on speed, efficiency and low-latency, making it very scalable and responsive, so you and your clients no longer have to deal with slow web apps.
 
-The entire server is started and ready in **10ms** on average, depending on added modules (making it faster than most modern large servers), and uses uWebSockets (a low-level, incredibly optimized C++ web server) for its HTTP and WebSocket traffic - making it **8.5x** faster than the already fast framework Fastify (according to [uWS](https://github.com/uNetworking/uWebSockets.js)).
+The entire server is started and ready in a few milliseconds on average, depending on loaded modules. This is already miles ahead of most full-featured servers.
 
-Even with a full setup with routing and caching, it is still multiple times faster than even the most minimal express server, out of the box. 
+For HTTP and WebSocket traffic, we use [uWebSockets](https://github.com/uNetworking/uWebSockets) (a low-level, incredibly optimized web server written in C++) - which is one of the fastest standard-compliant servers in the world, **~8.5x** faster than the already fast framework Fastify.
 
-On top of that, Akeno automatically handles cache, and adds an ?mtime query parametter for file changes for your static JS/CSS resources with no code changes required, so you dont have to worry about your clients getting outdated content, while still utilizing caching to the fullest.
+Even with a full setup including routing, caching, dynamic content and encryption, Akeno is still multiple times faster than even the most minimal express server, out of the box.
 
-Akeno can also automatically compresses all of your HTML, CSS and JS code on the fly - saving you the hassle of having to make copies or compress yourself.<br>
-Just write the code and watch the magic happen in real time.<br><br>
+Akeno's powerful content preprocessor, which can handle advanced HTML templates in real time or even our custom application syntax, can prepare a full response including compilation without cache in less than 1-2ms. This is even faster for basic HTML documents simpler transformations like compression.
+This makes Akeno faster than most frameworks out there!
+With memory cache (which is automatic and based on file changes), the response can be prepared in as low as a few microseconds.
 
-Akeno is also faster than popular servers like Nginx for both static and dynamic content.<br>
+Akeno automatically handles cache for websites and assets, having both server-side compilation cache and client-side cache via an ?mtime query parametter, which is added automatically to all assets and resources.
+
+This means that you no longer have to worry about caching or cache busting - Akeno ensures that your clients always get the latest version of your content, while still utilizing caching to the fullest extent.
+
+Akeno can also compresses all of your code on the fly.<br>
+
+Just write your code and let Akeno optimize it in real time, without any extra hassles.<br><br>
+
+Akeno is faster than popular servers like Nginx for both static and dynamic content.<br>
 
 
 <br><br>
 
+<img src="https://github.com/user-attachments/assets/33f241f6-ffca-4ab2-844b-cd60dbc8c782" width="650"><br>
 
-![🗃️ Modular](https://github.com/the-lstv/Akeno/assets/62482747/dceb9b55-d46d-468b-9338-95369bb568d7)
----
 Akeno is fully modular. On first startup, it only loads what is necesarry. Everything else is loaded as requested, on the fly.
 This includes API extensions - simply create a JS file with your server-side API in your web app's directory, hot-reload the config and your API is ready to use.
 
 
 <br><br>
 
+<img src="https://github.com/user-attachments/assets/18f7f7e4-cc63-4da5-a740-4b5bcb2b7719" width="650"><br>
 
-![🖥️ CLI](https://github.com/the-lstv/Akeno/assets/62482747/924f2a21-91f4-4a42-9c22-bbe25f44ec48)
----
-Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats and manage apps.
+Akeno offers a full-featured command line interface that you can use to control the server on runtime, see stats and manage apps.<br>
+It also offers modules and libraries you can use to control and manage the server externally with ease!
 
 <br>
-
-## Updates: New in 1.5.4
-- Parser performance increased over 32x 🚀
-- Moved the parser to a separate [repo](https://github.com/the-lstv/Atrium) and now included as a submodule
-<br><br>
 
 ## Examples
 - ### Creating a simple web app (minimal example, 4 steps)
@@ -82,61 +88,41 @@ Akeno offers a full-featured command line interface that you can use to control 
 
    # ...
    ```
-4. Reload akeno (either `akeno reload --hot` or `akeno reload` for full reload)<br>
-And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP. No further configuration needed.
+4. Reload akeno (With `akeno reload`, or `akeno restart` for full server restart)<br>
+And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP. No further configuration needed - its that easy.
 
 
 <br>
 
 
 - ### Say hello to the builtin custom dynamic syntax
-Tired of the repetetive and long HTML templates? How about doing it the Akeno way instead!<br>
-Let's say that you want to make a simple site with a title, favicon and a font from Google fonts, and a script:
+Tired of the messy, repetetive and long HTML templates? How about doing it the Akeno way instead!<br>
+Let's say that you want to make a simple page with a title, favicon and a font from Google fonts, and want to use Bootstrap icons:
 ```html
 <head>
 
-    @manifest {
-         title: "This is an example :)";
-         favicon: /icon.svg;
-    }
+    @use (bootstrap-icons:1.11.3);
 
-    @resources {
-         fonts: Poppins; # Defaults to Google fonts
-         js: /main.js;
+    @fonts (Poppins);
+
+    @page {
+        title: "Hello world!";
+        favicon: /icon.svg;
+
+        # Apply the added font
+        font: Poppins;
     }
 
 </head>
 
 <body>
-    Hello world!
+    <div #id .class>
+        <h1>Hello world! <i .bi-stars /></h1>
+    </div>
 </body>
 ```
-That's it! All the repetetive work is done for you. Akeno even cleans and compresses the code for you (HTML, CSS, and JS).<br>
-Also, Akeno will automatically check for local changes and assign a `?mtime` query which, to efficiently keep cache functional while making sure the content is always up-to-date for your users.
-<br>
-
-
-
+Simply use .xw instead of .html as your file extension and this syntax will autmatically work.<br>
+That's it! Much cleaner and easier to write & read. All the boring stuff is done for you. Akeno even cleans and compresses the code for you (HTML, CSS, and JS).
 <br><br>
-## Debug Akeno easily with DevTools (or other inspectors)! 
-![Debugger](https://github.com/user-attachments/assets/c659ef12-eb18-4679-a94c-6bc1f7ff4bbd) <br>
-Starting with version 1.5, Akeno is compatible with the node `--inspect` flag and allows you to debug or test your server with DevTools!<br><br>
-### How to enable:
-1. Open chrome://inspect/ and click "Open dedicated DevTools for Node"
-2. Start Akeno in dev mode and with the `--inspect` flag (`akeno start --inspect`)
-3. Enjoy debugging! The process will be detected and attached automatically. You can directly access the backend (`backend` is a global getter to the backend object).
 
-Exposed properties by default:
-- Backend as `backend`
-- AddonCache as `addons`
-- API as `api`
-- resolve as `router` (core HTTP router)
-- proxyReq as `proxyRouter` (proxy router)
-- app as `uws` (uWebSockets instance)
-- SSLApp as `uws_ssl` (only if SSL is enabled)<br>
-- H3App as `uws_h3` (only if H3 is enabled)<br>
-
-Any other variables are *not* acessible to the debugger even if global, unless you expose them manually!<br>
-
-From within your addons, scripts or handlers you can use `backend.exposeToDebugger(key, value)` to expose an object globally (as a getter to prevent copying - readonly).<br>
-This method will silently do nothing if inspect is disabled, so you can call it even in production.
+_The only thing left is to pair it with [LS](https://github.com/the-lstv/LS/) ;)_
