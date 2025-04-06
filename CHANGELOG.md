@@ -1,13 +1,13 @@
 ## Upcomming in 1.6.0
-- Major changes to the file structure
-    - Moved /cdn to /addons/cdn
-    - Addons now have their own folder
 - Now using our own database system [LSDB](https://github.com/the-lstv/lsdb) instead of LMDB
 - Now using a customized fork of uWebSockets.js which implements Akeno features on the C++ side
 - Migrated a part of the router to the native server
 
 
 ## New in 1.5.8
+- Changes to the file structure
+    - Moved /cdn to /addons/cdn
+    - Addons now have their own folder
 - Replaced htmlparser2 with a custom native parser
 - Complete revamp of the custom app syntax, brief summary of changes:
     - Replaced the bad and inconsistent `@resources` and `@manifest` directives with clean and unified `@use` and `@page` directives with an improved module system

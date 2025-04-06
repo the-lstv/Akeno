@@ -768,7 +768,7 @@ function initParser(header){
         },
 
         onEnd(context){
-            context.data = null;
+            // context.data = null;
         }
     });
 
@@ -880,16 +880,23 @@ function initParser(header){
                                     break;
                                 }
 
-                                if(fs.existsSync(this.data.app.path + "/" + attrib)){
+                                const path = this.data.app.path + "/" + attrib;
+                                if(fs.existsSync(path)){
                                     const link = map_resource(attrib, this.data.app.path);
 
                                     if(link) {
                                         const extension = attrib.slice(attrib.lastIndexOf('.') + 1);
 
-                                        if(extension === "js") {
-                                            this.write(`<script src="${link}"></script>`)
-                                        } else if(extension === "css") {
-                                            this.write(`<link rel=stylesheet href="${link}">`)
+                                        switch(extension){
+                                            case "js":
+                                                this.write(`<script src="${link}" ${components.join(" ")}></script>`)
+                                                break;
+                                            case "css":
+                                                this.write(`<link rel=stylesheet href="${link}" ${components.join(" ")}>`)
+                                                break;
+                                            case "json":
+                                                this.write(`<script type="application/json" id="${components[0] || attrib}">${fs.readFileSync(path)}</script>`)
+                                                break;
                                         }
                                     }
                                 }
@@ -905,6 +912,8 @@ function initParser(header){
                     server.log.warn("Error in app " + this.data.app.path + ": @page can only be used in <head>.");
                     break
                 }
+
+                this.write(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`)
 
                 if(block.properties.title) {
                     this.write(`<title>${block.properties.title[0]}</title>`)
@@ -973,6 +982,18 @@ function initParser(header){
                         this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
                     } catch (error) {
                         server.log.warn("Failed to import (raw): importing " + item, error)
+                    }
+                }
+                break;
+
+            case "dynamicImport":
+                if(!this.data.app.path) break;
+
+                for(let item of block.attributes){
+                    try {
+                        this.import(this.data.app.path + "/" + item);
+                    } catch (error) {
+                        server.log.warn("Failed to import: importing " + item, error)
                     }
                 }
                 break;
