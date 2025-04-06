@@ -1043,7 +1043,7 @@ const isDev = backend.config.block("system").get("developmentMode", Boolean);
 backend.log("Starting Akeno v" + version + " in " + (isDev? "development": "production") + " mode.")
 
 const handlers = {
-    cdn: backend.addon("cdn").HandleRequest,
+    // cdn: backend.addon("cdn").HandleRequest,
     api: 2
 }
 
