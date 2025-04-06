@@ -1043,8 +1043,12 @@ const isDev = backend.config.block("system").get("developmentMode", Boolean);
 backend.log("Starting Akeno v" + version + " in " + (isDev? "development": "production") + " mode.")
 
 const handlers = {
-    // cdn: backend.addon("cdn").HandleRequest,
     api: 2
+}
+
+// TODO: This should be moved to the addon itself
+if(fs.existsSync(PATH + "/addons/cdn")){
+    handlers.cdn = backend.addon("cdn").HandleRequest
 }
 
 
