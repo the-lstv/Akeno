@@ -71,8 +71,8 @@ server = {
         server.etc = {
             notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`),
             default_disabled_message: Buffer.from(backend.config.block("web").get("disabledMessage", String) || "This website is temporarily disabled."),
-            ls_url: `://cdn.extragon.cloud/ls/`,
-            ls_url_dev: `://cdn.extragon.test/ls/`,
+
+            EXTRAGON_CDN: backend.config.block("web").get("extragon_cdn_url", String) || backend.isDev? `cdn.extragon.test`: `cdn.extragon.cloud`
         };
 
         if(contentSettings.compress === null) contentSettings.compress = !backend.isDev;
@@ -832,7 +832,7 @@ function initParser(header){
                             components_string = (is_merged? components.filter(value => !ls_components.js.includes(value)): components).join();
 
                             if(!(components_string.length === 0 && this.data.using_ls_css)) {
-                                this.write(`<link rel=stylesheet href="http${this.data.secure? "s": ""}://cdn.extragon.test/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_css? "bundle": "ls"}.${!backend.isDev && this.data.compress? "min." : ""}css">`);
+                                this.write(`<link rel=stylesheet href="http${this.data.secure? "s": ""}://${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_css? "bundle": "ls"}.${!backend.isDev && this.data.compress? "min." : ""}css">`);
                                 this.data.using_ls_css = true;
                             }
                         }
@@ -841,7 +841,7 @@ function initParser(header){
                             components_string = (is_merged? components.filter(value => !ls_components.css.includes(value)): components).join();
 
                             if(!(components_string.length === 0 && this.data.using_ls_js)) {
-                                this.write(`<script src="http${this.secure? "s": ""}://cdn.extragon.test/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_js? "bundle": "ls"}.${!backend.isDev && this.data.compress? "min." : ""}js"></script>`);
+                                this.write(`<script src="http${this.secure? "s": ""}://${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_js? "bundle": "ls"}.${!backend.isDev && this.data.compress? "min." : ""}js"></script>`);
                                 this.data.using_ls_js = true;
                             }
                         }
