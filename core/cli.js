@@ -281,7 +281,7 @@ async function resolve(argv){
         break;
 
         case "start":
-            log(`${signature} Launching Akeno (without a package manager).`);
+            log(`${signature} Launching Akeno (without a process manager).`);
             
             childProcess = spawn('node ' + (argv.inspect? "--inspect " : "") + __dirname + '/../app', {
                 shell: true,
