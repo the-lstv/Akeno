@@ -1063,7 +1063,7 @@ for (const block of backend.config.blocks("route")) {
 
 
 const serverBlock = backend.config.block("server");
-if(serverBlock) for(const origin of serverBlock.get("trustedOrigins", Array)){
+if(serverBlock && serverBlock.get) for(const origin of serverBlock.get("trustedOrigins", Array)){
     trustedOrigins.add(origin)
 }
 
