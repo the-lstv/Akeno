@@ -283,11 +283,16 @@ function initialize(){
 
             const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
             req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
-
-            req.path = decodeURIComponent(req.getUrl());
-            req.origin = req.getHeader('origin');
+            
+            try {
+                req.path = decodeURIComponent(req.getUrl());
+            } catch (e) {
+                req.path = req.getUrl();
+                backend.log.warn("Failed to decode URL:", req.path)
+            }
+            
             req.secure = flags && !!flags.secure; // If the request is done over a secured connection
-
+            req.origin = req.getHeader('origin');
 
         } else {
 
