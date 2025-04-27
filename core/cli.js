@@ -163,7 +163,7 @@ async function resolve(argv){
                 await resolve({_: ["logs"]}) // This is a bit of a hack, but it works
             }
 
-            exec("pm2 reload Akeno")
+            exec("pm2 reload akeno")
             log(`${signature} API Server sucessfully reloaded.`)
 
         break;
@@ -184,6 +184,19 @@ async function resolve(argv){
                 return log(box(response.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.domains.length > 0? `\n\n\x1b[1mDomains:\x1b[0m\n${app.domains.join("\n")}`: "" }${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`).join("\n---\n")))
             })
 
+        break;
+
+
+        case "update":
+            try {
+                log("Pulling updates from the repository...");
+                exec("git pull", { stdio: "inherit" });
+                log("Reloading server...");
+                exec("pm2 reload akeno");
+                log("Update complete.");
+            } catch (err) {
+                log_error("Failed to update:", err);
+            }
         break;
 
 
@@ -256,7 +269,7 @@ async function resolve(argv){
         case "logs":
             if(argv._[1]) log(`${signature} Showing only lines including "${argv._[1]}"`);
 
-            childProcess = spawn('pm2 logs Akeno', {
+            childProcess = spawn('pm2 logs akeno', {
                 shell: true,
                 env: {
                     ...process.env,
