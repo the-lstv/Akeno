@@ -1,4 +1,4 @@
-#! /bin/node
+#!/usr/bin/env node
 /*
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
@@ -26,17 +26,17 @@ const
     { parse, stringify, configTools, merge } = require("./parser"),
     { ipc_client } = require("./ipc"),
 
-    // path = require('path'),
-    // axios = require('axios'),
-
     socketPath = '/tmp/akeno.backend.sock',
-    
+
     client = new ipc_client(socketPath)
 ;
 
+// To be removed
+const COMMAND_PATH = "/www/cmd/bin/";
 
 
-let logo = argv["no-ascii"]? "" : (gradient(`\x1b[1m
+
+let logo = argv.ascii === false? "" : (gradient(`\x1b[1m
      _    _
     / \\  | | _____ _ __   ___
    / _ \\ | |/ / _ \\ '_ \\ / _ \\
@@ -46,67 +46,286 @@ let logo = argv["no-ascii"]? "" : (gradient(`\x1b[1m
     signature = "\x1b[95m[akeno]\x1b[0m"
 ;
 
+
+// TO BE UPDATED.
+
+const ROOT_COMMANDS = [
+    {
+        type: "group",
+        name: "Global options",
+        items: [
+            {
+                name: "--json",
+                type: "flag",
+                description: "Preffer JSON output (where supported)"
+            },
+            {
+                name: "--no-ascii",
+                type: "flag",
+                description: "Disable the Akeno ASCII art"
+            },
+            {
+                name: "--no-boxes",
+                type: "flag",
+                description: "Disable all borders/boxes from the output"
+            },
+            {
+                name: "--no-color",
+                type: "flag",
+                description: "Disable all colouring from the output"
+            },
+            {
+                name: ["--silent", "-s"],
+                type: "flag",
+                description: "Disable all output (excluding errors)"
+            }
+        ]
+    },
+    {
+        type: "group",
+        name: "Base commands",
+        items: [
+            {
+                name: ["help", "--help", "-h"],
+                type: "command",
+                description: "Display command help",
+                json: true
+            },
+            {
+                name: ["info", "status", "--info", "-i"],
+                type: "command",
+                description: "Display some information about the server and its status"
+            },
+            {
+                name: "start",
+                type: "command",
+                description: "Start the server (without a PM)"
+            },
+            {
+                name: "reload",
+                type: "command",
+                args: ["app"],
+                description: "Hot-reload the server configuration"
+            },
+            {
+                name: "restart",
+                type: "command",
+                description: "Restart the server (requires PM2)",
+                options: [
+                    {
+                        name: "--logs",
+                        description: "Display logs while loading the server"
+                    }
+                ]
+            },
+            {
+                name: "logs",
+                args: ["filter"],
+                type: "command",
+                description: "View server logs (requires PM2)"
+            },
+            {
+                name: "parse-config <file>",
+                type: "command",
+                description: "Parse a config file and return it as JSON. Defaults to the main config",
+                json: true,
+                options: [
+                    {
+                        name: ["-t", "--text"],
+                        args: ["text"],
+                        description: "Parse from text input instead of a file"
+                    },
+                    {
+                        name: "-p",
+                        description: "Prettify JSON output"
+                    },
+                    {
+                        name: "--stringify",
+                        description: "Return stringified (converted back to a readable syntax)"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        type: "group",
+        name: "Web applications (websites) / Modules",
+        items: [
+            {
+                name: ["list", "ls"],
+                type: "command",
+                description: "List web applications"
+            },
+            {
+                name: ["create", "init"],
+                type: "command",
+                args: ["path"],
+                description: "Setup a new application template in the current or specified directory.",
+                options: [
+                    {
+                        name: "-n",
+                        args: ["name"],
+                        description: "Application name"
+                    },
+                    {
+                        name: "-c",
+                        args: ["config"],
+                        description: "Configuration options"
+                    },
+                    {
+                        name: "-f",
+                        description: "Force creation even if the directory is not empty"
+                    }
+                ]
+            },
+            {
+                name: "enable [app]",
+                type: "command",
+                description: "Enable a web application"
+            },
+            {
+                name: "disable [app]",
+                type: "command",
+                description: "Disable a web application"
+            },
+            {
+                name: "temp-hostname [app]",
+                type: "command",
+                description: "Generate a temporary hostname for an app"
+            },
+            {
+                name: "bundle <source> [target path]",
+                type: "command",
+                description: "Bundle a web application for offline use"
+            }
+        ]
+    },
+    {
+        type: "group",
+        name: "Auth addon",
+        items: [
+            {
+                name: "auth login [name] [password]",
+                type: "command",
+                description: "Attempt login and return token"
+            },
+            {
+                name: "auth verify [token]",
+                type: "command",
+                description: "Verify login token"
+            },
+            {
+                name: "auth create [name] <{options}>",
+                type: "command",
+                description: "Create a new user"
+            },
+            {
+                name: "auth list <offset> <limit>",
+                type: "command",
+                description: "List users"
+            },
+            {
+                name: "auth detail [name|token]",
+                type: "command",
+                description: "List details about a user"
+            },
+            {
+                name: "auth patch [name|token] [{patch}]",
+                type: "command",
+                description: "Apply a patch to a user object"
+            },
+            {
+                name: "auth status [status]",
+                type: "command",
+                description: "Get/Set account status (ok, disabled, ...)"
+            },
+            {
+                name: "auth delete [name|token]",
+                type: "command",
+                description: "Delete an account",
+                options: [
+                    {
+                        name: "-f",
+                        description: "Skip confirmation"
+                    }
+                ]
+            }
+        ]
+    }
+]
+
+
+const process_command_item = item => {
+    item.isCommand = !item.type || item.type === "command";
+    
+    if(!item.usage) item.usage = (typeof item.name === "string"? item.name: item.name.join(" | ")) + (item.args? " " + (item.args.map(arg => typeof arg === "string"? `[${arg}]`: `${arg.required? "<": "["}${arg.name}${arg.required? ">": "]"}`).join(" ")) : "");
+
+    let longestOption = item.isCommand && item.options? Math.max(...item.options.map(process_command_item)): 0;
+
+    return Math.max(longestOption || 0, item.usage.length);
+}
+
+function generateHelp(items) {
+    let result = "";
+    const longest = Math.max(...items.map(process_command_item)) + 2; // +2 for padding
+
+    for (let item of items) {
+        if(item.type === "group"){
+            result += `${item.name}:\n`;
+            result += generateHelp(item.items);
+            result += "\n---\n";
+            continue;
+        }
+
+        result += `  ${item.json? "\x1b[93m•\x1b[0m": " "} \x1b[1m${item.usage.padEnd(longest)}\x1b[90m│\x1b[0m  ${item.description}\x1b[0m\n`;
+
+        if(item.options) for (let option of item.options) {
+            result += `        \x1b[90m⤷\x1b[0m ${option.usage.padEnd(longest - 6)}\x1b[90m│\x1b[0m  ${option.description}\x1b[0m\n`;
+        }
+    }
+
+    return result;
+}
+
+
+/**
+ * Help command
+ */
+
 if(process.argv.length < 3 || argv.h || argv.help || argv._[0] === "help" || argv._[0] === "h" || argv._[0] === "?" || argv._[0] === "/?"){
-    log(logo + box(`Global options:
-    \x1b[1m--json                      \x1b[90m│\x1b[0m  Preffer JSON output (where supported)
-    \x1b[1m--no-ascii                  \x1b[90m│\x1b[0m  Disable the Akeno ASCII art
-    \x1b[1m--no-boxes                  \x1b[90m│\x1b[0m  Disable all borders/boxes from the output
-    \x1b[1m--no-color                  \x1b[90m│\x1b[0m  Disable all colouring from the output
-    \x1b[1m--silent | -s               \x1b[90m│\x1b[0m  Disable all output (excluding errors)
----
-Base commands list:
-    \x1b[1mhelp | --help | -h          \x1b[90m│\x1b[0m  Display command help
-    \x1b[1minfo | status | --info | -i \x1b[90m│\x1b[0m  Display some current information about the server and its status
-    \x1b[1mstart                       \x1b[90m│\x1b[0m  Start the server (without a PM)
-    \x1b[1mreload [app]                \x1b[90m│\x1b[0m  Hot-reload the server configuration
-    \x1b[1mrestart                     \x1b[90m│\x1b[0m  Restart the server (requires PM2)
-        \x1b[90m⤷\x1b[0m --logs                \x1b[90m│\x1b[0m  Display logs while loading the server
-    \x1b[1mlogs [filter]               \x1b[90m│\x1b[0m  View server logs (requires PM2)
-  \x1b[93m•\x1b[0m \x1b[1mparse-config <file>         \x1b[90m│\x1b[0m  Parse a config file and return it as JSON. Defaults to the main config.
-        \x1b[90m⤷\x1b[0m -t | --text [text]    \x1b[90m│\x1b[0m  Parse from text input instead of a file
-        \x1b[90m⤷\x1b[0m -p                    \x1b[90m│\x1b[0m  Prettify JSON output
-        \x1b[90m⤷\x1b[0m --stringify           \x1b[90m│\x1b[0m  Return stringified (converted back to a readable syntax)
----
-Web applications (websites) / Modules:
-  \x1b[93m•\x1b[0m \x1b[1mlist | ls                          \x1b[90m│\x1b[0m  List web applications
-    \x1b[1mcreate | init [path]               \x1b[90m│\x1b[0m  Setup a new application template in the current or specified directory.
-        \x1b[90m⤷\x1b[0m -n [name]                    \x1b[90m│\x1b[0m  Application name
-        \x1b[90m⤷\x1b[0m -c [config]                  \x1b[90m│\x1b[0m  Configuration options
-        \x1b[90m⤷\x1b[0m -f                           \x1b[90m│\x1b[0m  Force creation even if the directory is not empty
-    \x1b[1menable [app]                       \x1b[90m│\x1b[0m  Enable a web application
-    \x1b[1mdisable [app]                      \x1b[90m│\x1b[0m  Disable a web application
-    \x1b[1mtemp-hostname [app]                \x1b[90m│\x1b[0m  Generate a temporary hostname for an app
-    \x1b[1mbundle <source> [target path]      \x1b[90m│\x1b[0m  Bundle a web application for offline use
----
-Auth addon:
-  \x1b[93m•\x1b[0m \x1b[1mauth login [name] [password]       \x1b[90m│\x1b[0m  Attempt login and return token
-  \x1b[93m•\x1b[0m \x1b[1mauth verify [token]                \x1b[90m│\x1b[0m  Verify login token
-  \x1b[93m•\x1b[0m \x1b[1mauth create [name] <{options}>     \x1b[90m│\x1b[0m  Verify login token
-  \x1b[93m•\x1b[0m \x1b[1mauth list <offset> <limit>         \x1b[90m│\x1b[0m  List users
-  \x1b[93m•\x1b[0m \x1b[1mauth detail [name|token]           \x1b[90m│\x1b[0m  List details about an user
-    \x1b[1mauth patch [name|token] [{patch}]  \x1b[90m│\x1b[0m  Apply a patch to an user object
-    \x1b[1mauth status [status]               \x1b[90m│\x1b[0m  Get/Set account status (ok, disabled, ...)
-    \x1b[1mauth delete [name|token]           \x1b[90m│\x1b[0m  Delete an account
-        \x1b[90m⤷\x1b[0m -f                           \x1b[90m│\x1b[0m  Skip confirmation
----
-\x1b[93m•\x1b[0m = Supports JSON output`))
+
+    if(argv.json) {
+        return log(JSON.stringify(ROOT_COMMANDS.map(item => {
+            if(item.type === "group"){
+                item.items = item.items.map(i => i.json? i: { ...i, json: true });
+                return item;
+            } else {
+                return item.json? item: { ...item, json: true };
+            }
+        })))
+    } else {
+        log(logo + box(`${generateHelp(ROOT_COMMANDS)}\x1b[93m•\x1b[0m = Supports JSON output\nSyntax: akeno command <required> [optional] --arguments "value"`));
+    }
+
     process.exit()
 }
 
-else if(argv.i || argv.info || argv._[0] === "info" || argv._[0] === "status"){
-    client.request(["usage", "cpu"], (error, response) => {
-        if(error){
-            if(error.code === "ECONNREFUSED") {
-                return client.close() && log_error(`${signature} Can't get status: Akeno is not running! Make sure you have started it either with a process manager, or the "akeno start" command.`)
-            }
-
-            return client.close() && log_error(`${signature} Couln't get information! Error:`, error)
-        }        
-
-        const mem_total = response.mem.heapTotal
-        const mem_used = response.mem.heapUsed
-    
-        log(logo + box(`You are running the Akeno backend - an open source, fast, modern and fully automated
+async function resolve(argv){
+    switch(argv._[0]) {
+        case "status": case "info":
+            client.request(["usage", "cpu"], (error, response) => {
+                if(error){
+                    if(error.code === "ECONNREFUSED") {
+                        return client.close() && log_error(`${signature} Can't get status: Akeno is not running! Make sure you have started it either with a process manager, or the "akeno start" command.`)
+                    }
+        
+                    return client.close() && log_error(`${signature} Couln't get information, the server may not be running!\nError:`, error)
+                }        
+        
+                const mem_total = response.mem.heapTotal
+                const mem_used = response.mem.heapUsed
+            
+                log(logo + box(`You are running the Akeno backend - an open source, fast, modern and fully automated
 web application, API and content delivery management system / server!
 
 \x1b[95mCreated with <3 by \x1b[1mTheLSTV\x1b[0m\x1b[95m (https://lstv.space).\x1b[0m
@@ -127,20 +346,10 @@ Some examples:
     
 ---
     \x1b[92m•\x1b[0m \x1b[1mTry "akeno --help" for explanation of all commands!\x1b[0m`));
-        process.exit()
-    })
-} else resolve(argv)
+                    process.exit()
+                })
+            break;
 
-
-
-const COMMAND_PATH = "/www/cmd/bin/"
-
-
-async function resolve(argv){
-
-    let childProcess;
-
-    switch(argv._[0]) {
         case "reload":
             const singular = typeof argv._[1] === "string";
 
@@ -266,10 +475,10 @@ async function resolve(argv){
                 fs.createFileSync(path + "/index.html")
             })()
 
-        case "logs":
+        case "logs": {
             if(argv._[1]) log(`${signature} Showing only lines including "${argv._[1]}"`);
 
-            childProcess = spawn('pm2 logs akeno', {
+            const childProcess = spawn('pm2 logs akeno', {
                 shell: true,
                 env: {
                     ...process.env,
@@ -291,12 +500,14 @@ async function resolve(argv){
             childProcess.stderr.on('data', (buffer) => {
                 process.stderr.write(buffer)
             });
-        break;
 
-        case "start":
+            break;
+        }
+
+        case "start": {
             log(`${signature} Launching Akeno (without a process manager).`);
             
-            childProcess = spawn('node ' + (argv.inspect? "--inspect " : "") + __dirname + '/../app', {
+            const childProcess = spawn('node ' + (argv.inspect? "--inspect " : "") + __dirname + '/../app', {
                 shell: true,
                 env: {
                     ...process.env
@@ -311,7 +522,9 @@ async function resolve(argv){
             childProcess.stderr.on('data', (buffer) => {
                 process.stderr.write(buffer)
             });
-        break;
+            
+            break;
+        }
 
 
         // DO NOT USE THIS COMMAND :D
@@ -436,14 +649,27 @@ async function resolve(argv){
         break;
     
         default:
-            console.error(signature + " Unknown command \"" + argv._[0] + "\". Type 'akeno -h' for help.")
+            console.error(signature + " Unknown command \"" + (argv._[0] || "(no command)") + "\". Type 'akeno -h' for help.")
     }
 }
 
 
+
+
+
+
+// Utility functions
+
+/**
+ * Sleep function
+ * @param {number} ms
+ * @returns {Promise}
+ */
+
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
+
 
 function formatUptime(seconds) {
     const hours = Math.floor(seconds / 3600);
@@ -454,7 +680,7 @@ function formatUptime(seconds) {
 }
 
 function data_to_log(data){
-    return data.map(thing => typeof thing == "string"? argv["no-color"]? thing.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '') : thing : thing)
+    return data.map(thing => typeof thing == "string"? argv.color === false? thing.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '') : thing : thing)
 }
 
 function log(...data){
@@ -465,10 +691,6 @@ function log(...data){
 function log_error(...data){
     console.error(...data_to_log(data))
 }
-
-// function getHits(){
-//     return fs.existsSync(PATH + "/etc/hits") ? fs.readFileSync(PATH + "./etc/hits").readUInt32LE(0) : 0
-// }
 
 function gradient(text) {
     let gradientColors = [],
@@ -496,10 +718,21 @@ function gradient(text) {
     return gradientText;
 }
 
+/**
+ * Creates a styled text box with customizable padding, margin, and color.
+ * The box can include horizontal dividers represented by lines containing "---".
+ * 
+ * @param {string} text - The text to be displayed inside the box. Each line is separated by a newline character.
+ * @param {number} [padding=1] - The amount of padding (spaces) inside the box around the text.
+ * @param {number} [margin=0] - The amount of margin (spaces) outside the box.
+ * @param {string} [color="90"] - The ANSI color code for the box border.
+ * @returns {string} - The formatted text box as a string.
+ */
+
 function box(text, padding = 1, margin = 0, color = "90") {
     // Super messy code but does what it should
 
-    if(argv["no-boxes"]) return text;
+    if(argv.boxes === false) return text;
 
     let lines = text.split('\n'),
         lengths = lines.map(str => str.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '').length),
@@ -529,3 +762,5 @@ function box(text, padding = 1, margin = 0, color = "90") {
 
     return result
 }
+
+resolve(argv);
