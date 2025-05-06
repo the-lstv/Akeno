@@ -2,8 +2,8 @@
 
 /*
 
-    Welcome to the Akeno web backend!
-    This is an extension to Akeno created for static/dynamic web application handling,
+    Welcome to the Akeno Web App module!
+    This is an Akeno module created for static/dynamic web application handling & routing,
     optimized for performance, with on-the-fly code compression, smart caching etc.
 
     It also features a dynamic HTML processor.
@@ -27,9 +27,10 @@ let
 
     // Local libraries
     { parse, configTools } = require("./parser"),
+    Units = require("./unit"),
 
     // Globals
-    server,
+    server = new WebServer(),
 
     applications = new Map,
     applicationCache = [], // debug purposes
@@ -59,16 +60,18 @@ const contentSettings = {
     compress: true, // If null, set based on dev mode
 }
 
+class WebServer extends Units.Module {
+    constructor(){
+        super("akeno.web");
+    }
 
-
-server = {
     Initialize($){
         backend = $;
 
         // Constants
         const header = `<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`;
 
-        server.etc = {
+        this.etc = {
             notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`),
             default_disabled_message: Buffer.from(backend.config.block("web").get("disabledMessage", String) || "This website is temporarily disabled."),
 
@@ -81,11 +84,11 @@ server = {
 
         backend.exposeToDebugger("parser", parser);
 
-        server.reload(null, true);
-    },
+        this.reload(null, true);
+    }
 
     async reload(specific_app, skip_refresh){
-        if(specific_app) return server.load(specific_app);
+        if(specific_app) return this.load(specific_app);
 
         if(!skip_refresh) backend.refreshConfig();
 
@@ -99,7 +102,7 @@ server = {
             if(location.startsWith("./")) location = backend.path + location.slice(1);
 
             if(!fs.existsSync(location.replace("/*", ""))) {
-                server.log.warn("Web application (at " + location + ") does not exist - skipped.");
+                this.log.warn("Web application (at " + location + ") does not exist - skipped.");
                 continue
             }
 
@@ -116,224 +119,41 @@ server = {
             }
 
             if(!fs.statSync(location).isDirectory()) {
-                return server.log.warn("Web application (at " + location + ") is a file - skipped.")
+                return this.log.warn("Web application (at " + location + ") is a file - skipped.")
             }
 
-            server.load(location)
+            this.load(location)
         }
 
-        server.log(`Loaded ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
-    },
+        this.log(`Loaded ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
+    }
 
 
     load(path){
-
         // TODO: Hot reloading is almost functional, but needs config validation and re-parsing to be finished
-        // if(applications.has(path)) return false;
 
         let app = applications.get(path);
 
         if(!app) {
-            app = server._createApp(path)
+            app = new WebApp(path);
             if(!app) return false;
         } else {
-            server.log.verbose("Hot-reloading web application (at " + path + ")");
-            app.config = server.loadAppConfig(path)
+            this.log.verbose("Hot-reloading web application (at " + path + ")");
+            app.reload();
         }
 
         if(!app.config) return false;
-
-        const is_enabled = backend.kvdb.apps.get(`${path}.enabled`, Boolean)
-        app.enabled = (is_enabled === null? true: is_enabled) || false;
-
-
-        const enabledDomains = app.config.block("server").get("domains") || [];
-
-        if(enabledDomains.length > 0 || app.domains.size > 0){
-            const domains = new Set([...enabledDomains, ...app.domains]);
-
-            for(let domain of domains){
-                if(!domain || typeof domain !== "string") {
-                    server.log.warn("Invalid domain name \"" + domain + "\" for web application \"" + app.basename + "\".");
-                    continue
-                }
-
-                if(!enabledDomains.includes(domain)){
-                    assignedDomains.delete(domain);
-                    app.domains.delete(domain);
-                    continue
-                }
-
-                assignedDomains.set(domain, app);
-                app.domains.add(domain);
-            }
-        }
-
-
-        const enabledPorts = app.config.block("server").get("port") || [];
-
-        if(enabledPorts.length > 0 || app.ports.size > 0){
-            const ports = new Set([...enabledPorts, ...app.ports]);
-
-            for (let port of ports) {
-                if(!port || typeof port !== "number" || port < 1 || port > 65535) {
-                    server.log.warn("Invalid port number \"" + port + "\" for web application \"" + app.basename + "\" - skipped.");
-                    continue
-                }
-
-                if(app.ports.has(port)){
-                    if(!enabledPorts.includes(port)){
-                        app.ports.delete(port);
-
-                        if(app.uws){
-                            uws.us_listen_socket_close(app.sockets.get(port));
-                            app.uws.close();
-                            app.uws = null;
-                        }
-
-                        server.log(`Web application "${app.basename}" is no longer listening on port ${port}`);
-                        continue
-                    }
-                    continue
-                }
-
-                let found = false;
-                for(const app of applications.values()){
-                    if(app.ports.has(port)){
-                        found = app;
-                        break
-                    }
-                }
-
-                if(found){
-                    server.log.warn("Port " + port + " is already in use by \"" + found.basename + "\" - skipped.");
-                    continue
-                }
-                
-                app.ports.add(port);
-
-                const flags = { app };
-
-                if(!app.uws) {
-                    app.uws = uws.App().any('/*', (res, req) => {
-                        backend.resolve(res, req, flags)
-                    })
-
-                    app.sockets = new Map;
-                }
-
-                app.uws.listen(port, (socket) => {
-                    if(socket) {
-                        app.sockets.set(port, socket)
-                        server.log(`Web application "${app.basename}" is listening on port ${port}`);
-                    } else {
-                        server.log.error(`Failed to start web application "${app.basename}" on port ${port}`);
-                    }
-                })
-            }
-        }
-
-        for(let api of app.config.blocks("api")){
-            backend.apiExtensions[api.attributes[0]] = app.path + "/" + api.attributes[1]
-        }
-
-        // Reload modules
-        for(let [name, module] of app.modules){
-            module.restart()
-        }
-
-        for(let api of app.config.blocks("module")){
-            // TODO: Proper module system
-            const name = api.attributes[0];
-
-            if(app.modules.has(name)) continue;
-
-            let module;
-            try {
-                module = new backend.Module(`${app.basename}/${name}`, { path: app.path + "/" + api.get("path", String), autoRestart: api.get("autoRestart", Boolean, false) });
-            } catch (error) {
-                server.log.error("Failed to load module " + name + " for web application " + app.basename + ": " + error.toString() + ". You can reload the app to retry.");
-                continue
-            }
-
-            app.modules.set(name, module)
-        }
-
         return true
-
-    },
-
-
-    loadAppConfig(path){
-        let configPath = files_try(path + "/app.conf", path + "/app.manifest");
-
-        if(!configPath){
-            server.log.warn("Web application (at " + path + ") failed to load - no config file found - skipped.");
-            return
-        }
-
-        return configTools(parse(fs.readFileSync(configPath, "utf8"), {
-            strict: true,
-            asLookupTable: true
-        }))
-    },
-
-
-    _createApp(path){
-        if(applications.has(path)) return;
-
-        const config = server.loadAppConfig(path);
-
-        if(!config) return;
-
-        const app = {
-            path,
-
-            basename: nodePath.basename(path),
-
-            enabled: null,
-
-            config,
-
-            ports: new Set,
-
-            /**
-             * @warning Do not use this set for routing - it is only a reference to allow for easy removal of domains.
-             */
-            domains: new Set,
-
-            modules: new Map
-        }
-
-        applications.set(app.path, app)
-
-        // Only for quick retrieval of website information
-        applicationCache.push({
-            basename: app.basename,
-            path,
-
-            get enabled(){
-                return app.enabled
-            },
-
-            get ports(){
-                return [...app.ports]
-            }
-        })
-
-        return app
-    },
-
+    }
 
     ServeCache(req, res, cache, app, url){
         // Dynamic content
         if(Array.isArray(cache.content)){
-            return server.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
+            return this.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
         }
 
         return backend.helper.send(req, res, cache.content, cache.headers)
-    },
-
+    }
 
     async HandleRequest({ segments, req, res, flags }){
         // This is the main handler/router for websites/webapps.
@@ -509,7 +329,7 @@ server = {
                 backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500)
             } catch {}
         }
-    },
+    }
 
 
     /*
@@ -535,7 +355,7 @@ server = {
                                     parserContext.data = { plain: true, dynamic: false, compress: true, app, url };
                                     res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, parserContext))
                                 } catch (error) {
-                                    server.log.warn("Failed to import: importing " + item, error)
+                                    this.log.warn("Failed to import: importing " + item, error)
                                 }
                             }
                             break;
@@ -546,92 +366,300 @@ server = {
 
             res.end()
         })
-    },
+    }
 
 
-    util: {
-        getApp(path_or_name){
-            if(!path_or_name) return null;
-            if(path_or_name.includes("/") && fs.existsSync(path_or_name)) return path_or_name;
+    onIPCRequest(path, args, respond){
+        switch(path){
+            case "list":
+                respond(null, this.list())
+                break
 
-            const found = applicationCache.find(app => app.basename === path_or_name);
+            case "list.domains":
+                respond(null, this.listDomains(request[1]))
+                break
 
-            return found && found.path
-        },
-        
-        list(){
-            for(let app of applicationCache){
-                app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain).path === app.path)
-            }
+            case "list.getDomain":
+                respond(null, this.getDomain(request[1]))
+                break
 
-            return applicationCache
-        },
+            case "enable":
+                respond(null, this.enable(request[1]))
+                break
 
-        enable(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-            
-            for(let application of applications.values()) {
-                if(application.path === app_path) {
-                    application.enabled = true
-                    backend.kvdb.apps.commitSet(`${app_path}.enabled`, true)
-                    return true
-                }
-            }
+            case "disable":
+                respond(null, this.disable(request[1]))
+                break
 
-            return false
-        },
+            case "reload":
+                respond(null, this.reload(request[1]))
+                break
 
-        disable(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-        
-            for(let application of applications.values()) {
-                if(application.path === app_path) {
-                    application.enabled = false
-                    backend.kvdb.apps.commitSet(`${app_path}.enabled`, false)
-                    return true
-                }
-            }
-
-            return false
-        },
-
-        listDomains(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-
-            let list = [];
-
-            for(domain in assignedDomains.keys()){
-                if(assignedDomains.get(domain).path === app_path) list.push(domain);
-            }
-
-            return list;
-        },
-
-        reload(app_path = null){
-            if(app_path && !(app_path = server.util.getApp(app_path))) return false;
-            return server.reload(app_path || null)
-        },
-
-        getDomain(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-
-            for(domain in assignedDomains.keys()){
-                if(assignedDomains.get(domain).path === req.getQuery(app_path)) return domain;
-            }
-
-            return "";
-        },
-
-        tempDomain(app_path){
-            if(!(app_path = server.util.getApp(app_path))) return false;
-
-            let random = backend.uuid();
-            assignedDomains.set(random, applications.get(app_path));
-
-            return random;
+            case "tempDomain":
+                respond(null, this.tempDomain(request[1]))
+                break
         }
     }
+
+
+    // Utility functions
+
+    getApp(path_or_name){
+        if(!path_or_name) return null;
+        if(path_or_name.includes("/") && fs.existsSync(path_or_name)) return path_or_name;
+
+        const found = applicationCache.find(app => app.basename === path_or_name);
+
+        return found && found.path
+    }
+
+    list(){
+        for(let app of applicationCache){
+            app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain).path === app.path)
+        }
+
+        return applicationCache
+    }
+
+    enable(app_path){
+        if(!(app_path = this.util.getApp(app_path))) return false;
+        
+        for(let application of applications.values()) {
+            if(application.path === app_path) {
+                application.enabled = true
+                backend.kvdb.apps.commitSet(`${app_path}.enabled`, true)
+                return true
+            }
+        }
+
+        return false
+    }
+
+    disable(app_path){
+        if(!(app_path = this.util.getApp(app_path))) return false;
+    
+        for(let application of applications.values()) {
+            if(application.path === app_path) {
+                application.enabled = false
+                backend.kvdb.apps.commitSet(`${app_path}.enabled`, false)
+                return true
+            }
+        }
+
+        return false
+    }
+
+    listDomains(app_path){
+        if(!(app_path = this.util.getApp(app_path))) return false;
+
+        let list = [];
+
+        for(domain in assignedDomains.keys()){
+            if(assignedDomains.get(domain).path === app_path) list.push(domain);
+        }
+
+        return list;
+    }
+
+    reload(app_path = null){
+        if(app_path && !(app_path = this.util.getApp(app_path))) return false;
+        return this.reload(app_path || null)
+    }
+
+    getDomain(app_path){
+        if(!(app_path = this.util.getApp(app_path))) return false;
+
+        for(domain in assignedDomains.keys()){
+            if(assignedDomains.get(domain).path === req.getQuery(app_path)) return domain;
+        }
+
+        return "";
+    }
+
+    tempDomain(app_path){
+        if(!(app_path = this.util.getApp(app_path))) return false;
+
+        let random = backend.uuid();
+        assignedDomains.set(random, applications.get(app_path));
+
+        return random;
+    }
 }
+
+class WebApp extends Units.App {
+    constructor(path){
+        super();
+
+        this.path = path;
+
+        this.reloadConfig();
+        if(!this.config) throw new Error("Invalid or missing config");
+
+        this.basename = nodePath.basename(path);
+        this.enabled = null;
+        this.ports = new Set;
+
+        /**
+         * @warning Do not use this set for routing - it is only a copy to allow for easy removal of domains.
+         */
+        this.domains = new Set;
+        this.modules = new Map;
+
+        applications.set(this.path, this);
+
+        // Only for quick retrieval of website information
+        applicationCache.push({
+            basename: this.basename,
+            path,
+
+            get enabled(){
+                return this.enabled
+            },
+
+            get ports(){
+                return [...this.ports]
+            }
+        })
+
+        this.reload();
+    }
+
+    reloadConfig(){
+        let configPath = files_try(this.path + "/app.conf", this.path + "/app.manifest");
+
+        if(!configPath){
+            server.log.warn("Web application (at " + this.path + ") failed to load - no config file found - skipped.");
+            return
+        }
+
+        this.config = configTools(parse(fs.readFileSync(configPath, "utf8"), {
+            strict: true,
+            asLookupTable: true
+        }))
+    }
+
+    reload(){
+        const is_enabled = backend.kvdb.apps.get(`${this.path}.enabled`, Boolean)
+        this.enabled = (is_enabled === null? true: is_enabled) || false;
+
+        const enabledDomains = this.config.block("server").get("domains") || [];
+
+        if(enabledDomains.length > 0 || this.domains.size > 0){
+            const domains = new Set([...enabledDomains, ...this.domains]);
+
+            for(let domain of domains){
+                if(!domain || typeof domain !== "string") {
+                    server.log.warn("Invalid domain name \"" + domain + "\" for web application \"" + this.basename + "\".");
+                    continue
+                }
+
+                if(!enabledDomains.includes(domain)){
+                    assignedDomains.delete(domain);
+                    this.domains.delete(domain);
+                    continue
+                }
+
+                assignedDomains.set(domain, this);
+                this.domains.add(domain);
+            }
+        }
+
+
+        const enabledPorts = this.config.block("server").get("port") || [];
+
+        if(enabledPorts.length > 0 || this.ports.size > 0){
+            const ports = new Set([...enabledPorts, ...this.ports]);
+
+            for (let port of ports) {
+                if(!port || typeof port !== "number" || port < 1 || port > 65535) {
+                    server.log.warn("Invalid port number \"" + port + "\" for web application \"" + this.basename + "\" - skipped.");
+                    continue
+                }
+
+                if(this.ports.has(port)){
+                    if(!enabledPorts.includes(port)){
+                        this.ports.delete(port);
+
+                        if(this.uws){
+                            uws.us_listen_socket_close(this.sockets.get(port));
+                            this.uws.close();
+                            this.uws = null;
+                        }
+
+                        server.log(`Web application "${this.basename}" is no longer listening on port ${port}`);
+                        continue
+                    }
+                    continue
+                }
+
+                let found = false;
+                for(const app of applications.values()){
+                    if(app.ports.has(port)){
+                        found = app;
+                        break
+                    }
+                }
+
+                if(found){
+                    server.log.warn("Port " + port + " is already in use by \"" + found.basename + "\" - skipped.");
+                    continue
+                }
+                
+                this.ports.add(port);
+
+                const flags = { app: this };
+
+                if(!this.uws) {
+                    this.uws = uws.App().any('/*', (res, req) => {
+                        backend.resolve(res, req, flags)
+                    })
+
+                    this.sockets = new Map;
+                }
+
+                this.uws.listen(port, (socket) => {
+                    if(socket) {
+                        this.sockets.set(port, socket)
+                        server.log(`Web application "${this.basename}" is listening on port ${port}`);
+                    } else {
+                        server.log.error(`Failed to start web application "${this.basename}" on port ${port}`);
+                    }
+                })
+            }
+        }
+
+        for(let api of this.config.blocks("api")){
+            backend.apiExtensions[api.attributes[0]] = this.path + "/" + api.attributes[1]
+        }
+
+        // Reload modules
+        for(let [name, module] of this.modules){
+            module.restart()
+        }
+
+        for(let api of this.config.blocks("module")){
+            // TODO: Proper module system
+            const name = api.attributes[0];
+
+            if(this.modules.has(name)) continue;
+
+            let module;
+            try {
+                module = new backend.Module(`${this.basename}/${name}`, { path: this.path + "/" + api.get("path", String), autoRestart: api.get("autoRestart", Boolean, false) });
+            } catch (error) {
+                server.log.error("Failed to load module " + name + " for web application " + this.basename + ": " + error.toString() + ". You can reload the app to retry.");
+                continue
+            }
+
+            this.modules.set(name, module)
+        }
+    }
+
+    restart(){
+        return this.reload();
+    }
+}
+
 
 // Section: utils
 function files_try(...files){

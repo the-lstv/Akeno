@@ -26,7 +26,8 @@ let
     SSLApp,
     H3App,
 
-    ModuleManager = require("./core/module"),
+    // Read more about units in the docs
+    Units = require("./core/unit"),
 
     // Storage/cache managers
     KeyStorage = require("./core/kvdb"),
@@ -58,7 +59,6 @@ const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_ARRAY = Object.freeze([]);
 const EMPTY_BUFFER = Buffer.alloc(0);
 
-
 let
     // Globals
     AddonCache = {},
@@ -70,7 +70,6 @@ let
     total_hits,
 
     domainRouter = new Map,
-
     trustedOrigins = new Set
 ;
 
@@ -104,7 +103,7 @@ const kvdb = {
 
 function initialize(){
     if (process.platform !== 'linux') {
-        console.warn(`[system] Warning: Your platform (${process.platform}) has experimental support. Internal API server is disabled and the CLI will not work as expected. Akeno is currently only supported on Linux.`);
+        console.warn(`[system] Warning: Your platform (${process.platform}) has experimental support. Internal API server is disabled and the CLI will not work as expected. Akeno is currently only supported on Linux.${process.platform === 'win32' ? ' You can try using WSL or other types of Linux VM to run this software.' : ''}`);
     }
 
     else {
@@ -113,10 +112,14 @@ function initialize(){
         // Internal ipc server
         ipc = new ipc_server({
             onRequest(socket, request, respond){
-                
-                const command = typeof request === "string"? (request = [request] && request[0]): request[0];
+
+                const full_path = typeof request === "string"? (request = [request] && request[0]): request[0];
+
+                const index = target.indexOf(".");
+                const target = index !== -1? target.slice(0, index): target;
+                const path = index !== -1? target.slice(index + 1): full_path;
     
-                switch(command){
+                switch(target){
                     case "ping":
                         respond(null, {
                             backend_path: PATH,
@@ -136,8 +139,8 @@ function initialize(){
                             isDev,
                             server_enabled,
                             modules: {
-                                count: ModuleManager.modules.size,
-                                sample: [...ModuleManager.modules.keys()]
+                                count: Units.Manager.count,
+                                sample: Units.Manager.list(),
                             }
                         };
     
@@ -154,36 +157,14 @@ function initialize(){
                         } else respond(null, res);
                         break
     
-                    case "web.list":
-                        respond(null, backend.addon("core/web").util.list())
-                        break
-    
-                    case "web.list.domains":
-                        respond(null, backend.addon("core/web").util.listDomains(request[1]))
-                        break
-    
-                    case "web.list.getDomain":
-                        respond(null, backend.addon("core/web").util.getDomain(request[1]))
-                        break
-    
-                    case "web.enable":
-                        respond(null, backend.addon("core/web").util.enable(request[1]))
-                        break
-    
-                    case "web.disable":
-                        respond(null, backend.addon("core/web").util.disable(request[1]))
-                        break
-    
-                    case "web.reload":
-                        respond(null, backend.addon("core/web").util.reload(request[1]))
-                        break
-    
-                    case "web.tempDomain":
-                        respond(null, backend.addon("core/web").util.tempDomain(request[1]))
-                        break
-    
                     default:
-                        respond("Invalid command")
+                        const targetModule = Units.module(target);
+
+                        if(targetModule && targetModule.onIPCRequest){
+                            targetModule.onIPCRequest(path, request, respond);
+                        } else {
+                            respond("Invalid command")
+                        }
                 }
     
             }
@@ -288,7 +269,7 @@ function initialize(){
                 req.path = decodeURIComponent(req.getUrl());
             } catch (e) {
                 req.path = req.getUrl();
-                backend.log.warn("Failed to decode URL:", req.path)
+                backend.warn("Failed to decode URL:", req.path)
             }
             
             req.secure = flags && !!flags.secure; // If the request is done over a secured connection
@@ -431,7 +412,7 @@ function initialize(){
                     if(SNIDomains){
 
                         if(!backend.config.block("sslRouter").properties.certBase || !backend.config.block("sslRouter").properties.keyBase){
-                            return backend.log.error("Could not start server with SSL - you are missing your certificate files (either base or key)!")
+                            return backend.error("Could not start server with SSL - you are missing your certificate files (either base or key)!")
                         }
 
                         function addSNIRoute(domain) {
@@ -456,7 +437,7 @@ function initialize(){
 
                         // if(backend.config.block("sslRouter").properties.autoAddDomains){
                         //     SSLApp.missingServerName((hostname) => {
-                        //         backend.log.warn("You are missing a SSL server name <" + hostname + ">! Trying to use a certificate on the fly.");
+                        //         backend.warn("You are missing a SSL server name <" + hostname + ">! Trying to use a certificate on the fly.");
 
                         //         addSNIRoute(hostname)
                         //     })
@@ -467,18 +448,18 @@ function initialize(){
                 SSLApp.listen(SSLPort, (listenSocket) => {
                     if (listenSocket) {
                         console.log(`[system] Listening with SSL on ${SSLPort}!`)
-                    } else backend.log.error("[error] Could not start the SSL server! If you do not need SSL, you can ignore this, but it is recommended to remove it from the config. If you do need SSL, make sure nothing is taking the port you configured (" +SSLPort+ ")")
+                    } else backend.error("[error] Could not start the SSL server! If you do not need SSL, you can ignore this, but it is recommended to remove it from the config. If you do need SSL, make sure nothing is taking the port you configured (" +SSLPort+ ")")
                 });
 
                 if(h3_enabled){
                     H3App.listen(H3Port, (listenSocket) => {
                         if (listenSocket) {
                             console.log(`[system] HTTP3 Listening with SSL on ${H3Port}!`)
-                        } else backend.log.error("[error] Could not start the HTTP3 server! If you do not need HTTP3, you can ignore this, but it is recommended to remove it from the config. Make sure nothing is taking the port you configured for H3 (" +H3Port+ ")")
+                        } else backend.error("[error] Could not start the HTTP3 server! If you do not need HTTP3, you can ignore this, but it is recommended to remove it from the config. Make sure nothing is taking the port you configured for H3 (" +H3Port+ ")")
                     });
                 }
             }
-        } else backend.log.error("[fatal error] Could not start the server on port " + HTTPort + "!")
+        } else backend.error("[fatal error] Could not start the server on port " + HTTPort + "!")
     });
 
     backend.resolve = resolve;
@@ -752,10 +733,10 @@ const backend = {
         //         if(block.attributes.length !== 0){
         //             let path = block.attributes[0].replace("./", PATH + "/");
 
-        //             if(path === stack) return backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
+        //             if(path === stack) return backend.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
 
         //             if(!fs.existsSync(path)){
-        //                 backend.log.warn("Failed import of \"" + path + "\", file not found")
+        //                 backend.warn("Failed import of \"" + path + "\", file not found")
         //                 return;
         //             }
 
@@ -767,7 +748,7 @@ const backend = {
 
         //     for(let path of imports){
         //         if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
-        //             backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
+        //             backend.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
         //             continue
         //         }
 
@@ -848,53 +829,37 @@ const backend = {
     app,
     SSLApp,
 
+
+    /**
+     * @deprecated
+     */
     API,
+
+    /**
+     * @deprecated
+     */
     apiExtensions: {},
 
     broadcast(topic, data, isBinary, compress){
         if(backend.config.block("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
     },
 
-    writeLog(data, severity = 2, source = "api"){
-        // 0 = Debug (Verbose), 1 = Info (Verbose), 2 = Info, 3 = Warning, 4 = Error, 5 = Important
+    writeLog(data, level = 2, source = "api"){
+        // 0 = Debug (Verbose), 1 = Info (Verbose), 2 = Info, 3 = Warning, 4 = Error, 5 = Fatal issue
 
-        if(severity < (5 - backend.logLevel)) return;
+        if(level < (5 - backend.logLevel)) return;
         if(!Array.isArray(data)) return;
 
-        console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`\x1b[${severity == 4? "1;31": "36"}m[${source}]\x1b[0m`, ...data)
+        const color = level >= 4 ? "1;31" : level === 3 ? "1;33" : "36";
+        const consoleFunction = level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log";
+        const sourceName = typeof source === "string" ? source : source?.name || "unknown";
+
+        console[consoleFunction](`${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`, ...data);
     },
 
-    createLoggerContext(target){
-        let logger = function (...data){
-            backend.writeLog(data, 2, target)
-        }
-
-        logger.debug = function (...data){
-            backend.writeLog(data, 0, target)
-        }
-
-        logger.verbose = function (...data){
-            backend.writeLog(data, 1, target)
-        }
-
-        logger.info = function (...data){
-            backend.writeLog(data, 2, target)
-        }
-
-        logger.warn = function (...data){
-            backend.writeLog(data, 3, target)
-        }
-
-        logger.error = function (...data){
-            backend.writeLog(data, 4, target)
-        }
-
-        logger.impotant = function (...data){
-            backend.writeLog(data, 5, target)
-        }
-
-        return logger
-    },
+    /**
+     * @deprecated Please migrate to universal Units.Addon or Units.Module.
+     */
 
     addon(name, path){
         if(!AddonCache[name]){
@@ -903,20 +868,13 @@ const backend = {
             backend.log("Loading addon;", name);
 
             AddonCache[name] = require(path);
-
-            AddonCache[name].log = backend.createLoggerContext(name)
+            Object.setPrototypeOf(AddonCache[name], Units.Addon.prototype);
 
             if(AddonCache[name].Initialize) AddonCache[name].Initialize(backend);
         }
 
         return AddonCache[name]
     },
-
-    ModuleManager,
-
-    Module: ModuleManager.Module,
-
-    module: ModuleManager.loadModule,
 
     mime: require("./core/mime"),
 
@@ -955,7 +913,7 @@ const backend = {
         31: "Underlying host could not be resolved.",
         32: "Underlying host could not resolve this request due to a server error.",
         33: "Temporarily down due to high demand. Please try again in a few moments.",
-        34: "Global rate-limit has been reached. Please try again in a few moments.",
+        34: "",
         35: "This endpoint may handle sensitive data, so you must use HTTPS. Do not use unsecured connections to avoid your information being vulnerable to attacks.",
         36: "Rate-Limited. Please try again in a few minutes.",
         37: "Rate-Limited. You have used all of your requests for a given time period.",
@@ -1029,10 +987,12 @@ const backend = {
     }
 }
 
+// Initialize the backend
+Units.Manager.init(backend);
+backend.refreshConfig();
 
-backend.log = backend.createLoggerContext("api")
+Units.Manager.load();
 
-backend.refreshConfig()
 
 const server_enabled = backend.config.block("server").get("enable", Boolean);
 const ssl_enabled = backend.config.block("server").get("enableSSL", Boolean);
@@ -1051,6 +1011,7 @@ const handlers = {
     api: 2
 }
 
+process.exit(0); // TODO: Remove this line, it is only for testing purposes.
 // TODO: This should be moved to the addon itself
 if(fs.existsSync(PATH + "/addons/cdn")){
     handlers.cdn = backend.addon("cdn").HandleRequest
@@ -1098,7 +1059,7 @@ backend.exposeToDebugger("addons", AddonCache)
 backend.exposeToDebugger("api", API)
 
 process.on('uncaughtException', (error) => {
-    console.debug("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
+    backend.fatal("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
 })
 
 process.on('exit', () => {

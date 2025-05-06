@@ -191,15 +191,15 @@ class ipc_server {
                     const chunk = socket.buffer.slice(0, boundary).toString();
                     socket.buffer = socket.buffer.slice(boundary + 1);
 
-                    
+
                     const id_index = chunk.indexOf(" ");
                     if(id_index === -1) return;
                     
                     const type_index = chunk.indexOf(" ", id_index +1);
                     if(type_index === -1) return;
-                    
+
                     const id = chunk.slice(0, id_index), type = +chunk.slice(id_index +1, type_index);
-                    
+
                     let args;
                     try {
                         args = JSON.parse(chunk.slice(type_index +1))
