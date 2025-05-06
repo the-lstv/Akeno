@@ -6,7 +6,10 @@ const fs = require('fs');
 const external = new Map;
 
 const modules = new Map;
-const addons = new Map;
+
+
+// Please make sure to use the correct Unit class for the type of object that you are creating.
+// See descriptions or docs for more information on Units.
 
 
 /**
@@ -16,13 +19,13 @@ const addons = new Map;
 
 const Manager = {
     init(backendInstance){
-        Object.setPrototypeOf(backendInstance, Unit.prototype);
+        Manager.toUnit(backendInstance);
         backendInstance.name = "api";
 
         backend = backendInstance;
     },
 
-    load(){
+    refreshAddons(){
         const paths = [backend.PATH + "./addons", ...(backend.config.block("server").get("modules") || [])];
 
         for (const path of paths) {
@@ -31,22 +34,46 @@ const Manager = {
                 .map(dirent => dirent.name);
 
             for (const dir of directories) {
-                console.log(`Found directory: ${dir}`);
+                Manager.load(path + "/" + dir);
             }
         }
     },
 
     module(name){
-        
+        return modules.get(name) || null;
     },
 
     loadAddon(path){
+        // If path is a directory
+        if(fs.statSync(path).isDirectory()){
+            
+        }
+    },
 
+    loadModule(path) {
+        const module = require(path);
+
+        if(!(module instanceof Unit)){
+            Manager.toUnit(module, Module);
+        }
+
+        if(!(module instanceof Module)){
+            throw new Error("Unit must be of type Module");
+        }
+
+        return module;
+    },
+
+    toUnit(object, base = Unit, callConstructor = true, constructorArguments = null) {
+        Object.setPrototypeOf(object, (base || Unit).prototype);
+
+        if (callConstructor) {
+            object.constructor.apply(object, constructorArguments || []);
+        }
     }
 }
 
 /**
- * * @class Unit
  * @description An abstract base class representing any unit (module, addon, job, application, etc.) in the system.
  */
 
@@ -97,10 +124,13 @@ class Unit {
 
 
 
+/**
+ * @description Module is an internal or reused module extending the core functionality
+ */
+
 class Module extends Unit {
     constructor(name, options = {}) {
         super(name, options);
-        this.log = backend.createLoggerContext(name);
 
         if(this.name !== null){
             modules.set(this.name, this);
@@ -110,9 +140,9 @@ class Module extends Unit {
 
 
 
-class App extends Unit {}
-
-
+/**
+ * @description Addon is an external module/plugin that is adding new features
+ */
 
 class Addon extends Unit {
     constructor(name, options = {}) {
@@ -120,6 +150,18 @@ class Addon extends Unit {
 }
 
 
+/**
+ * @description App is an user application not altering the core functionality, eg. a website
+ */
+
+class App extends Unit {}
+
+
+
+
+/**
+ * @description An abstract base class representing any unit (module, addon, job, application, etc.) in the system.
+ */
 
 class External extends Unit {
     constructor(name, options = {}){

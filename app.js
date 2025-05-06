@@ -175,11 +175,12 @@ function initialize(){
         })
     }
 
-    if (!server_enabled) return backend.log("Note; server is disabled, skipped loading.");
+    // TODO: fix
+    // if (!server_enabled) return backend.log("Note; server is disabled, skipped loading.");
 
-    for(let version of API.handlers.values()){
-        if(version.Initialize) version.Initialize(backend)
-    }
+    // for(let version of API.handlers.values()){
+    //     if(version.Initialize) version.Initialize(backend)
+    // }
 
     // Websocket handler
     const wss = {
@@ -190,6 +191,11 @@ function initialize(){
         compression: uws[backend.config.block("websocket").get("compression", String)] || uws.DEDICATED_COMPRESSOR_32KB,
 
         sendPingsAutomatically: true,
+
+
+        /**
+         * @warning This router is currently outdated and will be replaced in the future.
+         */
 
         upgrade(res, req, context) {
 
@@ -205,16 +211,11 @@ function initialize(){
             // Handle proxied websockets when needed
             // if(shouldProxy(req, res, true, true, context)) return;
 
-
-            /**
-             * @warning This router is currently outdated and will be replaced in the future.
-             */
-
             let segments = req.getUrl().split("/").filter(Boolean), continueUpgrade = true;
             
             const versionCode = req.pathSegments.shift();
             const firstChar = versionCode && versionCode.charCodeAt(0);
-
+            
             if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
             
             const api = API.handlers.get(parseInt(versionCode.slice(1), 10));
@@ -868,7 +869,11 @@ const backend = {
             backend.log("Loading addon;", name);
 
             AddonCache[name] = require(path);
-            Object.setPrototypeOf(AddonCache[name], Units.Addon.prototype);
+
+            // Convert the addon to an Unit instance
+            if(!(AddonCache[name] instanceof Units.Unit)){
+                Units.Manager.toUnit(AddonCache[name]);
+            }
 
             if(AddonCache[name].Initialize) AddonCache[name].Initialize(backend);
         }
@@ -991,7 +996,7 @@ const backend = {
 Units.Manager.init(backend);
 backend.refreshConfig();
 
-Units.Manager.load();
+Units.Manager.refreshAddons();
 
 
 const server_enabled = backend.config.block("server").get("enable", Boolean);
