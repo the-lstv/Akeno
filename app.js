@@ -2,7 +2,7 @@
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
 
-    Last modified: 2024
+    Last modified: 2025
     License: GPL-3.0
     Version: 1.5.8
     See: https://github.com/the-lstv/akeno
@@ -66,19 +66,21 @@ let
     API = { handlers: new Map },
 
     PATH = __dirname + "/",
-    
+
     total_hits,
 
+    // Simple domain mapper
     domainRouter = new Map,
+
     trustedOrigins = new Set
 ;
 
 
-function KeyDB(name){
+function KeyDB(name) {
     const path = PATH + name;
 
-    if(name.startsWith("db/")){
-        if(!fs.existsSync(path)){
+    if (name.startsWith("db/")) {
+        if (!fs.existsSync(path)) {
             fs.mkdirSync(path)
         }
     } else throw new Error("Invalid database path");
@@ -101,7 +103,7 @@ const kvdb = {
 }
 
 
-function initialize(){
+function initialize() {
     if (process.platform !== 'linux') {
         console.warn(`[system] Warning: Your platform (${process.platform}) has experimental support. Internal API server is disabled and the CLI will not work as expected. Akeno is currently only supported on Linux.${process.platform === 'win32' ? ' You can try using WSL or other types of Linux VM to run this software.' : ''}`);
     }
@@ -1024,9 +1026,9 @@ if(fs.existsSync(PATH + "/addons/cdn")){
 
 
 for (const block of backend.config.blocks("route")) {
-    for(const route of block.attributes) {
-        if(typeof route !== "object") continue;
-        for(const domain of route.values){
+    for (const route of block.attributes) {
+        if (typeof route !== "object") continue;
+        for (const domain of route.values) {
             domainRouter.set(domain, handlers[route.name])
         }
     }

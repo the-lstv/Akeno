@@ -10,12 +10,7 @@ api/*
 !api/v1.example.js
 
 addons/*
-
-!addons/cdn
-addons/cdn/*
-!addons/cdn/index.js
-
-!addons/gui
+!addons/.gitkeep
 
 db/*
 !db/cache/.gitkeep

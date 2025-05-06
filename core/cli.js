@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /*
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
@@ -83,7 +84,7 @@ const ROOT_COMMANDS = [
     },
     {
         type: "group",
-        name: "Base commands",
+        name: "Basic commands",
         items: [
             {
                 name: ["help", "--help", "-h"],
@@ -104,8 +105,8 @@ const ROOT_COMMANDS = [
             {
                 name: "reload",
                 type: "command",
-                args: ["app"],
-                description: "Hot-reload the server configuration"
+                description: "Hot-reload the server configuration",
+                args: ["app"]
             },
             {
                 name: "restart",
@@ -119,21 +120,33 @@ const ROOT_COMMANDS = [
                 ]
             },
             {
-                name: "logs",
-                args: ["filter"],
+                name: "update",
                 type: "command",
-                description: "View server logs (requires PM2)"
+                description: "Update the server to the latest version (requires git) and reload",
+                options: [
+                    {
+                        name: "--no-pull",
+                        description: "Skip pulling updates from the repository"
+                    }
+                ]
             },
             {
-                name: "parse-config <file>",
+                name: "logs",
+                type: "command",
+                description: "View server logs (requires PM2)",
+                args: ["filter"]
+            },
+            {
+                name: "parse-config",
                 type: "command",
                 description: "Parse a config file and return it as JSON. Defaults to the main config",
                 json: true,
+                args: ["file"],
                 options: [
                     {
                         name: ["-t", "--text"],
-                        args: ["text"],
-                        description: "Parse from text input instead of a file"
+                        description: "Parse from text input instead of a file",
+                        args: ["text"]
                     },
                     {
                         name: "-p",
@@ -149,7 +162,7 @@ const ROOT_COMMANDS = [
     },
     {
         type: "group",
-        name: "Web applications (websites) / Modules",
+        name: "Web apps",
         items: [
             {
                 name: ["list", "ls"],
@@ -159,18 +172,18 @@ const ROOT_COMMANDS = [
             {
                 name: ["create", "init"],
                 type: "command",
-                args: ["path"],
                 description: "Setup a new application template in the current or specified directory.",
+                args: ["path"],
                 options: [
                     {
                         name: "-n",
-                        args: ["name"],
-                        description: "Application name"
+                        description: "Application name",
+                        args: ["name"]
                     },
                     {
                         name: "-c",
-                        args: ["config"],
-                        description: "Configuration options"
+                        description: "Configuration options",
+                        args: ["config"]
                     },
                     {
                         name: "-f",
@@ -179,24 +192,104 @@ const ROOT_COMMANDS = [
                 ]
             },
             {
-                name: "enable [app]",
+                name: "enable",
                 type: "command",
-                description: "Enable a web application"
+                description: "Enable a web application",
+                args: ["app"]
             },
             {
-                name: "disable [app]",
+                name: "disable",
                 type: "command",
-                description: "Disable a web application"
+                description: "Disable a web application",
+                args: ["app"]
             },
             {
-                name: "temp-hostname [app]",
+                name: "temp-hostname",
                 type: "command",
-                description: "Generate a temporary hostname for an app"
+                description: "Generate a temporary hostname for an app",
+                args: ["app"]
             },
             {
-                name: "bundle <source> [target path]",
+                name: "bundle",
                 type: "command",
-                description: "Bundle a web application for offline use"
+                description: "Create a bundle for external/offline use",
+                args: ["source", "target path"]
+            }
+        ]
+    },
+    {
+        type: "group",
+        name: "Modules",
+        items: [
+            {
+                name: "module list",
+                type: "command",
+                description: "List all loaded modules and their status",
+                options: [
+                    {
+                        name: "--brief",
+                        description: "Only list available modules without fetching the status"
+                    }
+                ]
+            },
+            {
+                name: ["module install", "i"],
+                type: "command",
+                description: "Install one or more modules from a remote source (defaults to the official registry)",
+                args: ["source"],
+            },
+            {
+                name: "module update",
+                type: "command",
+                description: "Find and install updates for all installed modules",
+            },
+            {
+                name: "module remove",
+                type: "command",
+                description: "Remove one or more modules",
+                args: ["module"]
+            },
+            {
+                name: "module unload",
+                type: "command",
+                description: "Unload a module (behavior may vary based on the module type)",
+                args: ["module"]
+            },
+            {
+                name: "module reload",
+                type: "command",
+                description: "Reload a module (behavior may vary based on the module type)",
+                args: ["module"]
+            },
+            {
+                name: "module set-enabled",
+                type: "command",
+                description: "Enable or disable a module",
+                args: ["module", "enabled"],
+                options: [
+                    {
+                        name: "--now",
+                        description: "Take immediate effect (load/unload the module)",
+                    }
+                ]
+            },
+            {
+                name: "module reset",
+                type: "command",
+                description: "Clear data and settings for a module",
+                args: ["module"],
+            },
+            {
+                name: "module info",
+                type: "command",
+                description: "Get information and status about a module",
+                args: ["module"],
+            },
+            {
+                name: "module create-template",
+                type: "command",
+                description: "Interactive setup to create a new module template for development",
+                args: ["name"]
             }
         ]
     },
@@ -205,44 +298,52 @@ const ROOT_COMMANDS = [
         name: "Auth addon",
         items: [
             {
-                name: "auth login [name] [password]",
+                name: "auth login",
                 type: "command",
-                description: "Attempt login and return token"
+                description: "Attempt login and return token",
+                args: ["name", "password"]
             },
             {
-                name: "auth verify [token]",
+                name: "auth verify",
                 type: "command",
-                description: "Verify login token"
+                description: "Verify login token",
+                args: ["token"]
             },
             {
-                name: "auth create [name] <{options}>",
+                name: "auth create",
                 type: "command",
-                description: "Create a new user"
+                description: "Create a new user",
+                args: ["name", "{options}"]
             },
             {
-                name: "auth list <offset> <limit>",
+                name: "auth list",
                 type: "command",
-                description: "List users"
+                description: "List users",
+                args: ["offset", "limit"]
             },
             {
-                name: "auth detail [name|token]",
+                name: "auth detail",
                 type: "command",
-                description: "List details about a user"
+                description: "List details about a user",
+                args: ["name|token"]
             },
             {
-                name: "auth patch [name|token] [{patch}]",
+                name: "auth patch",
                 type: "command",
-                description: "Apply a patch to a user object"
+                description: "Apply a patch to a user object",
+                args: ["name|token", "{patch}"]
             },
             {
-                name: "auth status [status]",
+                name: "auth status",
                 type: "command",
-                description: "Get/Set account status (ok, disabled, ...)"
+                description: "Get/Set account status (ok, disabled, ...)",
+                args: ["status"]
             },
             {
-                name: "auth delete [name|token]",
+                name: "auth delete",
                 type: "command",
                 description: "Delete an account",
+                args: ["name|token"],
                 options: [
                     {
                         name: "-f",
@@ -252,16 +353,13 @@ const ROOT_COMMANDS = [
             }
         ]
     }
-]
+];
 
 
 const process_command_item = item => {
     item.isCommand = !item.type || item.type === "command";
-    
     if(!item.usage) item.usage = (typeof item.name === "string"? item.name: item.name.join(" | ")) + (item.args? " " + (item.args.map(arg => typeof arg === "string"? `[${arg}]`: `${arg.required? "<": "["}${arg.name}${arg.required? ">": "]"}`).join(" ")) : "");
-
     let longestOption = item.isCommand && item.options? Math.max(...item.options.map(process_command_item)): 0;
-
     return Math.max(longestOption || 0, item.usage.length);
 }
 
@@ -304,7 +402,7 @@ if(process.argv.length < 3 || argv.h || argv.help || argv._[0] === "help" || arg
             }
         })))
     } else {
-        log(logo + box(`${generateHelp(ROOT_COMMANDS)}\x1b[93m•\x1b[0m = Supports JSON output\nSyntax: akeno command <required> [optional] --arguments "value"`));
+        log(logo + box(`${generateHelp(ROOT_COMMANDS)}\x1b[93m•\x1b[0m = Supports JSON output\nLegend: \x1b[90makeno command <required> [optional] "{object}" --arguments "value"\x1b[0m`));
     }
 
     process.exit()
@@ -377,6 +475,31 @@ Some examples:
 
         break;
 
+        case "module": {
+
+            switch(argv._[1]){
+                case "list": case "ls":
+                    client.request(["module.list"], (error, response) => {
+                        client.close()
+
+                        if(error){
+                            return log_error(`${signature} Could not list modules:`, error)
+                        }
+
+                        if(argv.json){
+                            return log(response)
+                        }
+                        
+                        return log(box(response.map(app => `\x1b[93m\x1b[1m${app.name}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.domains.length > 0? `\n\n\x1b[1mDomains:\x1b[0m\n${app.domains.join("\n")}`: "" }${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`).join("\n---\n")))
+                    })
+                break;
+
+                default:
+                    log_error(`${signature} Unknown modules command "${argv._[1]}"`)
+            }
+
+            break;
+        }
 
         case "list": case "ls":
             client.request(["web.list"], (error, response) => {
