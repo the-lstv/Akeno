@@ -4,13 +4,16 @@
 
     Last modified: 2025
     License: GPL-3.0
-    Version: 1.5.8
+    Version: 1.5.9-beta
     See: https://github.com/the-lstv/akeno
 */
 
 
 let
-    version = "1.5.8",
+    // Read more about units in the docs
+    Units = require("./core/unit"),
+
+    version = new Units.Version("1.5.9-beta"),
 
     since_startup = performance.now(),
 
@@ -25,9 +28,6 @@ let
     app,
     SSLApp,
     H3App,
-
-    // Read more about units in the docs
-    Units = require("./core/unit"),
 
     // Storage/cache managers
     KeyStorage = require("./core/kvdb"),
@@ -253,7 +253,7 @@ function initialize() {
     };
 
 
-    const web_handler = backend.addon("core/web").HandleRequest;
+    const web_handler = Units.Manager.module("akeno.web").HandleRequest;
 
     function resolve(res, req, flags, virtual = null) {
         if(!flags) flags = EMPTY_OBJECT;
@@ -466,8 +466,6 @@ function initialize() {
     });
 
     backend.resolve = resolve;
-
-    if(backend.config.block("server").get("preloadWeb", Boolean)) backend.addon("core/web");
 }
 
 const jwt_key = process.env.AKENO_KEY;
@@ -1000,6 +998,8 @@ backend.refreshConfig();
 
 Units.Manager.refreshAddons();
 
+Units.Manager.loadModule("./core/web")
+
 
 const server_enabled = backend.config.block("server").get("enable", Boolean);
 const ssl_enabled = backend.config.block("server").get("enableSSL", Boolean);
@@ -1014,16 +1014,12 @@ const isDev = backend.config.block("system").get("developmentMode", Boolean);
 
 backend.log("Starting Akeno v" + version + " in " + (isDev? "development": "production") + " mode.")
 
+// TODO: Improve hanling
 const handlers = {
     api: 2
 }
 
-process.exit(0); // TODO: Remove this line, it is only for testing purposes.
-// TODO: This should be moved to the addon itself
-if(fs.existsSync(PATH + "/addons/cdn")){
-    handlers.cdn = backend.addon("cdn").HandleRequest
-}
-
+// process.exit(0);
 
 for (const block of backend.config.blocks("route")) {
     for (const route of block.attributes) {
@@ -1066,15 +1062,10 @@ backend.exposeToDebugger("addons", AddonCache)
 backend.exposeToDebugger("api", API)
 
 process.on('uncaughtException', (error) => {
-    backend.fatal("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
+    backend.fatal("[uncaught error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
 })
 
 process.on('exit', () => {
-    const buffer = Buffer.alloc(4);
-
-    buffer.writeUInt32LE(total_hits, 0);
-    fs.writeFileSync(PATH + "./etc/hits", buffer);
-
     console.log(`[system] API is stopping.`);
 })
 

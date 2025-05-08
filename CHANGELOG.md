@@ -1,8 +1,15 @@
-## Upcomming in 1.6.0
-- Now using our own database system [LSDB](https://github.com/the-lstv/lsdb) instead of LMDB
-- Now using a customized fork of uWebSockets.js which implements Akeno features on the C++ side
-- Migrated a part of the router to the native server
-
+## New in 1.5.9-beta
+- **MAJOR** changes (preparing for a 2.0.0 release)
+- A full new versioning utility, for consistent versioning all across
+- Added pre-release and build metadata to versioning
+- Complete core redesign around a new modular Unit system
+- Folder structure cleanup
+- Deprecated all inconsistent or broken baked-in addons (web, api, CDN) and wrapped them as modules/addons
+- Deprecated the old logging system and added an improved one
+- Added an addon system and "package manager" to make extending and building with Akeno easy.
+- Added custom Unit types for consistency across the whole system
+- Deprecated HTTP traffic for websites and API - in production mode, HTTP will now redirect to HTTPS automatically unless specified
+- PM2 name lowercased (Akeno -> akeno)
 
 ## New in 1.5.8
 - Changes to the file structure

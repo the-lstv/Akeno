@@ -29,9 +29,6 @@ let
     { parse, configTools } = require("./parser"),
     Units = require("./unit"),
 
-    // Globals
-    server = new WebServer(),
-
     applications = new Map,
     applicationCache = [], // debug purposes
 
@@ -60,9 +57,186 @@ const contentSettings = {
     compress: true, // If null, set based on dev mode
 }
 
-class WebServer extends Units.Module {
+class WebApp extends Units.App {
+    constructor(path){
+        super();
+
+        this.path = path;
+        this.type = "akeno.web.WebApp";
+
+        this.reloadConfig();
+        if(!this.config) throw new Error("Invalid or missing config");
+
+        this.basename = nodePath.basename(path);
+        this.enabled = null;
+        this.ports = new Set;
+
+        /**
+         * @warning Do not use this set for routing - it is only a copy to allow for easy removal of domains.
+         */
+        this.domains = new Set;
+        this.modules = new Map;
+
+        applications.set(this.path, this);
+
+        // Only for quick retrieval of website information
+        applicationCache.push({
+            basename: this.basename,
+            path,
+
+            get enabled(){
+                return this.enabled
+            },
+
+            get ports(){
+                return [...this.ports]
+            }
+        })
+
+        this.reload();
+    }
+
+    reloadConfig(){
+        let configPath = files_try(this.path + "/app.conf", this.path + "/app.manifest");
+
+        if(!configPath){
+            server.warn("Web application (at " + this.path + ") failed to load - no config file found - skipped.");
+            return
+        }
+
+        this.config = configTools(parse(fs.readFileSync(configPath, "utf8"), {
+            strict: true,
+            asLookupTable: true
+        }))
+    }
+
+    reload(){
+        const is_enabled = backend.kvdb.apps.get(`${this.path}.enabled`, Boolean)
+        this.enabled = (is_enabled === null? true: is_enabled) || false;
+
+        const enabledDomains = this.config.block("server").get("domains") || [];
+
+        if(enabledDomains.length > 0 || this.domains.size > 0){
+            const domains = new Set([...enabledDomains, ...this.domains]);
+
+            for(let domain of domains){
+                if(!domain || typeof domain !== "string") {
+                    server.warn("Invalid domain name \"" + domain + "\" for web application \"" + this.basename + "\".");
+                    continue
+                }
+
+                if(!enabledDomains.includes(domain)){
+                    assignedDomains.delete(domain);
+                    this.domains.delete(domain);
+                    continue
+                }
+
+                assignedDomains.set(domain, this);
+                this.domains.add(domain);
+            }
+        }
+
+
+        const enabledPorts = this.config.block("server").get("port") || [];
+
+        if(enabledPorts.length > 0 || this.ports.size > 0){
+            const ports = new Set([...enabledPorts, ...this.ports]);
+
+            for (let port of ports) {
+                if(!port || typeof port !== "number" || port < 1 || port > 65535) {
+                    server.warn("Invalid port number \"" + port + "\" for web application \"" + this.basename + "\" - skipped.");
+                    continue
+                }
+
+                if(this.ports.has(port)){
+                    if(!enabledPorts.includes(port)){
+                        this.ports.delete(port);
+
+                        if(this.uws){
+                            uws.us_listen_socket_close(this.sockets.get(port));
+                            this.uws.close();
+                            this.uws = null;
+                        }
+
+                        server.log(`Web application "${this.basename}" is no longer listening on port ${port}`);
+                        continue
+                    }
+                    continue
+                }
+
+                let found = false;
+                for(const app of applications.values()){
+                    if(app.ports.has(port)){
+                        found = app;
+                        break
+                    }
+                }
+
+                if(found){
+                    server.warn("Port " + port + " is already in use by \"" + found.basename + "\" - skipped.");
+                    continue
+                }
+                
+                this.ports.add(port);
+
+                const flags = { app: this };
+
+                if(!this.uws) {
+                    this.uws = uws.App().any('/*', (res, req) => {
+                        backend.resolve(res, req, flags)
+                    })
+
+                    this.sockets = new Map;
+                }
+
+                this.uws.listen(port, (socket) => {
+                    if(socket) {
+                        this.sockets.set(port, socket)
+                        server.log(`Web application "${this.basename}" is listening on port ${port}`);
+                    } else {
+                        server.error(`Failed to start web application "${this.basename}" on port ${port}`);
+                    }
+                })
+            }
+        }
+
+        for(let api of this.config.blocks("api")){
+            backend.apiExtensions[api.attributes[0]] = this.path + "/" + api.attributes[1]
+        }
+
+        // Reload modules
+        for(let [name, module] of this.modules){
+            module.restart()
+        }
+
+        for(let api of this.config.blocks("module")){
+            // TODO: Proper module system
+            const name = api.attributes[0];
+
+            if(this.modules.has(name)) continue;
+
+            let module;
+            try {
+                module = new backend.Module(`${this.basename}/${name}`, { path: this.path + "/" + api.get("path", String), autoRestart: api.get("autoRestart", Boolean, false) });
+            } catch (error) {
+                server.error("Failed to load module " + name + " for web application " + this.basename + ": " + error.toString() + ". You can reload the app to retry.");
+                continue
+            }
+
+            this.modules.set(name, module)
+        }
+    }
+
+    restart(){
+        return this.reload();
+    }
+}
+
+const server = new class WebServer extends Units.Module {
     constructor(){
-        super("akeno.web");
+        super({ name: "Akeno WebServer", id: "akeno.web", version: "1.4.0-beta" });
+
+        this.registerType("WebApp", WebApp)
     }
 
     Initialize($){
@@ -102,7 +276,7 @@ class WebServer extends Units.Module {
             if(location.startsWith("./")) location = backend.path + location.slice(1);
 
             if(!fs.existsSync(location.replace("/*", ""))) {
-                this.log.warn("Web application (at " + location + ") does not exist - skipped.");
+                this.warn("Web application (at " + location + ") does not exist - skipped.");
                 continue
             }
 
@@ -119,7 +293,7 @@ class WebServer extends Units.Module {
             }
 
             if(!fs.statSync(location).isDirectory()) {
-                return this.log.warn("Web application (at " + location + ") is a file - skipped.")
+                return this.warn("Web application (at " + location + ") is a file - skipped.")
             }
 
             this.load(location)
@@ -135,10 +309,14 @@ class WebServer extends Units.Module {
         let app = applications.get(path);
 
         if(!app) {
-            app = new WebApp(path);
+            try {
+                app = new WebApp(path);
+            } catch (error) {
+                return false;
+            }
             if(!app) return false;
         } else {
-            this.log.verbose("Hot-reloading web application (at " + path + ")");
+            this.verbose("Hot-reloading web application (at " + path + ")");
             app.reload();
         }
 
@@ -291,7 +469,7 @@ class WebServer extends Units.Module {
                 return server.ServeCache(req, res, cache, app, url)
             }
 
-            server.log.verbose(`[${app.basename}] Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
+            server.verbose(`[${app.basename}] Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
 
             let content;
 
@@ -322,7 +500,7 @@ class WebServer extends Units.Module {
 
 
         } catch(error) {
-            server.log.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ")
+            server.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ")
             console.error(error)
 
             try {
@@ -355,7 +533,7 @@ class WebServer extends Units.Module {
                                     parserContext.data = { plain: true, dynamic: false, compress: true, app, url };
                                     res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, parserContext))
                                 } catch (error) {
-                                    this.log.warn("Failed to import: importing " + item, error)
+                                    this.warn("Failed to import: importing " + item, error)
                                 }
                             }
                             break;
@@ -384,15 +562,15 @@ class WebServer extends Units.Module {
                 break
 
             case "enable":
-                respond(null, this.enable(request[1]))
+                respond(null, this.enableApp(request[1]))
                 break
 
             case "disable":
-                respond(null, this.disable(request[1]))
+                respond(null, this.disableApp(request[1]))
                 break
 
             case "reload":
-                respond(null, this.reload(request[1]))
+                respond(null, this.reloadApp(request[1]))
                 break
 
             case "tempDomain":
@@ -421,7 +599,7 @@ class WebServer extends Units.Module {
         return applicationCache
     }
 
-    enable(app_path){
+    enableApp(app_path){
         if(!(app_path = this.util.getApp(app_path))) return false;
         
         for(let application of applications.values()) {
@@ -435,7 +613,7 @@ class WebServer extends Units.Module {
         return false
     }
 
-    disable(app_path){
+    disableApp(app_path){
         if(!(app_path = this.util.getApp(app_path))) return false;
     
         for(let application of applications.values()) {
@@ -461,7 +639,7 @@ class WebServer extends Units.Module {
         return list;
     }
 
-    reload(app_path = null){
+    reloadApp(app_path = null){
         if(app_path && !(app_path = this.util.getApp(app_path))) return false;
         return this.reload(app_path || null)
     }
@@ -483,180 +661,6 @@ class WebServer extends Units.Module {
         assignedDomains.set(random, applications.get(app_path));
 
         return random;
-    }
-}
-
-class WebApp extends Units.App {
-    constructor(path){
-        super();
-
-        this.path = path;
-
-        this.reloadConfig();
-        if(!this.config) throw new Error("Invalid or missing config");
-
-        this.basename = nodePath.basename(path);
-        this.enabled = null;
-        this.ports = new Set;
-
-        /**
-         * @warning Do not use this set for routing - it is only a copy to allow for easy removal of domains.
-         */
-        this.domains = new Set;
-        this.modules = new Map;
-
-        applications.set(this.path, this);
-
-        // Only for quick retrieval of website information
-        applicationCache.push({
-            basename: this.basename,
-            path,
-
-            get enabled(){
-                return this.enabled
-            },
-
-            get ports(){
-                return [...this.ports]
-            }
-        })
-
-        this.reload();
-    }
-
-    reloadConfig(){
-        let configPath = files_try(this.path + "/app.conf", this.path + "/app.manifest");
-
-        if(!configPath){
-            server.log.warn("Web application (at " + this.path + ") failed to load - no config file found - skipped.");
-            return
-        }
-
-        this.config = configTools(parse(fs.readFileSync(configPath, "utf8"), {
-            strict: true,
-            asLookupTable: true
-        }))
-    }
-
-    reload(){
-        const is_enabled = backend.kvdb.apps.get(`${this.path}.enabled`, Boolean)
-        this.enabled = (is_enabled === null? true: is_enabled) || false;
-
-        const enabledDomains = this.config.block("server").get("domains") || [];
-
-        if(enabledDomains.length > 0 || this.domains.size > 0){
-            const domains = new Set([...enabledDomains, ...this.domains]);
-
-            for(let domain of domains){
-                if(!domain || typeof domain !== "string") {
-                    server.log.warn("Invalid domain name \"" + domain + "\" for web application \"" + this.basename + "\".");
-                    continue
-                }
-
-                if(!enabledDomains.includes(domain)){
-                    assignedDomains.delete(domain);
-                    this.domains.delete(domain);
-                    continue
-                }
-
-                assignedDomains.set(domain, this);
-                this.domains.add(domain);
-            }
-        }
-
-
-        const enabledPorts = this.config.block("server").get("port") || [];
-
-        if(enabledPorts.length > 0 || this.ports.size > 0){
-            const ports = new Set([...enabledPorts, ...this.ports]);
-
-            for (let port of ports) {
-                if(!port || typeof port !== "number" || port < 1 || port > 65535) {
-                    server.log.warn("Invalid port number \"" + port + "\" for web application \"" + this.basename + "\" - skipped.");
-                    continue
-                }
-
-                if(this.ports.has(port)){
-                    if(!enabledPorts.includes(port)){
-                        this.ports.delete(port);
-
-                        if(this.uws){
-                            uws.us_listen_socket_close(this.sockets.get(port));
-                            this.uws.close();
-                            this.uws = null;
-                        }
-
-                        server.log(`Web application "${this.basename}" is no longer listening on port ${port}`);
-                        continue
-                    }
-                    continue
-                }
-
-                let found = false;
-                for(const app of applications.values()){
-                    if(app.ports.has(port)){
-                        found = app;
-                        break
-                    }
-                }
-
-                if(found){
-                    server.log.warn("Port " + port + " is already in use by \"" + found.basename + "\" - skipped.");
-                    continue
-                }
-                
-                this.ports.add(port);
-
-                const flags = { app: this };
-
-                if(!this.uws) {
-                    this.uws = uws.App().any('/*', (res, req) => {
-                        backend.resolve(res, req, flags)
-                    })
-
-                    this.sockets = new Map;
-                }
-
-                this.uws.listen(port, (socket) => {
-                    if(socket) {
-                        this.sockets.set(port, socket)
-                        server.log(`Web application "${this.basename}" is listening on port ${port}`);
-                    } else {
-                        server.log.error(`Failed to start web application "${this.basename}" on port ${port}`);
-                    }
-                })
-            }
-        }
-
-        for(let api of this.config.blocks("api")){
-            backend.apiExtensions[api.attributes[0]] = this.path + "/" + api.attributes[1]
-        }
-
-        // Reload modules
-        for(let [name, module] of this.modules){
-            module.restart()
-        }
-
-        for(let api of this.config.blocks("module")){
-            // TODO: Proper module system
-            const name = api.attributes[0];
-
-            if(this.modules.has(name)) continue;
-
-            let module;
-            try {
-                module = new backend.Module(`${this.basename}/${name}`, { path: this.path + "/" + api.get("path", String), autoRestart: api.get("autoRestart", Boolean, false) });
-            } catch (error) {
-                server.log.error("Failed to load module " + name + " for web application " + this.basename + ": " + error.toString() + ". You can reload the app to retry.");
-                continue
-            }
-
-            this.modules.set(name, module)
-        }
-    }
-
-    restart(){
-        return this.reload();
     }
 }
 
@@ -808,7 +812,7 @@ function initParser(header){
         switch(block.name) {
             case "use":
                 // if(parent !== "head") {
-                //     server.log.warn("Error in app " + this.data.app.path + ": @use can only be used in <head>.");
+                //     server.warn("Error in app " + this.data.app.path + ": @use can only be used in <head>.");
                 //     break
                 // }
 
@@ -904,7 +908,7 @@ function initParser(header){
                         default:
                             if(attrib.includes("/")){
                                 if(attrib.startsWith("http")){
-                                    server.log.warn("Error in app " + this.data.app.path + ": @use does not allow direct URL imports (\"" + attrib + "\") - please define a custom @source or use a different way to import your content.");
+                                    server.warn("Error in app " + this.data.app.path + ": @use does not allow direct URL imports (\"" + attrib + "\") - please define a custom @source or use a different way to import your content.");
                                     break;
                                 }
 
@@ -929,7 +933,7 @@ function initParser(header){
                                     }
                                 }
                             } else {
-                                server.log.warn("Error in app " + this.data.app.path + ": Unknown module \"" + attrib + "\"");
+                                server.warn("Error in app " + this.data.app.path + ": Unknown module \"" + attrib + "\"");
                             }
                     }
                 }
@@ -937,7 +941,7 @@ function initParser(header){
 
             case "page":
                 if(parent !== "head") {
-                    server.log.warn("Error in app " + this.data.app.path + ": @page can only be used in <head>.");
+                    server.warn("Error in app " + this.data.app.path + ": @page can only be used in <head>.");
                     break
                 }
 
@@ -996,7 +1000,7 @@ function initParser(header){
                     try {
                         this.import(this.data.app.path + "/" + item);
                     } catch (error) {
-                        server.log.warn("Failed to import: importing " + item, error)
+                        server.warn("Failed to import: importing " + item, error)
                     }
                 }
                 break;
@@ -1009,7 +1013,7 @@ function initParser(header){
                         let content = fs.readFileSync(this.data.app.path + "/" + item, "utf8");
                         this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
                     } catch (error) {
-                        server.log.warn("Failed to import (raw): importing " + item, error)
+                        server.warn("Failed to import (raw): importing " + item, error)
                     }
                 }
                 break;
@@ -1021,7 +1025,7 @@ function initParser(header){
                     try {
                         this.import(this.data.app.path + "/" + item);
                     } catch (error) {
-                        server.log.warn("Failed to import: importing " + item, error)
+                        server.warn("Failed to import: importing " + item, error)
                     }
                 }
                 break;
