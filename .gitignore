@@ -25,3 +25,5 @@ package-lock.json
 core/native/build
 core/native/node
 core/native/test*
+
+.env

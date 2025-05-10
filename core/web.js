@@ -65,7 +65,7 @@ class WebApp extends Units.App {
         this.type = "akeno.web.WebApp";
 
         this.reloadConfig();
-        if(!this.config) throw new Error("Invalid or missing config");
+        if(!this.config) throw "Invalid or missing config";
 
         this.basename = nodePath.basename(path);
         this.enabled = null;
@@ -100,8 +100,7 @@ class WebApp extends Units.App {
         let configPath = files_try(this.path + "/app.conf", this.path + "/app.manifest");
 
         if(!configPath){
-            server.warn("Web application (at " + this.path + ") failed to load - no config file found - skipped.");
-            return
+            return false;
         }
 
         this.config = configTools(parse(fs.readFileSync(configPath, "utf8"), {
@@ -111,10 +110,10 @@ class WebApp extends Units.App {
     }
 
     reload(){
-        const is_enabled = backend.kvdb.apps.get(`${this.path}.enabled`, Boolean)
+        const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean)
         this.enabled = (is_enabled === null? true: is_enabled) || false;
 
-        const enabledDomains = this.config.block("server").get("domains") || [];
+        const enabledDomains = this.config.getBlock("server").get("domains", Array, []);
 
         if(enabledDomains.length > 0 || this.domains.size > 0){
             const domains = new Set([...enabledDomains, ...this.domains]);
@@ -137,7 +136,7 @@ class WebApp extends Units.App {
         }
 
 
-        const enabledPorts = this.config.block("server").get("port") || [];
+        const enabledPorts = this.config.getBlock("server").get("port") || [];
 
         if(enabledPorts.length > 0 || this.ports.size > 0){
             const ports = new Set([...enabledPorts, ...this.ports]);
@@ -200,16 +199,17 @@ class WebApp extends Units.App {
             }
         }
 
-        for(let api of this.config.blocks("api")){
-            backend.apiExtensions[api.attributes[0]] = this.path + "/" + api.attributes[1]
-        }
+        // TODO: API extensions
+        // for(let api of this.config.getBlocks("api")){
+        //     backend.apiExtensions[api.attributes[0]] = this.path + "/" + api.attributes[1]
+        // }
 
         // Reload modules
         for(let [name, module] of this.modules){
             module.restart()
         }
 
-        for(let api of this.config.blocks("module")){
+        for(let api of this.config.getBlocks("module")){
             // TODO: Proper module system
             const name = api.attributes[0];
 
@@ -234,7 +234,7 @@ class WebApp extends Units.App {
 
 const server = new class WebServer extends Units.Module {
     constructor(){
-        super({ name: "Akeno WebServer", id: "akeno.web", version: "1.4.0-beta" });
+        super({ name: "web", id: "akeno.web", version: "1.4.0-beta" });
 
         this.registerType("WebApp", WebApp)
     }
@@ -247,9 +247,9 @@ const server = new class WebServer extends Units.Module {
 
         this.etc = {
             notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`),
-            default_disabled_message: Buffer.from(backend.config.block("web").get("disabledMessage", String) || "This website is temporarily disabled."),
+            default_disabled_message: Buffer.from(backend.config.getBlock("web").get("disabledMessage", String) || "This website is temporarily disabled."),
 
-            EXTRAGON_CDN: backend.config.block("web").get("extragon_cdn_url", String) || backend.isDev? `cdn.extragon.test`: `cdn.extragon.cloud`
+            EXTRAGON_CDN: backend.config.getBlock("web").get("extragon_cdn_url", String) || backend.isDev? `cdn.extragon.test`: `cdn.extragon.cloud`
         };
 
         if(contentSettings.compress === null) contentSettings.compress = !backend.isDev;
@@ -268,7 +268,7 @@ const server = new class WebServer extends Units.Module {
 
         const start = performance.now();
 
-        const webConfig = backend.config.block("web");
+        const webConfig = backend.config.getBlock("web");
         const locations = webConfig.get("locations") || [];
 
         // Looks for valid application locations
@@ -306,12 +306,16 @@ const server = new class WebServer extends Units.Module {
     load(path){
         // TODO: Hot reloading is almost functional, but needs config validation and re-parsing to be finished
 
+        path = nodePath.normalize(path);
+
         let app = applications.get(path);
 
+        
         if(!app) {
             try {
                 app = new WebApp(path);
             } catch (error) {
+                this.warn("Web application (at " + path + ") failed to load due to an error: ", error);
                 return false;
             }
             if(!app) return false;
@@ -345,19 +349,19 @@ const server = new class WebServer extends Units.Module {
         })
 
         // HTTPS Redirect
-        if(!req.secure && !backend.isDev && app.config.block("server").get("redirect_https", Boolean)){
+        if(backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))){
             res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
             return
         }
 
         // When the app is disabled
         if(!app.enabled){
-            backend.helper.send(req, res, app.config.block("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422")
+            backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422")
             return
         }
 
         if(app.config.data.has("browserSupport")){
-            let browserRequirements = app.config.block("browserSupport");
+            let browserRequirements = app.config.getBlock("browserSupport");
 
             if(!checkSupportedBrowser(req.getHeader('user-agent'), browserRequirements.properties)){
                 res.cork(() => {
@@ -372,7 +376,7 @@ const server = new class WebServer extends Units.Module {
 
 
         // Redirects (simple URL redirects)
-        if(app.config.data.has("redirect")) for(const handle of app.config.blocks("redirect")){
+        if(app.config.data.has("redirect")) for(const handle of app.config.getBlocks("redirect")){
             const target = handle.get("to", String);
 
             if(target && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
@@ -383,7 +387,7 @@ const server = new class WebServer extends Units.Module {
 
 
         // Redirect handles (when an URL points to a whole another point in the server)
-        if(app.config.data.has("handle")) for(const handle of app.config.blocks("handle")){
+        if(app.config.data.has("handle")) for(const handle of app.config.getBlocks("handle")){
             const target = handle.get("path", String);
             const domain = handle.get("as", String);
 
@@ -398,7 +402,7 @@ const server = new class WebServer extends Units.Module {
 
 
         // Redirect routes
-        if(app.config.data.has("route")) for(const route of app.config.blocks("route")){
+        if(app.config.data.has("route")) for(const route of app.config.getBlocks("route")){
             if((route.picomatchCache || (route.picomatchCache = picomatch(route.attributes)))(url)){
                 const negate = route.get("not");
 
@@ -416,7 +420,7 @@ const server = new class WebServer extends Units.Module {
             let file = files_try(app.path + url + ".html", app.path + url + "/index.html", app.path + url);
 
             if(!file){
-                file = app.config.block("errors").get("code", String) || app.config.block("errors").get("default", String)
+                file = app.config.getBlock("errors").get("code", String) || app.config.getBlock("errors").get("default", String)
 
                 if(!file){
                     return backend.helper.send(req, res, url + " not found", null, "404 Not Found");

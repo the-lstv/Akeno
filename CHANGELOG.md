@@ -1,4 +1,4 @@
-## New in 1.5.9-beta
+## New in 1.6.0-beta
 - **MAJOR** changes (preparing for a 2.0.0 release)
 - A full new versioning utility, for consistent versioning all across
 - Added pre-release and build metadata to versioning
@@ -8,8 +8,9 @@
 - Deprecated the old logging system and added an improved one
 - Added an addon system and "package manager" to make extending and building with Akeno easy.
 - Added custom Unit types for consistency across the whole system
-- Deprecated HTTP traffic for websites and API - in production mode, HTTP will now redirect to HTTPS automatically unless specified
+- Deprecated HTTP traffic for websites and API - in production mode, HTTP will now redirect to HTTPS automatically unless explicitly disabled per application
 - PM2 name lowercased (Akeno -> akeno)
+- Chaged config strucure
 
 ## New in 1.5.8
 - Changes to the file structure

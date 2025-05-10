@@ -1,3 +1,14 @@
+/*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
+
+    Last modified: 2025
+    License: GPL-3.0
+    
+    Units are the core part of Akeno, making it modular, extensible, and easy to debug.
+*/
+
+// Backend reference
 let backend;
 
 const spawn = require('child_process').spawn;
@@ -8,6 +19,7 @@ const external = new Map;
 const modules = new Map;
 const addons = new Map;
 
+// Addons and modules can define custom types to be used across other modules.
 const types = new Map;
 
 
@@ -270,6 +282,42 @@ class Version {
     }
 }
 
+class IndexedEnum {
+    constructor(values){
+        if(!Array.isArray(values)){
+            throw new Error("Enum values must be an array");
+        }
+
+        for(let i = 0; i < values.length; i++){
+            const value = values[i].toString().toUpperCase();
+            this[value] = i;
+            this[i] = value;
+        }
+
+        this.values = values;
+        this.length = values.length;
+    }
+
+    has(value){
+        if(typeof value === "number"){
+            return this[value] !== undefined;
+        } else if(typeof value === "string"){
+            return this[value.toUpperCase()] !== undefined;
+        }
+        return false;
+    }
+
+    get(value){
+        if(typeof value === "number"){
+            return this[value];
+        } else if(typeof value === "string"){
+            return this[value.toUpperCase()];
+        }
+
+        return null;
+    }
+}
+
 
 /**
  * Manager
@@ -277,15 +325,27 @@ class Version {
 */
 
 const Manager = {
-    init(backendInstance){
+    /**
+     * Initializes the core backend instance.
+     * @param {*} backendInstance
+     * @returns {*} The initialized backend instance.
+     */
+    initCore(backendInstance){
+        if(backend) {
+            throw new Error("Core already initialized, can't do that twice.");
+        }
+
         Manager.toUnit(backendInstance);
-        backendInstance.name = "api";
+        backendInstance.name = "core";
+        backendInstance.id = "akeno";
 
         backend = backendInstance;
+        module.exports.backend = backend;
+        return backendInstance;
     },
 
     refreshAddons(){
-        const paths = [backend.PATH + "./addons", ...(backend.config.block("server").get("modules") || [])];
+        const paths = [backend.PATH + "./addons", ...(backend.config.getBlock("server").get("modules") || [])];
         
         for (const path of paths) {
             backend.verbose("Scanning for addons: " + path);
@@ -340,6 +400,7 @@ const Manager = {
 
     toUnit(object, base = Unit) {
         Object.setPrototypeOf(object, (base || Unit).prototype);
+        return object;
     }
 }
 
@@ -349,15 +410,16 @@ const Manager = {
 
 class Unit {
     constructor(options) {
-        if(options) this.initialize(options);
+        if(options) this._initialize(options);
     }
 
-    initialize(options){
+    _initialize(options){
         if(typeof options === "string"){
             return this.id = options;
         }
 
         if(options.name) this.name = options.name;
+        if(options.type) this.type = options.type;
         if(options.id) this.id = options.id;
 
         if(options.version){
@@ -429,10 +491,7 @@ class Module extends Unit {
  * @description Addon is an external module/plugin that is adding new features
  */
 
-class Addon extends Unit {
-    constructor(name, options = {}) {
-    }
-}
+class Addon extends Unit {}
 
 
 /**
@@ -440,6 +499,75 @@ class Addon extends Unit {
  */
 
 class App extends Unit {}
+
+
+/**
+ * @description Protocol is describing a communication protocol like HTTP, WebSocket, etc.
+ */
+
+class Protocol extends Unit {
+    constructor(options = {}){
+        super(options);
+
+        if(options.protocol) this.protocol = options.protocol;
+
+        if(!options.name){
+            throw new Error("Protocol name is required");
+        }
+    }
+
+    get enabled(){
+        return !!this._enabled;
+    }
+
+    set enabled(value){
+        value = !!value;
+        if(!!this._enabled === value) return;
+
+        if(value){
+            this.enable();
+        } else {
+            this.disable();
+        }
+
+        this._enabled = value;
+    }
+}
+
+class HTTPProtocol extends Protocol {
+    constructor(options = {}){
+        super(options);
+
+        if(!this.requestFlags) this.requestFlags = {};
+    }
+
+    enable(){
+        if(this.enabled) return;
+
+        if(!this._initialized){
+            this._initialized = true;
+            this.init();
+        }
+
+        this.server.listen(this.port, (listenSocket) => {
+            if(listenSocket) {
+                this.log(`${this.name} server is listening on port ${this.port}`);
+                this.server.socket = listenSocket;
+            } else {
+                this.error(`Failed to start ${this.name} server on port ${this.port}`);
+            }
+        })
+    }
+
+    disable(){
+        if(!this.enabled) return;
+
+        this.log(`${this.name} server is shutting down...`);
+
+        this.server.close();
+        this.server.socket = null;
+    }
+}
 
 
 
@@ -476,30 +604,30 @@ class External extends Unit {
             stdio: ['pipe', 'pipe', 'pipe', 'ipc']
         });
 
-        const signature = `\x1b[95m[module]\x1b[0m [${this.name}]`;
+        const signature = `\x1b[95m[module]\x1b[0m`;
 
         this.process.stdout.on('data', (data) => {
-            console.log(`${signature} ${data}`);
+            this.log(`${signature} ${data}`);
         });
 
         this.process.stderr.on('data', (data) => {
-            console.error(`${signature} ${data}`);
+            this.error(`${signature} ${data}`);
         });
 
         this.process.on('error', (error) => {
-            console.error(`${signature} Failed to start module: ${error.message}`);
+            this.error(`${signature} Failed to start module: ${error.message}`);
         });
 
         this.process.on('exit', (code, signal) => {
             if (code !== null) {
-                console.log(`${signature} Process exited with code ${code}`);
+                this.log(`${signature} Process exited with code ${code}`);
 
                 if(this.optionsautoRestart){
-                    console.log(`${signature} Restarting module...`);
+                    this.log(`${signature} Restarting module...`);
                     this.restart();
                 }
             } else {
-                console.log(`${signature} Process was killed with signal ${signal}`);
+                this.log(`${signature} Process was killed with signal ${signal}`);
             }
         });
 
@@ -515,4 +643,4 @@ class External extends Unit {
     }
 }
 
-module.exports = { Version, Manager, External, Unit, App, Module, Addon };
+module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, backend };
