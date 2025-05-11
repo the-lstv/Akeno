@@ -305,8 +305,10 @@ class dbi {
      */
 
     has(key){
-        if(!lmdb || (this.memoryCache && this.cache.has(key))){
-            return true;
+        const hasCached = this.memoryCache && this.cache.has(key);
+
+        if(!lmdb || hasCached){
+            return hasCached;
         }
 
         const txn = this.env.beginTxn({ readOnly: true });

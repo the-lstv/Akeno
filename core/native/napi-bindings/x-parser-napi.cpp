@@ -20,14 +20,6 @@ static time_t getFileLastModifiedTime(const std::string& filePath) {
     return 0;
 }
 
-struct CacheEntry {
-    time_t lastModifiedTime;
-    Napi::Value parsedData;
-    std::shared_ptr<std::string> storage;
-};
-
-std::unordered_map<XXH64_hash_t, CacheEntry> cache;
-
 
 
 
@@ -38,21 +30,6 @@ std::unordered_map<XXH64_hash_t, CacheEntry> cache;
 */
 
 
-
-
-
-std::pair<XXH64_hash_t, CacheEntry*> getCached(std::string& filePath) {
-    time_t currentTime = getFileLastModifiedTime(filePath);
-    XXH64_hash_t hash = XXH3_64bits(filePath.c_str(), filePath.size());
-
-    auto it = cache.find(hash);
-
-    if (it != cache.end() && it->second.lastModifiedTime == currentTime) {
-        return std::make_pair(hash, it->second);
-    }
-
-    return std::make_pair(hash, nullptr);
-}
 
 
 
@@ -332,11 +309,6 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
 
     std::string filePath = info[0].As<Napi::String>().Utf8Value();
 
-    auto cache_result = getCached(filePath);
-    if (cache_result.second != nullptr) {
-        return cache_result.second->parsedData;
-    }
-
     std::ifstream file(filePath, std::ios::in | std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         Napi::Error::New(info.Env(), "Unable to open file").ThrowAsJavaScriptException();
@@ -354,17 +326,27 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
     Napi::Object ctxObj = info[1].As<Napi::Object>();
     ParserContext* run = Napi::ObjectWrap<ParserContext>::Unwrap(ctxObj);
 
-    std::string result;
-    run->result = &result;
+    auto storage = std::make_shared<std::string>();
 
-    ctx.write(std::string_view(buffer.data(), buffer.size()), &result, &ctxObj);
-    ctx.end(&result);
+    // std::string result;
+    run->result = storage.get();
 
-    auto storage = std::make_shared<std::string>(std::move(result));
+    ctx.write(std::string_view(buffer.data(), buffer.size()), storage.get(), &ctxObj);
+    ctx.end(storage.get());
 
-    Napi::Value data = Napi::Buffer<char>::New(info.Env(), const_cast<char*>(storage->data()), storage->size());
+    auto* storagePtr = new std::shared_ptr<std::string>(std::move(storage));
 
-    cache[cache_result.first] = { currentTime, data, storage };
+    Napi::Value data = Napi::Buffer<char>::New(
+        info.Env(),
+        const_cast<char*>((*storagePtr)->data()),
+        (*storagePtr)->size(),
+        [](Napi::Env env, char* data, void* hint) {
+            auto* sp = static_cast<std::shared_ptr<std::string>*>(hint);
+            delete sp; // Decrease ref count and delete holder
+        },
+        storagePtr
+    );
+
     return data;
 }
 

@@ -1,3 +1,11 @@
+## TO-DO
+- Add a fast C++ side content cache
+- Implement a proper database system
+- Complete package manager for addons/modules
+- Rework many parts, including the CLI, dynamic content, and the router
+- Write a proper documentation
+- Add a proper installation script
+
 ## New in 1.6.0-beta
 - **MAJOR** changes (preparing for a 2.0.0 release)
 - A full new versioning utility, for consistent versioning all across
@@ -11,6 +19,7 @@
 - Deprecated HTTP traffic for websites and API - in production mode, HTTP will now redirect to HTTPS automatically unless explicitly disabled per application
 - PM2 name lowercased (Akeno -> akeno)
 - Chaged config strucure
+- Added support for auto compression via Brotli or Gzip
 
 ## New in 1.5.8
 - Changes to the file structure

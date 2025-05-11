@@ -52,11 +52,6 @@ let
 ;
 
 
-// Note: Some of the following options cannot be changed at runtime and require a restart.
-const contentSettings = {
-    compress: true, // If null, set based on dev mode
-}
-
 class WebApp extends Units.App {
     constructor(path){
         super();
@@ -68,6 +63,7 @@ class WebApp extends Units.App {
         if(!this.config) throw "Invalid or missing config";
 
         this.basename = nodePath.basename(path);
+        this.name = this.config.getBlock("app").get("name", String, this.basename);
         this.enabled = null;
         this.ports = new Set;
 
@@ -249,10 +245,8 @@ const server = new class WebServer extends Units.Module {
             notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`),
             default_disabled_message: Buffer.from(backend.config.getBlock("web").get("disabledMessage", String) || "This website is temporarily disabled."),
 
-            EXTRAGON_CDN: backend.config.getBlock("web").get("extragon_cdn_url", String) || backend.isDev? `cdn.extragon.test`: `cdn.extragon.cloud`
+            EXTRAGON_CDN: backend.config.getBlock("web").get("extragon_cdn_url", String) || backend.mode === backend.modes.DEVELOPMENT? `http://cdn.extragon.test`: `https://cdn.extragon.cloud`
         };
-
-        if(contentSettings.compress === null) contentSettings.compress = !backend.isDev;
 
         initParser(header);
 
@@ -433,17 +427,17 @@ const server = new class WebServer extends Units.Module {
                 return backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
             }
 
-
             // TODO: Once uWS implements low-level cache, add support for it OR compile a custom build with a more dynamic C++ router
 
+
+            const cacheKey = backend.helper.getUsedCompression(req);
+
             // Check if the file has not been changed since
-            const cache = requestCachedFile(file);
+            const cache = requestCachedFile(file, cacheKey);
 
             /**
              * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit.
             */
-
-            // const cache = WebNative.requestCache(file, res);
 
             // In case that we do not have the headers yet, well have to wait for them.
             if(!cache.refresh && cache.headers) {
@@ -473,7 +467,7 @@ const server = new class WebServer extends Units.Module {
                 return server.ServeCache(req, res, cache, app, url)
             }
 
-            server.verbose(`[${app.basename}] Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
+            app.verbose(`Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
 
             let content;
 
@@ -481,12 +475,12 @@ const server = new class WebServer extends Units.Module {
                 case "html":
                     parserContext.data = { url, app, secure: req.secure };
                     content = parser.fromFile(file, parserContext)
-                break;
+                    // content = fs.readFileSync(file);
+                    break;
 
                 case "js": case "css":
                     content = fs.readFileSync(file, "utf8");
-                    content = content && (backend.compression.code(content, extension === "css") || content)
-                break;
+                    break;
 
                 default:
                     content = fs.readFileSync(file);
@@ -494,21 +488,35 @@ const server = new class WebServer extends Units.Module {
 
             if(content) {
                 if(Array.isArray(content)){
-                    // Dynamic content!
-                    server.ServeDynamicContent(req, res, content, headers, app, url)
-                } else backend.helper.send(req, res, content, headers);
+                    // TODO: Rework dynamic content handling
+                    // Dynamic content
+                    // server.ServeDynamicContent(req, res, content, headers, app, url)
+                    return res.end();
+                } else {
+                    let compressionAlgo;
 
-                if(content.length <= max_cache_size) updateCache(file, content, headers);
+                    try {
+                        if(backend.compression.enabled){
+                            [compressionAlgo, content] = backend.helper.sendCompressed(req, res, content, mimeType, headers);
+                        } else {
+                            backend.helper.send(req, res, content, headers);
+                        }
+                    } catch (error) {
+                        app.error("Couldn't perform compression, requesting \"" + req.path + "\": ", error);
+                        backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
+                        return
+                    }
+
+                    if(content.length <= max_cache_size) updateCache(file, compressionAlgo, content, headers);
+                }
+
             } else res.end();
 
-
-
         } catch(error) {
-            server.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ")
-            console.error(error)
+            app.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ", error);
 
             try {
-                backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500)
+                backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
             } catch {}
         }
     }
@@ -678,15 +686,13 @@ function files_try(...files){
     }
 }
 
-function requestCachedFile(file){
+function requestCachedFile(file, cacheKey){
     // file = nodePath.normalize(file);
 
-    // Should never happen since this is checked before requesting cache
-    // if(!fs.existsSync(file)){
-    //     return 0
-    // }
+    const key = file + (cacheKey || "");
 
-    let cachedFile = cache.get(file), mtime = fs.statSync(file).mtimeMs;
+    let cachedFile = cache.get(key);
+    let mtime = fs.statSync(file).mtimeMs;
 
     if(cachedFile
         && (
@@ -700,7 +706,7 @@ function requestCachedFile(file){
 
     if(!cachedFile) {
         cachedFile = {}
-        cache.set(file, cachedFile)
+        cache.set(key, cachedFile)
     }
 
     cachedFile.lastModifyTime = mtime;
@@ -710,12 +716,14 @@ function requestCachedFile(file){
     return cachedFile
 }
 
-function updateCache(file, content, headers){
-    let cached = cache.get(file);
+function updateCache(file, cacheKey, content, headers){
+    if(typeof cacheKey !== "string") cacheKey = "";
+
+    let cached = cache.get(file + cacheKey);
 
     if(!cached) {
-        requestCachedFile(file)
-        cached = cache.get(file);
+        // Update the cache
+        cached = requestCachedFile(file, cacheKey);
     }
 
     cached.content = content;
@@ -786,7 +794,7 @@ function initParser(header){
     parser = new WebNative.parser({
         header,
         buffer: true,
-        compact: contentSettings.compress,
+        compact: backend.compression.enabled,
 
         onText(text, parent, context) {
             // Inline script/style compression
@@ -796,7 +804,7 @@ function initParser(header){
                     return text ?? (context.compress? backend.compression.code(text) : text);
 
                 case "style":
-                    return text ?? (context.compress? backend.compression.code(text, true) : text);
+                    return text ?? (context.compress? backend.compression.code(text, backend.compression.format.CSS) : text);
             }
 
             // Parse with Atrium, text gets sent back to C++, blocks get handled via onBlock
@@ -868,7 +876,7 @@ function initParser(header){
                             components_string = (is_merged? components.filter(value => !ls_components.js.includes(value)): components).join();
 
                             if(!(components_string.length === 0 && this.data.using_ls_css)) {
-                                this.write(`<link rel=stylesheet href="https://${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_css? "bundle": "ls"}.${!backend.isDev && this.data.compress? "min." : ""}css">`);
+                                this.write(`<link rel=stylesheet href="${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_css? "bundle": "ls"}.${this.data.compress? "min." : ""}css">`);
                                 this.data.using_ls_css = true;
                             }
                         }
@@ -877,7 +885,7 @@ function initParser(header){
                             components_string = (is_merged? components.filter(value => !ls_components.css.includes(value)): components).join();
 
                             if(!(components_string.length === 0 && this.data.using_ls_js)) {
-                                this.write(`<script src="https://${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_js? "bundle": "ls"}.${!backend.isDev && this.data.compress? "min." : ""}js"></script>`);
+                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string? components_string + "/": ""}${this.data.using_ls_js? "bundle": "ls"}.${this.data.compress? "min." : ""}js"></script>`);
                                 this.data.using_ls_js = true;
                             }
                         }
@@ -937,7 +945,7 @@ function initParser(header){
                                     }
                                 }
                             } else {
-                                server.warn("Error in app " + this.data.app.path + ": Unknown module \"" + attrib + "\"");
+                                this.data.app.warn("Error: Unknown module \"" + attrib + "\"");
                             }
                     }
                 }
@@ -945,7 +953,7 @@ function initParser(header){
 
             case "page":
                 if(parent !== "head") {
-                    server.warn("Error in app " + this.data.app.path + ": @page can only be used in <head>.");
+                    this.data.app.warn("Error: @page can only be used in <head>.");
                     break
                 }
 
@@ -1004,7 +1012,7 @@ function initParser(header){
                     try {
                         this.import(this.data.app.path + "/" + item);
                     } catch (error) {
-                        server.warn("Failed to import: importing " + item, error)
+                        this.data.app.warn("Failed to import: importing " + item, error)
                     }
                 }
                 break;
@@ -1017,7 +1025,7 @@ function initParser(header){
                         let content = fs.readFileSync(this.data.app.path + "/" + item, "utf8");
                         this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
                     } catch (error) {
-                        server.warn("Failed to import (raw): importing " + item, error)
+                        this.data.app.warn("Failed to import (raw): importing " + item, error)
                     }
                 }
                 break;
@@ -1029,7 +1037,7 @@ function initParser(header){
                     try {
                         this.import(this.data.app.path + "/" + item);
                     } catch (error) {
-                        server.warn("Failed to import: importing " + item, error)
+                        this.data.app.warn("Failed to import: importing " + item, error)
                     }
                 }
                 break;

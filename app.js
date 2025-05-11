@@ -33,7 +33,7 @@ const
     jwt = require('jsonwebtoken'),                        // Web tokens
 
     // Compression
-    { createGzip, createGunzip } = require("node:zlib"),  // Gzip compression
+    zlib = require("node:zlib"),                          // Gzip compression
     CleanCSS = new (require('clean-css')),                // CSS minifier
     UglifyJS = require("uglify-js"),                      // JS minifier
 
@@ -237,6 +237,9 @@ const backend = Units.Manager.initCore({
 
         backend.protocols.h3.port = protocols.getBlock("h3").get("port", Number, 443);
         backend.protocols.h3.enabled = protocols.getBlock("h3").get("enabled", Boolean, false);
+
+        // TODO: Add something like "in production only".
+        backend.compression.enabled = backend.config.getBlock("web").get("compress", Boolean, true);
     },
 
     exposeToDebugger(key, item){
@@ -283,7 +286,9 @@ const backend = Units.Manager.initCore({
 
     constants: {
         EMPTY_OBJECT, EMPTY_ARRAY, EMPTY_BUFFER, SINCE_STARTUP,
-        IS_NODE_INSPECTOR_ENABLED
+        IS_NODE_INSPECTOR_ENABLED,
+
+        MIN_COMPRESSION_SIZE: 1024,
     },
 
     mode: 0,
@@ -321,7 +326,7 @@ const backend = Units.Manager.initCore({
                                 respond(null, {
                                     backend_path: PATH,
                                     version,
-                                    isDev
+                                    mode: backend.modes.get(backend.mode),
                                 })
                                 break
 
@@ -331,8 +336,8 @@ const backend = Units.Manager.initCore({
                                     cpu: process.cpuUsage(),
                                     uptime: process.uptime(),
                                     backend_path: PATH,
+                                    mode: backend.modes.get(backend.mode),
                                     version,
-                                    isDev,
                                     modules: {
                                         count: Units.Manager.count,
                                         sample: Units.Manager.list(),
@@ -482,10 +487,120 @@ const backend = Units.Manager.initCore({
         }
     },
 
+    compression: {
+
+        // If to enable compression, overriden by the config - actual code may not, but should respect this.
+        enabled: true,
+
+        format: new Units.IndexedEnum([
+            "GZIP",
+            "DEFLATE",
+            "BROTLI",
+            "JS",
+            "CSS",
+            "JSON"
+        ]),
+
+        compress(buffer, format = 0){
+            if(!(buffer instanceof Buffer)) {
+                buffer = Buffer.from(buffer);
+            }
+
+            if(!buffer || !buffer.length) return buffer;
+
+            if(typeof format === "string") {
+                format = backend.compression.format[format.toUpperCase()];
+            }
+
+            if(typeof format !== "number") {
+                throw new Error(`Invalid compression format: ${format}`);
+            }
+
+            // const hash = xxh32(buffer);
+
+            switch (format) {
+                case backend.compression.format.GZIP:
+                    return zlib.gzipSync(buffer, { level: 6 });
+
+                case backend.compression.format.DEFLATE:
+                    return zlib.deflateSync(buffer, { level: 6 });
+
+                case backend.compression.format.BROTLI:
+                    return zlib.brotliCompressSync(buffer, {
+                        params: {
+                            [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
+                            [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT
+                        }
+                    });
+
+                default:
+                    throw new Error(`Unknown compression format: ${format}`);
+            }
+        },
+
+        // Code compression with both disk and memory cache.
+        code(data, format){
+            // Sadly no Buffer support yet :(
+            if(typeof data !== "string") {
+                throw new TypeError("A string must be provided for code compression.");
+            }
+
+            if(!data || !data.length) return Buffer.from(data);
+
+            if(typeof format !== "number") {
+                throw new Error(`Invalid compression format: ${format}`);
+            }
+
+            // if (backend.mode === backend.modes.DEVELOPMENT) {
+            //     return Buffer.from(data);
+            // }
+
+            const hash = xxh32(data);
+
+            let compressed;
+
+            if(compressed = db.compressionCache.getCache(hash)) return compressed;
+
+
+            // We have no disk nor memory cache, compress on the fly and store.
+            if(!db.compressionCache.has(hash)){
+                switch(format){
+                    case backend.compression.format.JS:
+                        compressed = UglifyJS.minify(data).code;
+                        break;
+
+                    case backend.compression.format.CSS:
+                        compressed = CleanCSS.minify(data).styles;
+                        break;
+
+                    case backend.compression.format.JSON:
+                        compressed = JSON.stringify(JSON.parse(data));
+                        break;
+                }
+
+                // If compression failed, return the original code
+                if(!compressed) return Buffer.from(data);
+
+                compressed = Buffer.from(compressed);
+
+                db.compressionCache.commitSet(hash, compressed)
+                return compressed;
+            }
+            
+            else {
+                // Read from memory/disk cache
+                return db.compressionCache.get(hash, Buffer)
+            }
+        }
+
+    },
+
     trustedOrigins: new Set,
 
     resolve
 })
+
+
 
 backend.helper = require("./core/helpers");
 

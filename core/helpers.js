@@ -1,6 +1,31 @@
+/**
+ * Helper utilities for the Akeno backend server.
+ * @module helpers
+ */
+
 const { backend } = require("./unit");
 
+/**
+ * List of MIME types that should not be compressed.
+ * @type {string[]}
+ */
+const doNotCompress = [
+    'image/',
+    'audio/',
+    'video/',
+    'application/zip',
+    'application/octet-stream',
+    'application/pdf'
+];
+
 module.exports = {
+    /**
+     * Writes headers to the response object.
+     * @param {object} req - The request object.
+     * @param {object} res - The response object.
+     * @param {object} headers - Key-value pairs of headers to write.
+     * @returns {object} The backend helper object.
+     */
     writeHeaders(req, res, headers){
         if(headers) {
             res.cork(() => {
@@ -14,14 +39,13 @@ module.exports = {
         return backend.helper
     },
 
-    // TODO: Update
-    types: {
-        json: "application/json; charset=utf-8",
-        js: "text/javascript; charset=utf-8",
-        css: "text/css; charset=utf-8",
-        html: "text/html; charset=utf-8",
-    },
-
+    /**
+     * Writes CORS headers to the response.
+     * @param {object} req - The request object.
+     * @param {object} res - The response object.
+     * @param {boolean} [credentials=false] - Whether to allow credentials.
+     * @returns {object} The backend helper object.
+     */
     corsHeaders(req, res, credentials = false) {
         if(backend.trustedOrigins.has(req.origin)){
             credentials = true
@@ -51,7 +75,15 @@ module.exports = {
     },
 
 
-    // Use this if: 1) You are lazy
+    /**
+     * Sends a response with optional headers and status.
+     * Automatically stringifies objects/arrays as JSON.
+     * @param {object} req - The request object.
+     * @param {object} res - The response object.
+     * @param {*} data - The data to send.
+     * @param {object} [headers={}] - Optional headers.
+     * @param {string} [status] - Optional HTTP status.
+     */
     send(req, res, data, headers = {}, status){
         if(req.abort) return;            
 
@@ -73,12 +105,104 @@ module.exports = {
         });
     },
 
+
+    getUsedCompression(req){
+        if(!backend.compression.enabled) return null;
+
+        const enc = req.getHeader("accept-encoding");
+
+        if(!enc) {
+            return null;
+        }
+
+        if(enc.includes("br")) {
+            return backend.compression.format.BROTLI;
+        } else if(enc.includes("gzip")) {
+            return backend.compression.format.GZIP;
+        } else if(enc.includes("deflate")) {
+            return backend.compression.format.DEFLATE;
+        }
+
+        return null;
+    },
+
+
+    /**
+     * Sends a compressed response if possible.
+     * Accepts a Buffer. If you provide a string, code compression will be peformed for supported types, othwerwise throws an error.
+     * @param {object} req - The request object.
+     * @param {object} res - The response object.
+     * @param {Buffer|string} buffer - The data buffer to send.
+     * @param {string} mimeType - The MIME type of the data.
+     * @param {object} [headers={}] - Optional headers.
+     * @param {string} [status] - Optional HTTP status.
+     * @throws {Error} If buffer is not a Buffer instance.
+     * @returns {Array} A tuple containing a cache key and the result buffer.
+     */
+    sendCompressed(req, res, buffer, mimeType, headers = {}, status){
+        headers["content-type"] = mimeType;
+
+        // Perform code compression
+        if(typeof buffer === "string") switch(mimeType){
+            case "text/javascript": case "application/javascript":
+                buffer = backend.compression.code(buffer, backend.compression.format.JS);
+                break;
+            
+            case "text/css":
+                buffer = backend.compression.code(buffer, backend.compression.format.CSS);
+                break;
+
+            case "application/json": case "text/json":
+                buffer = backend.compression.code(buffer, backend.compression.format.JSON);
+                break;
+
+            default:
+                throw new Error("Unsupported MIME type for code compression: " + mimeType + ". If you didn't mean to use code compression, provide a Buffer instead.");
+        }
+
+        // Check if the buffer is a Buffer instance
+        if(!(buffer instanceof Buffer)) {
+            throw new Error("sendCompressed must be called with a Buffer, received: " + Object.prototype.toString.call(buffer));
+        }
+
+        const algorithm = backend.helper.getUsedCompression(req, res, mimeType);
+
+        if(typeof algorithm !== "number" || buffer.length < backend.constants.MIN_COMPRESSION_SIZE || doNotCompress.some(type => mimeType.startsWith(type))) {
+            backend.helper.send(req, res, buffer, headers, status);
+            return [null, buffer];
+        }
+
+        buffer = backend.compression.compress(buffer, algorithm);
+        headers["content-encoding"] = {
+            [backend.compression.format.BROTLI]: "br",
+            [backend.compression.format.GZIP]: "gzip",
+            [backend.compression.format.DEFLATE]: "deflate"
+        }[algorithm];
+
+        backend.helper.send(req, res, buffer, headers, status);
+        return [algorithm, buffer];
+    },
+
+
+    /**
+     * Returns the next path segment from the request.
+     * @param {object} req - The request object.
+     * @returns {string} The next path segment or empty string.
+     */
     next(req){
         if(!req._segmentsIndex) req._segmentsIndex = 0; else req._segmentsIndex ++;
         return req.pathSegments[req._segmentsIndex] || ""; // Returning null is more correct
     },
 
-    // This helper should likely be avoided.
+
+    /**
+     * Sends an error response.
+     * @param {object} req - The request object.
+     * @param {object} res - The response object.
+     * @param {string|number} error - The error message or code.
+     * @param {number} [code] - Optional error code.
+     * @param {string} [status] - Optional HTTP status.
+     */
     error(req, res, error, code, status){
         if(req.abort) return;
 
@@ -95,6 +219,15 @@ module.exports = {
         })
     },
 
+
+    /**
+     * Streams data from a readable stream to the response.
+     * Handles backpressure and client aborts.
+     * @param {object} req - The request object.
+     * @param {object} res - The response object.
+     * @param {ReadableStream} stream - The stream to pipe.
+     * @param {number} totalSize - The total size of the stream.
+     */
     stream(req, res, stream, totalSize){
         stream.on('data', (chunk) => {
             let buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength), lastOffset = res.getWriteOffset();
@@ -137,6 +270,11 @@ module.exports = {
         });
     },
 
+
+    /**
+     * Parses the request body, optionally as a stream.
+     * @class
+     */
     bodyParser: class {
         constructor(req, res, callback, stream = false){
             this.req = req;
