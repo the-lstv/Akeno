@@ -58,7 +58,7 @@ const EMPTY_BUFFER = Buffer.alloc(0);
 const SINCE_STARTUP = performance.now();
 
 const IS_NODE_INSPECTOR_ENABLED = !!process.execArgv.find(arg => arg.startsWith("--inspect"));
-const JWT_KEY = process.env.AKENO_KEY;
+let JWT_KEY = process.env.AKENO_KEY;
 
 
 // Open databases [TODO: to be updated]
