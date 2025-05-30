@@ -3,7 +3,7 @@
  * @module helpers
  */
 
-const { backend } = require("./unit");
+const backend = require("akeno:backend");
 
 /**
  * List of MIME types that should not be compressed.
@@ -17,6 +17,10 @@ const doNotCompress = [
     'application/octet-stream',
     'application/pdf'
 ];
+
+// const errorTemplate = backend.stringTemplate `{"success":false,"code":${"code"},"error":${"error"}}`;
+
+const nullStringBuffer = Buffer.from("null");
 
 module.exports = {
     /**
@@ -85,7 +89,7 @@ module.exports = {
      * @param {string} [status] - Optional HTTP status.
      */
     send(req, res, data, headers = {}, status){
-        if(req.abort) return;            
+        if(req.abort) return;
 
         if(data !== undefined && (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof Buffer)) || Array.isArray(data)) {
             headers["content-type"] = backend.helper.types["json"];    
@@ -140,6 +144,8 @@ module.exports = {
      * @returns {Array} A tuple containing a cache key and the result buffer.
      */
     sendCompressed(req, res, buffer, mimeType, headers = {}, status){
+        if(req.abort) return;
+
         headers["content-type"] = mimeType;
 
         // Perform code compression
@@ -183,11 +189,59 @@ module.exports = {
         return [algorithm, buffer];
     },
 
+    
+    /**
+     * Send a templated response.
+     * @param {object} req - The request object.
+     * @param {object} res - The response object.
+     * @param {Array} template - The template.
+     * @experimental
+     */
+    sendTemplate(req, res, template, data){
+        _isJSON = false; // Reserved for later
+
+        // const result = [];
+
+        res.cork(() => {
+            if(template && template.length > 0) {
+                for(const part of template) {
+                    if(part === null || part === undefined) continue;
+
+                    if(typeof part === "string") {
+                        if(!data || !data.hasOwnProperty(part)) {
+                            if(_isJSON) {
+                                res.write(nullStringBuffer);
+                                // result.push(nullStringBuffer);
+                            }
+                            continue;
+                        }
+
+                        let value = data[part];
+
+                        if(!(value instanceof Buffer) && typeof value !== "string") {
+                            value = _isJSON? JSON.stringify(value): String(value);
+                        }
+
+                        res.write(value);
+                        // result.push(Buffer.from(value));
+                    } else if(part instanceof Buffer) {
+                        res.write(part);
+                        // result.push(part);
+                    }
+                }
+            }
+
+            res.end();
+            // res.end(result.length === 0? nullStringBuffer : Buffer.concat(result));
+        });
+    },
+
 
     /**
      * Returns the next path segment from the request.
      * @param {object} req - The request object.
      * @returns {string} The next path segment or empty string.
+     * @deprecated
      */
     next(req){
         if(!req._segmentsIndex) req._segmentsIndex = 0; else req._segmentsIndex ++;
@@ -206,7 +260,7 @@ module.exports = {
     error(req, res, error, code, status){
         if(req.abort) return;
 
-        if(typeof error == "number" && backend.Errors[error]){
+        if(typeof error === "number" && backend.Errors[error]){
             let _code = code;
             code = error;
             error = (_code? code : "") + backend.Errors[code]
@@ -214,8 +268,15 @@ module.exports = {
 
         res.cork(() => {
             res.writeStatus(status || (code >= 400 && code <= 599? String(code) : '400'))
-            backend.helper.corsHeaders(req, res)
+            backend.helper.corsHeaders(req, res);
+
             res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":${(JSON.stringify(error) || '"Unknown error"')}}`);
+
+            // res.writeHeader("content-type", "application/json");
+            // backend.helper.sendTemplate(req, res, errorTemplate, {
+            //     code: code || -1,
+            //     error: JSON.stringify(error) || '"Unknown error"'
+            // });
         })
     },
 
@@ -254,7 +315,7 @@ module.exports = {
                     });
                 } else if (done) stream.close();
             })
-            
+
         });
 
         stream.on('error', (err) => {

@@ -46,6 +46,10 @@ const
 ;
 
 
+// Module aliases
+require('module-alias/register');
+
+
 // Misc constants
 const PATH = __dirname + "/";
 const EMPTY_OBJECT = Object.freeze({});
@@ -82,6 +86,7 @@ const db = {
 * const myHandler = backend.resolve.bind(myProtocol);
 * myHandler(res, req);
 */
+
 function resolve(res, req) {
     if(!(this instanceof Units.Protocol)) {
         throw new TypeError("resolve() must be called with Units.Protocol as context");
@@ -142,6 +147,12 @@ function resolve(res, req) {
 
     let handler = backend.defaultHTTPHandler;
 
+    // TODO: FIXME: Temporary CDN handler, replace with a proper modular router asap
+
+    if(req.domain.startsWith("cdn.")){
+        handler = Units.Manager.module("akeno.cdn").HandleRequest;
+    }
+
     // TODO: Move API handlers to a separate module
     // if(handler === 2){
     //     const versionCode = req.pathSegments.shift();
@@ -176,9 +187,9 @@ function resolve(res, req) {
 
 
 // Central backend object
-const backend = Units.Manager.initCore({
+const backend = {
     version,
-    
+
     PATH,
     get path(){
         return PATH
@@ -595,14 +606,99 @@ const backend = Units.Manager.initCore({
 
     },
 
+    stringTemplate(strings, ...keys) {
+        return strings.flatMap((str, i) =>
+            [Buffer.from(str), keys[i] != null ? keys[i] : null]
+        ).filter(Boolean);
+    },
+
+    Errors: {
+        0: "Unknown API version",
+        1: "Invalid API endpoint",
+        2: "Missing parameters in request body/query string.",
+        3: "Internal Server Error.",
+        4: "Access denied.",
+        5: "You do not have access to this endpoint.",
+        6: "User not found.",
+        7: "Username already taken.",
+        8: "Email address is already registered.",
+        9: null,
+        10: "Incorrect verification code.",
+        11: "Invalid password.",
+        12: "Authentication failed.",
+        13: "Your login session is missing or expired.",
+        14: "This account is suspended.",
+        15: "Forbidden action.",
+        16: "Entity not found.",
+        17: "Request timed out.",
+        18: "Too many requests. Try again in a few seconds.", // FIXME: Use 429
+        19: "Service temporarily unavailable.",
+        20: "Service/Feature not enabled. It might first require setup from your panel, is not available (or is paid and you don't have access).",
+        21: "Unsupported media type.",
+        22: "Deprecated endpoint. Consult documentation for a replacement.",
+        23: "Not implemented.",
+        24: "Conflict.",
+        25: "Data already exist.",
+        26: "Deprecated endpoint. Consult documentation for a replacement.",
+        27: "This endpoint has been removed from this version of the API. Please migrate your code to the latest API version to keep using it.",
+        28: "Access blocked for the suspicion of fraudulent/illegal activity. Contact our support team to get this resolved.",
+        29: "This endpoint requires an additional parametter (cannot be called directly)",
+        30: "Invalid method.", // FIXME: Use 405
+        31: "Underlying host could not be resolved.",
+        32: null,
+        33: "Temporarily down due to high demand. Please try again in a few moments.",
+        34: null,
+        35: "Unsecured access is not allowed on this endpoint. Please use HTTPS instead.",
+        36: null,
+        37: null,
+        38: null,
+        39: null,
+        40: "This is a WebSocket-only endpoint. Use the ws:// or wss:// protocol instead of http.",
+        41: "Wrong protocol.",
+        42: "Internal error: Configured backend type doesn't have a driver for it. Please contact support.",
+        43: "File not found.",
+        44: "The request contains wrong data",
+        45: "Wrong data type",
+        46: "Invalid email address.",
+        47: "Username must be within 2 to 200 characters in range and only contain bare letters, numbers, and _, -, .",
+        48: "Weak password.",
+        49: "Sent data exceed maximum allowed size.",
+
+
+        // HTTP-compatible error codes, this does not mean this list is for HTTP status codes.
+        404: "Not found.",
+        500: "Internal server error.",
+        503: "Service unavailable.",
+        504: "Gateway timeout.",
+        429: "Too many requests.",
+        403: "Forbidden.",
+        401: "Unauthorized.",
+        400: "Bad request.",
+        408: "Request timeout.",
+        409: "Conflict.",
+        415: "Unsupported media type.",
+        501: "Not implemented.",
+        406: "Not acceptable.",
+        405: "Method not allowed.",
+        502: "Bad gateway.",
+    },
+
     trustedOrigins: new Set,
 
     resolve
-})
+}
 
+// We do this here to make code completions work in VSCode
+Units.Manager.initCore(backend);
 
+// Do not rely on this
+global.backend = backend;
+
+module.exports = backend;
 
 backend.helper = require("./core/helpers");
+
+
 
 
 // First initialization
@@ -660,5 +756,3 @@ if(backend.mode === backend.modes.DEVELOPMENT && IS_NODE_INSPECTOR_ENABLED) {
 if (process.platform !== 'linux') {
     backend.warn(`Warning: Your platform (${process.platform}) has experimental support. Akeno is currently only officially supported on Linux, so you may run into unexpected issues.${process.platform === 'win32' ? ' You can try using WSL or other types of Linux VM to run this software.' : ''}`);
 }
-
-module.exports = backend

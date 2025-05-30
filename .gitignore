@@ -19,7 +19,7 @@ db/*
 core/native/build
 
 node_modules
-package.json
+# package.json
 package-lock.json
 
 core/native/build

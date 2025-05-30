@@ -13,6 +13,9 @@ let backend;
 
 const spawn = require('child_process').spawn;
 const fs = require('fs');
+const nodepath = require('path');
+
+const { xxh32 } = require("@node-rs/xxhash");  // XXHash
 
 const external = new Map;
 
@@ -22,6 +25,7 @@ const addons = new Map;
 // Addons and modules can define custom types to be used across other modules.
 const types = new Map;
 
+let allow_unrestricted_execution = false;
 
 // Please make sure to use the correct Unit class for the type of object that you are creating.
 // See descriptions or docs for more information on Units.
@@ -328,7 +332,7 @@ const Manager = {
     /**
      * Initializes the core backend instance.
      * @param {*} backendInstance
-     * @returns {*} The initialized backend instance.
+     * @returns {Unit} The initialized backend instance.
      */
     initCore(backendInstance){
         if(backend) {
@@ -341,12 +345,19 @@ const Manager = {
 
         backend = backendInstance;
         module.exports.backend = backend;
+
         return backendInstance;
     },
 
     refreshAddons(){
         const paths = [backend.PATH + "./addons", ...(backend.config.getBlock("server").get("modules") || [])];
-        
+
+        allow_unrestricted_execution = backend.config.getBlock("modules").get("allow_unrestricted_execution", Boolean, false);
+
+        if(allow_unrestricted_execution){
+            backend.warn("⚠️  Unrestricted execution of scripts is enabled. Make sure you are in a trusted environment.");
+        }
+
         for (const path of paths) {
             backend.verbose("Scanning for addons: " + path);
 
@@ -355,19 +366,89 @@ const Manager = {
                 .map(dirent => dirent.name);
 
             for (const dir of directories) {
-                Manager.loadAddon(path + "/" + dir);
+                try {
+                    Manager.loadAddon(path + "/" + dir);
+                } catch (error) {
+                    backend.error(`Failed to load addon ${dir} from ${path}:`, error);
+                }
             }
         }
     },
 
     module(name){
-        return modules.get(name) || null;
+        return modules.get(name) || addons.get(name) || null;
     },
 
     loadAddon(path){
-        if(fs.statSync(path).isDirectory() && fs.existsSync(path + "/index.js")){
-            backend.verbose("Loading addon: " + path);            
-            path += "/index.js";
+        if(fs.statSync(path).isDirectory() && fs.existsSync(path + "/addon.json")){
+            const addonConfig = JSON.parse(fs.readFileSync(path + "/addon.json", "utf8"));
+
+            if(!addonConfig.id || !addonConfig.name){
+                throw new Error("Addon must have an id and name");
+            }
+
+            // TODO: Protect & manage namespaces
+
+            if(addons.has(addonConfig.id)){
+                throw new Error(`Addon with id ${addonConfig.id} already exists`);
+            }
+
+            if(!(addonConfig.version instanceof Version)){
+                addonConfig.version = new Version(addonConfig.version || 1)
+            }
+
+            if(addonConfig.akenoVersion && !backend.version.compare(addonConfig.akenoVersion)){
+                throw new Error(`Addon ${addonConfig.id} requires Akeno version ${addonConfig.akenoVersion}, but current version is ${backend.version}`);
+            }
+
+            let _mainfile = null;
+            if(addonConfig.main) {
+                _mainfile = nodepath.normalize(path + "/" + addonConfig.main);
+    
+                if(!fs.existsSync(_mainfile)){
+                    throw new Error(`Addon main file ${_mainfile} does not exist.`);
+                }
+            }
+
+            // Validate security of the main file
+            if(_mainfile && !allow_unrestricted_execution){
+                // const mainFileContent = fs.readFileSync(_mainfile, "utf8");
+
+                // const hash = xxh32(mainFileContent).toString(16);
+
+                // // TODO: This needs a better solution
+                // if(![123].includes(hash)){
+                //     throw new Error(`Addon ${addonConfig.id} tried to load an unrestricted script file: "${_mainfile}" but was not allowed to for security reasons, or possible tampering was detected. If you are developing this addon or are sure that it is safe, please add an exception in the config, switch to developer mode, or if you 100% trust your environment, set "modules { allow_unrestricted_execution: true }" in the config.`);
+                // }
+            }
+
+            const addon = _mainfile? require(_mainfile): new Addon;
+
+            if(!(addon instanceof Unit)){
+                Manager.toUnit(addon, Addon);
+            }
+
+            if(!(addon instanceof Addon)){
+                throw new Error("Unit must be of type Addon");
+            }
+
+            addon._initialize(addonConfig);
+
+            addon.path = path;
+            addon.type = "addon";
+
+            addons.set(addon.id, addon);
+
+            backend.verbose(`Loaded addon: ${addon.name} (${addon.id}) v${addon.version}`);
+
+            if(addon.onLoad){
+                try {
+                    addon.onLoad(addon, backend);
+                } catch (error) {
+                    addon.error(`Error during onLoad:`, error);
+                }
+            }
+            return addon;
         }
     },
 

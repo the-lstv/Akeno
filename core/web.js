@@ -197,7 +197,7 @@ class WebApp extends Units.App {
 
         // TODO: API extensions
         // for(let api of this.config.getBlocks("api")){
-        //     backend.apiExtensions[api.attributes[0]] = this.path + "/" + api.attributes[1]
+        //     backend.apiExtensions[api.attributes] = this.path + "/" + api.attributes[1]
         // }
 
         // Reload modules
@@ -207,7 +207,7 @@ class WebApp extends Units.App {
 
         for(let api of this.config.getBlocks("module")){
             // TODO: Proper module system
-            const name = api.attributes[0];
+            const name = api.attributes;
 
             if(this.modules.has(name)) continue;
 
@@ -359,7 +359,7 @@ const server = new class WebServer extends Units.Module {
 
             if(!checkSupportedBrowser(req.getHeader('user-agent'), browserRequirements.properties)){
                 res.cork(() => {
-                    res.writeHeader('Content-Type', browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${browserRequirements.chrome && browserRequirements.chrome[0]} and up, Firefox ${browserRequirements.firefox && browserRequirements.firefox[0]} and up.`))
+                    res.writeHeader('Content-Type', browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${browserRequirements.chrome && browserRequirements.chrome} and up, Firefox ${browserRequirements.firefox && browserRequirements.firefox} and up.`))
                 })
                 return
             }
@@ -740,14 +740,14 @@ function checkSupportedBrowser(userAgent, properties) {
 
         if(properties.disableChrome) return false;
 
-        if (match && parseInt(match[1], 10) < +properties.chrome[0]) return false;
+        if (match && parseInt(match[1], 10) < +properties.chrome) return false;
 
     } else if (properties.firefox && ua.includes('firefox')) {
         const match = ua.match(/firefox\/(\d+)/);
 
         if(properties.disableFirefox) return false;
 
-        if (match && parseInt(match[1], 10) < +properties.firefox[0]) return false;
+        if (match && parseInt(match[1], 10) < +properties.firefox) return false;
 
     } else if (ua.includes('msie') || ua.includes('trident')) return false;
 
@@ -939,7 +939,7 @@ function initParser(header){
                                                 this.write(`<link rel=stylesheet href="${link}" ${components.join(" ")}>`)
                                                 break;
                                             case "json":
-                                                this.write(`<script type="application/json" id="${components[0] || attrib}">${fs.readFileSync(path)}</script>`)
+                                                this.write(`<script type="application/json" id="${components || attrib}">${fs.readFileSync(path)}</script>`)
                                                 break;
                                         }
                                     }
@@ -960,31 +960,31 @@ function initParser(header){
                 this.write(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`)
 
                 if(block.properties.title) {
-                    this.write(`<title>${block.properties.title[0]}</title>`)
+                    this.write(`<title>${block.properties.title}</title>`)
                 }
 
                 let bodyAttributes = this.data.using_ls_css? "ls": "";
 
                 if(this.data.using_ls_css) {
                     if(block.properties.theme) {
-                        bodyAttributes += ` ls-theme="${block.properties.theme[0]}"`;
+                        bodyAttributes += ` ls-theme="${block.properties.theme}"`;
                     }
     
                     if(block.properties.accent) {
-                        bodyAttributes += ` ls-accent="${block.properties.accent[0]}"`;
+                        bodyAttributes += ` ls-accent="${block.properties.accent}"`;
                     }
     
                     if(block.properties.style) {
-                        bodyAttributes += ` ls-style="${block.properties.style[0]}"`;
+                        bodyAttributes += ` ls-style="${block.properties.style}"`;
                     }    
                 }
 
                 if(block.properties.font) {
-                    bodyAttributes += this.data.using_ls_css? ` style="--font:${block.properties.font.join()}"`: ` style="font-family:${block.properties.font.join()}"`;
+                    bodyAttributes += this.data.using_ls_css? ` style="--font:${block.properties.font}"`: ` style="font-family:${block.properties.font}"`;
                 }
 
                 if(block.properties.favicon) {
-                    const baseName = nodePath.basename(block.properties.favicon[0]);
+                    const baseName = nodePath.basename(block.properties.favicon);
                     let extension = baseName, lastIndex = baseName.lastIndexOf('.');
 
                     if (lastIndex !== -1) {
@@ -993,7 +993,7 @@ function initParser(header){
 
                     let mimeType = backend.mime.getType(extension) || "image/x-icon";
 
-                    this.write(`<link rel="shortcut icon" href="${block.properties.favicon[0]}" type="${mimeType}">`)
+                    this.write(`<link rel="shortcut icon" href="${block.properties.favicon}" type="${mimeType}">`)
                 }
 
                 this.setBodyAttributes(bodyAttributes)

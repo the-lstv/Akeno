@@ -651,7 +651,7 @@ Some examples:
 
 
         // DO NOT USE THIS COMMAND :D
-        // It is here just for backwards compatibility with my old system, and this part is still relied on.
+        // It is here just for backwards compatibility with my old system, and this part is still (sigh...) relied on.
         case "renew-cert":
             if(!argv._[1] || argv._[1].length < 1 || !argv._[1].includes(".")){
                 return log(`${signature} \x1b[31mDomain "${argv._[1]}" seems to be invalid.\x1b[0m`)

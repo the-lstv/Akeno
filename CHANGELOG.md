@@ -1,5 +1,5 @@
 ## TO-DO
-- Add a fast C++ side content cache
+- Add a fast C++ side content cache replacing the current temporary one
 - Implement a proper database system
 - Complete package manager for addons/modules
 - Rework many parts, including the CLI, dynamic content, and the router
@@ -7,8 +7,8 @@
 - Add a proper installation script
 
 ## New in 1.6.0-beta
-- **MAJOR** changes (preparing for a 2.0.0 release)
-- A full new versioning utility, for consistent versioning all across
+- **MAJOR** changes all around (basically, preparing for a 2.0.0 release)
+- A brand new versioning utility, for consistent versioning and matching for all modules, addons, etc.
 - Added pre-release and build metadata to versioning
 - Complete core redesign around a new modular Unit system
 - Folder structure cleanup
@@ -20,6 +20,12 @@
 - PM2 name lowercased (Akeno -> akeno)
 - Chaged config strucure
 - Added support for auto compression via Brotli or Gzip
+- Deprecated "Initialize" callback in modules. Use onLoad instead and do not rely on the backend object being provided.
+- Deprecated "HandleRequest" and "HandleSocket" callbacks - a new method will be introduced in the future.
+- Added module aliases, eg. `require('akeno:backend')` instead of initialize callbacks.
+
+## New in 1.5.9
+- *(changes not tracked)*
 
 ## New in 1.5.8
 - Changes to the file structure
@@ -100,6 +106,8 @@ X URL routing now uses Globs
 ## New in 1.4.x
 - Slight improvements in code
 - Refactored API, user management, user cache
-- Officially renamed to Akeno
+- Officially renamed to Akeno (from "ExtraGon API")
 - Setup script added
 - Removed periodicall hit counting by default for performance
+
+*(Versions prior to 1.4 were a non-open-source server software used exclusively by ExtraGon and LSTV.space's services.)*
