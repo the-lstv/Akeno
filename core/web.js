@@ -263,7 +263,7 @@ const server = new class WebServer extends Units.Module {
         const start = performance.now();
 
         const webConfig = backend.config.getBlock("web");
-        const locations = webConfig.get("locations") || [];
+        const locations = webConfig.get("locations", Array, []);
 
         // Looks for valid application locations
         for(let location of locations){
