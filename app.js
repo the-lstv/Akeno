@@ -9,11 +9,12 @@
 
 
 const Units = require("./core/unit");
+const package = require("./package.json");
 
 
 // Global variables
 let
-    version = new Units.Version("1.6.0-beta")
+    version = new Units.Version(package.version)
 ;
 
 
@@ -240,14 +241,26 @@ const backend = {
         }
         backend.protocols.ipc.enabled = protocols.getBlock("ipc").get("enabled", Boolean, true);
 
-        backend.protocols.http.port = protocols.getBlock("http").get("port", Number, 80);
+        // TODO: Better handling of ports (due to apps being able to request custom ports)
+
+        // Note: setting "enabled" has to be last, as it calls the init() method. Also, ws has to be enabled before HTTP.
+
+        const http_ws_enabled = protocols.getBlock("http").get("websockets", String, "false");
+        backend.protocols.http.ports = protocols.getBlock("http").get(["port", "ports"], Array, [80]);
+        backend.protocols.http.enableWebSockets = http_ws_enabled === "true"? true: http_ws_enabled === "dev-only"? backend.mode === backend.modes.DEVELOPMENT: false;
+
+        backend.protocols.https.ports = protocols.getBlock("https").get(["port", "ports"], Array, [443]);
+        backend.protocols.https.enableWebSockets = protocols.getBlock("https").get("websockets", Boolean, true);
+
+        backend.protocols.h3.ports = protocols.getBlock("h3").get(["port", "ports"], Array, [443]);
+
+        backend.protocols.ws.enabled = backend.protocols.http.enableWebSockets || backend.protocols.https.enableWebSockets;
         backend.protocols.http.enabled = protocols.getBlock("http").get("enabled", Boolean, true);
-
-        backend.protocols.https.port = protocols.getBlock("https").get("port", Number, 443);
         backend.protocols.https.enabled = protocols.getBlock("https").get("enabled", Boolean, false);
-
-        backend.protocols.h3.port = protocols.getBlock("h3").get("port", Number, 443);
         backend.protocols.h3.enabled = protocols.getBlock("h3").get("enabled", Boolean, false);
+
+        if(backend.protocols.http.onReload) backend.protocols.http.onReload();
+        if(backend.protocols.https.onReload) backend.protocols.https.onReload();
 
         // TODO: Add something like "in production only".
         backend.compression.enabled = backend.config.getBlock("web").get("compress", Boolean, true);
@@ -286,12 +299,12 @@ const backend = {
         const consoleFunction = console[level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log"];
         const sourceName = typeof source === "string" ? source : source?.name || "unknown";
 
-        const signature = `${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`;
+        const tag = `${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`;
 
         if(!Array.isArray(data)){
-            consoleFunction(signature, data);
+            consoleFunction(tag, data);
         } else {
-            consoleFunction(signature, ...data);
+            consoleFunction(tag, ...data);
         }
     },
 
@@ -389,13 +402,13 @@ const backend = {
                 }
 
                 this.server.listen(this.socketPath, () => {
-                    this.log(`IPC socket is listening on ${this.socketPath}`)
+                    this.log(`Listening on ${this.socketPath}`)
                 })
             }
 
             disable() {
                 this.server.close(() => {
-                    this.log(`IPC socket was closed`)
+                    this.log(`Closed`)
                 })
             }
         },
@@ -411,13 +424,21 @@ const backend = {
                 this.requestFlags = {
                     secure: false
                 }
+
+                this.defaultResolver = resolve.bind(this);
+
+                this.ports = [];
             }
 
             init() {
                 this.server = uws.App();
-                this.server.any("/*", resolve.bind(this));
+                this.server.any("/*", this.defaultResolver);
+
+                if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
             }
         },
+
+        // TODO: Allow multiple App/SSLApp/H3App instances, maybe through some abstract interface
 
         https: new class HTTPSProtocol extends Units.HTTPProtocol {
             constructor(){
@@ -430,11 +451,64 @@ const backend = {
                 this.requestFlags = {
                     secure: true
                 }
+
+                this.defaultResolver = resolve.bind(this);
+
+                this.ports = [];
+
+                this.SNINames = new Set();
+            }
+
+            onReload(){
+                const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
+
+                if(SNIDomains && SNIDomains.length > 0) for(const domain of SNIDomains) {
+                    this.addSNIRoute(domain);
+
+                    // Not sure if we should be adding a root domain handler by default.
+                    if(domain.startsWith("*.")){
+                        this.addSNIRoute(domain.replace("*.", ""));
+                    }
+                }
+            }
+
+            addSNIRoute(domain, key = null, cert = null) {
+                if(this.SNINames.has(domain)) {
+                    return false;
+                }
+
+                this.server.addServerName(domain, {
+                    key_file_name:  key  || backend.config.getBlock("ssl").get("keyBase", String, "") .replace("{domain}", domain.replace("*.", "")),
+                    cert_file_name: cert || backend.config.getBlock("ssl").get("certBase", String, "").replace("{domain}", domain.replace("*.", ""))
+                })
+
+                // TODO: Better routing options
+                const route = this.server.domain(domain);
+
+                this.SNINames.add(domain);
+
+                route.any("/*", this.defaultResolver);
+
+                if(this.enableWebSockets) route.ws("/*", backend.protocols.ws.options);
+                return true;
             }
 
             init() {
-                this.server = uws.SSLApp();
-                this.server.any("/*", resolve.bind(this));
+                // TODO: Support passphrases
+
+                const default_key = backend.config.getBlock("ssl").get("key", String, null);
+                const default_cert = backend.config.getBlock("ssl").get("cert", String, null);
+
+                const ssl_config = (default_key && default_cert)? {
+                    key_file_name: default_key,
+                    cert_file_name: default_cert
+                }: null;
+
+                // No, you can't put the ternary inside the constructor.
+                this.server = ssl_config? uws.SSLApp(ssl_config): uws.SSLApp();
+                this.server.any("/*", this.defaultResolver);
+
+                // if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
             }
         },
 
@@ -450,6 +524,15 @@ const backend = {
                     secure: true,
                     h3: true
                 }
+
+                this.defaultResolver = resolve.bind(this);
+
+                this.ports = [];
+            }
+
+            init() {
+                this.server = uws.H3App();
+                this.server.any("/*", this.defaultResolver);
             }
         },
 

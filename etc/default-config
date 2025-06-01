@@ -9,49 +9,85 @@ system {
     logLevel: 5;
 }
 
+
+
+# Protocols configuration
+# Multiple ports can be specified as well.
+
 protocols {
     ipc {
         enabled: true;
         path: "/tmp/akeno.backend.sock";
         
-        # Windows has named pipes instead
+        # Windows has named pipes instead.
         windowsPipeName: "akeno.backend.sock";
     }
 
     http {
         enabled: true;
         port: 80;
+
+        # Disable unsecured WebSockets in production.
+        websockets: dev-only;
     }
 
     https {
         enabled: true;
         port: 443;
+
+        websockets: true;
     }
 
+    # Experimental HTTP/3 (QUIC)
     h3 {
         enabled: false;
         port: 443;
+
+        # Note: HTTP/3 doesn't have WebSockets.
     }
 }
 
+
+
+# SSL/TLS configuration for HTTPS and HTTP/3.
+# Tip: If you are using Let's Encrypt, the only thing you need to do is enter your domain names, the rest will "just work".
+
 ssl {
-    # To allow multiple certificates, you add server names below.
-    # Wildcard certificates are supported (add *. before your domain)
+    # Simply add domain names below.
+    # Wildcard certificates are also supported (add *. before your domain)
+    domains: example.com, *.example.com;
 
-    certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
+    # To specify a certificate override per domain, you can use the following format in the domains list:
+    # example.com["key.pem", "cert.pem"]
+
+    # Per-domain key/cert path template:
     keyBase: "/etc/letsencrypt/live/{domain}/privkey.pem";
+    certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
 
-    domains: example.com, example.net, *.example.com, *.example.net;
+    # Path to default certificate and key files (can be left empty).
+    key: "";
+    cert: "";
 }
 
-# Webserver configuration
+# Auto provisioning of Let's Encrypt SSL certificates (an upcomming experimental feature).
+
+ssl.autoProvision {
+    enabled: false;
+
+    # The email address to use for Let's Encrypt registration.
+    email: "";
+}
+
+
+
+# Webserver/Web app configuration
+
 web {
     locations:
-        # Website locations - * looks at all subdirectories (non-recursively).
-        # A website/app is valid once it has an app.conf file.
-        "/var/www/akeno/*",
-        "./examples/hello-world-website",
+        # Website locations.
+        # "*" looks through subdirectories (eg. if you have a folder of folders for individual websites).
 
-        "./core/gui" # This is the experimental GUI for Akeno management - comment this line to disable.
+        "/var/www/akeno/*",
+        "./examples/hello-world-website"
     ;
 }

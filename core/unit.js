@@ -630,14 +630,17 @@ class HTTPProtocol extends Protocol {
             this.init();
         }
 
-        this.server.listen(this.port, (listenSocket) => {
-            if(listenSocket) {
-                this.log(`${this.name} server is listening on port ${this.port}`);
-                this.server.socket = listenSocket;
-            } else {
-                this.error(`Failed to start ${this.name} server on port ${this.port}`);
-            }
-        })
+
+        for(const port of this.ports){
+            this.server.listen(port, (listenSocket) => {
+                if(listenSocket) {
+                    this.log(`Listening on port ${port}`);
+                    this.server.socket = listenSocket;
+                } else {
+                    this.error(`Failed to listen on port ${port}`);
+                }
+            })
+        }
     }
 
     disable(){
