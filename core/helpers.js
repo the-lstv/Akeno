@@ -24,6 +24,30 @@ const nullStringBuffer = Buffer.from("null");
 
 module.exports = {
     /**
+     * Returns the path segments of the request.
+     * @param {object} req - The request object.
+     * @returns {string[]} An array of path segments.
+     */
+    getPathSegments(req){
+        if(!req.pathSegments) {
+            req.pathSegments = [];
+            
+            // A slightly faster implementation compared to .split("/").filter(Boolean)
+            if(req.path !== "/"){
+                let segStart = 1;
+                for(let i = 1; i <= req.path.length; i++){
+                    if(req.path.charCodeAt(i) === 47 || i === req.path.length) {
+                        if(i > segStart) req.pathSegments.push(req.path.slice(segStart, i));
+                        segStart = i + 1;
+                    }
+                }
+            }
+        }
+
+        return req.pathSegments;
+    },
+
+    /**
      * Writes headers to the response object.
      * @param {object} req - The request object.
      * @param {object} res - The response object.
@@ -110,13 +134,17 @@ module.exports = {
     },
 
 
-    getUsedCompression(req){
-        if(!backend.compression.enabled) return null;
+    getUsedCompression(req, mimeType){
+        if(!backend.compression.enabled) return backend.compression.format.NONE;
+
+        if(mimeType && doNotCompress.some(type => mimeType.startsWith(type))) {
+            return backend.compression.format.NONE;
+        }
 
         const enc = req.getHeader("accept-encoding");
 
         if(!enc) {
-            return null;
+            return backend.compression.format.NONE;
         }
 
         if(enc.includes("br")) {
@@ -127,7 +155,7 @@ module.exports = {
             return backend.compression.format.DEFLATE;
         }
 
-        return null;
+        return backend.compression.format.NONE;
     },
 
 
@@ -140,10 +168,11 @@ module.exports = {
      * @param {string} mimeType - The MIME type of the data.
      * @param {object} [headers={}] - Optional headers.
      * @param {string} [status] - Optional HTTP status.
+     * @param {string} [compressionAlgorithm] - Optional compression algorithm.
      * @throws {Error} If buffer is not a Buffer instance.
      * @returns {Array} A tuple containing a cache key and the result buffer.
      */
-    sendCompressed(req, res, buffer, mimeType, headers = {}, status){
+    sendCompressed(req, res, buffer, mimeType, headers = {}, status, compressionAlgorithm){
         if(req.abort) return;
 
         headers["content-type"] = mimeType;
@@ -171,11 +200,12 @@ module.exports = {
             throw new Error("sendCompressed must be called with a Buffer, received: " + Object.prototype.toString.call(buffer));
         }
 
-        const algorithm = backend.helper.getUsedCompression(req, res, mimeType);
+        const algorithm = buffer.length < backend.constants.MIN_COMPRESSION_SIZE? null: compressionAlgorithm || backend.helper.getUsedCompression(req, mimeType);
 
-        if(typeof algorithm !== "number" || buffer.length < backend.constants.MIN_COMPRESSION_SIZE || doNotCompress.some(type => mimeType.startsWith(type))) {
+        // If no compression is needed, send the buffer as is
+        if(algorithm === backend.compression.format.NONE || algorithm === null) {
             backend.helper.send(req, res, buffer, headers, status);
-            return [null, buffer];
+            return [backend.compression.format.NONE, buffer, headers];
         }
 
         buffer = backend.compression.compress(buffer, algorithm);
@@ -186,7 +216,7 @@ module.exports = {
         }[algorithm];
 
         backend.helper.send(req, res, buffer, headers, status);
-        return [algorithm, buffer];
+        return [algorithm, buffer, headers];
     },
 
     
@@ -243,9 +273,13 @@ module.exports = {
      * @returns {string} The next path segment or empty string.
      * @deprecated
      */
-    next(req){
-        if(!req._segmentsIndex) req._segmentsIndex = 0; else req._segmentsIndex ++;
-        return req.pathSegments[req._segmentsIndex] || ""; // Returning null is more correct
+    nextSegment(req){
+        if(!req.pathSegments) {
+            req.pathSegments = backend.helper.getPathSegments(req);
+        }
+
+        if(!req.pathIndex) req.pathIndex = 0; else req.pathIndex ++;
+        return req.pathSegments[req.pathIndex] || null;
     },
 
 

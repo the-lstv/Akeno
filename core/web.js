@@ -34,7 +34,15 @@ let
     backend = require("akeno:backend"),
 
     // Cache && optimisation helpers
-    cache = new Map,
+    RequestCache = [
+        new Map(), // No compression
+        new Map(), // Gzip compression
+        new Map(), // Deflate compression
+        new Map()  // Brotli compression
+    ],
+
+    // FIXME: Temporary solution
+    FilesWithDisabledCompression = new Set(),
 
     // Maximal cache size for binary files per-file.
     // If a file is bigger than this, it is not served from RAM.
@@ -335,7 +343,7 @@ const server = new class WebServer extends Units.Module {
 
         if(!app) return res.cork(() => {
             res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error)
-        })        
+        })
 
         // HTTPS Redirect
         if(backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))){
@@ -361,7 +369,7 @@ const server = new class WebServer extends Units.Module {
             }
         }
 
-        // TEMPORARY SOLUTION: Backend hooks
+        // FIXME: TEMPORARY SOLUTION: Backend hooks
         if(app.hook && app.hook.onRequest){
             try {
                 const result = await app.hook.onRequest(req, res);
@@ -374,7 +382,7 @@ const server = new class WebServer extends Units.Module {
         }
 
 
-        let url = req.original_url = `/${req.pathSegments.join("/")}`;
+        let url = req.path;
 
 
         // Redirects (simple URL redirects)
@@ -396,7 +404,7 @@ const server = new class WebServer extends Units.Module {
             if(target && domain && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
                 return backend.resolve(res, req, { secure: req.secure }, {
                     domain,
-                    path: `/${target}${handle.get("appendPath", Boolean)? `/${req.pathSegments.join("/")}`: ""}`,
+                    path: `/${target}${handle.get("appendPath", Boolean)? req.path: ""}`,
                     virtual: true
                 })
             }
@@ -419,41 +427,36 @@ const server = new class WebServer extends Units.Module {
         // *Finally*, handle content (don't worry routes will be cached <- someday hopefully)
         try {
 
+
+
+            /**
+             * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit and the cache system is a bit eh.
+            */
+
+
+
+            // TODO: Cache this
             let file = files_try(app.path + url + ".html", app.path + url + "/index.html", app.path + url);
 
             if(!file){
-                file = app.config.getBlock("errors").get("code", String) || app.config.getBlock("errors").get("default", String)
+                // Check if there is a 404 page defined
+                file = app.config.getBlock("errors").get("404", String) || app.config.getBlock("errors").get("default", String)
 
                 if(!file){
+                    // If not, return a generic 404 error
                     return backend.helper.send(req, res, url + " not found", null, "404 Not Found");
                 } else file = app.path + file
             }
 
+            // Normalize the file path
             file = nodePath.normalize(file);
 
+            // Handle directories
             if(fs.statSync(file).isDirectory()){
                 return backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
             }
 
-            // TODO: Once uWS implements low-level cache, add support for it OR compile a custom build with a more dynamic C++ router
-
-
-            const cacheKey = backend.helper.getUsedCompression(req);
-
-            // Check if the file has not been changed since
-            const cache = requestCachedFile(file, cacheKey);
-
-            /**
-             * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit.
-            */
-
-            // In case that we do not have the headers yet, well have to wait for them.
-            if(!cache.refresh && cache.headers) {
-                return server.ServeCache(req, res, cache, app, url)
-            }
-
             const file_name = nodePath.basename(file);
-
             let extension, lastIndex = file_name.lastIndexOf('.');
 
             if (lastIndex !== -1) {
@@ -462,36 +465,62 @@ const server = new class WebServer extends Units.Module {
 
             let mimeType = backend.mime.getType(extension) || "text/plain";
 
+            // Get suggested compression algorithm
+            const suggestedCompressionAlgorithm = FilesWithDisabledCompression.has(file)? backend.compression.format.NONE: backend.helper.getUsedCompression(req, mimeType);
+
+            // Check if the file has not been changed since
+            const cache = requestCachedFile(file, suggestedCompressionAlgorithm);
+
+            // If we have the cached file and headers, serve it
+            if(!cache.refresh && cache.headers) {
+                return server.ServeCache(req, res, cache, app, url);
+            }
+
             const headers = {
                 "Content-Type": `${mimeType}; charset=UTF-8`,
                 "Cache-Control": `public, max-age=${cacheByFile[extension] || cacheByFile.default}`,
                 "X-Content-Type-Options": "nosniff",
                 "ETag": `"${cache.lastModifyTime.toString(36)}"`,
+                "Connection": "keep-alive"
             }
 
-            // Now that we got headers, lets actually serve the cached response
+            // In case we previously didn't have cached headers but the cache was valid, serve them now
             if(!cache.refresh) {
                 cache.headers = headers
                 return server.ServeCache(req, res, cache, app, url)
             }
 
-            app.verbose(`Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
-
             let content;
 
-            switch(extension){
-                case "html":
-                    parserContext.data = { url, app, secure: req.secure };
-                    content = parser.fromFile(file, parserContext)
-                    // content = fs.readFileSync(file);
-                    break;
+            if(suggestedCompressionAlgorithm !== backend.compression.format.NONE) {
+                // If the uncompressed content is up-to-date, update the compression cache instead of generating again
+                const uncompressedCache = requestCachedFile(file, backend.compression.format.NONE);
 
-                case "js": case "css":
-                    content = fs.readFileSync(file, "utf8");
-                    break;
+                if(!uncompressedCache.refresh && uncompressedCache.content) {
+                    content = uncompressedCache.content;
+                }
+            }
 
-                default:
-                    content = fs.readFileSync(file);
+            if(!content) {
+                // Generate and serve fresh content
+                app.verbose(`Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
+
+                switch(extension){
+                    case "html":
+                        parserContext.data = { url, app, secure: req.secure };
+                        content = await parser.fromFile(file, parserContext)
+                        // content = await fs.promises.readFile(file);
+                        break;
+
+                    case "js": case "css":
+                        // Special case for CSS and JS (code minification etc.)
+                        content = await fs.promises.readFile(file, "utf8");
+                        break;
+
+                    default:
+                        content = await fs.promises.readFile(file);
+                }
+
             }
 
             if(content) {
@@ -501,21 +530,32 @@ const server = new class WebServer extends Units.Module {
                     // server.ServeDynamicContent(req, res, content, headers, app, url)
                     return res.end();
                 } else {
-                    let compressionAlgo;
+                    let compressionAlgo = backend.compression.format.NONE, compressedContent, compressHeaders;
 
-                    try {
-                        if(backend.compression.enabled){
-                            [compressionAlgo, content] = backend.helper.sendCompressed(req, res, content, mimeType, headers);
-                        } else {
-                            backend.helper.send(req, res, content, headers);
+                    if(backend.compression.enabled && suggestedCompressionAlgorithm !== backend.compression.format.NONE && content.length >= backend.constants.MIN_COMPRESSION_SIZE) {
+                        try {
+                            [compressionAlgo, compressedContent, compressHeaders] = backend.helper.sendCompressed(req, res, content, mimeType, {...headers}, undefined, suggestedCompressionAlgorithm);
+                        } catch (error) {
+                            app.error("Couldn't perform compression, requesting \"" + req.path + "\": ", error);
+                            backend.helper.send(req, res, "<b>Error while compressing content - Incident log was saved.</b>", null, 500);
+                            return
                         }
-                    } catch (error) {
-                        app.error("Couldn't perform compression, requesting \"" + req.path + "\": ", error);
-                        backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
-                        return
+                    } else {
+                        backend.helper.send(req, res, content, headers);
                     }
 
-                    if(content.length <= max_cache_size) updateCache(file, compressionAlgo, content, headers);
+                    // Save uncompressed content to cache
+                    if(content.length <= max_cache_size) updateCache(file, backend.compression.format.NONE, content, headers);
+
+                    if(suggestedCompressionAlgorithm !== backend.compression.format.NONE && compressionAlgo === backend.compression.format.NONE) {
+                        // Compression for this file was rejected
+                        FilesWithDisabledCompression.add(file);
+                    }
+
+                    // Save compressed content to cache
+                    if(compressionAlgo !== backend.compression.format.NONE && compressedContent) {
+                        if(compressedContent.length <= max_cache_size) updateCache(file, compressionAlgo, compressedContent, compressHeaders);
+                    }
                 }
 
             } else res.end();
@@ -548,7 +588,7 @@ const server = new class WebServer extends Units.Module {
             
                             for(let item of chunk.attributes){
                                 try {
-                                    const path = app.path + "/" + item.replace("$original_path", req.original_url);
+                                    const path = app.path + "/" + item.replace("$original_path", req.path);
 
                                     parserContext.data = { plain: true, dynamic: false, compress: true, app, url };
                                     res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, parserContext))
@@ -602,7 +642,7 @@ const server = new class WebServer extends Units.Module {
 
     // Utility functions
 
-    getApp(path_or_name){
+    getAppPath(path_or_name){
         if(!path_or_name) return null;
         if(path_or_name.includes("/") && fs.existsSync(path_or_name)) return path_or_name;
 
@@ -612,6 +652,7 @@ const server = new class WebServer extends Units.Module {
     }
 
     list(){
+        // To be enhanced
         // for(let app of applicationCache){
         //     app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain).path === app.path)
         // }
@@ -620,7 +661,7 @@ const server = new class WebServer extends Units.Module {
     }
 
     enableApp(app_path){
-        if(!(app_path = this.util.getApp(app_path))) return false;
+        if(!(app_path = this.util.getAppPath(app_path))) return false;
         
         for(let application of applications.values()) {
             if(application.path === app_path) {
@@ -634,7 +675,7 @@ const server = new class WebServer extends Units.Module {
     }
 
     disableApp(app_path){
-        if(!(app_path = this.util.getApp(app_path))) return false;
+        if(!(app_path = this.util.getAppPath(app_path))) return false;
     
         for(let application of applications.values()) {
             if(application.path === app_path) {
@@ -648,7 +689,7 @@ const server = new class WebServer extends Units.Module {
     }
 
     listDomains(app_path){
-        if(!(app_path = this.util.getApp(app_path))) return false;
+        if(!(app_path = this.util.getAppPath(app_path))) return false;
 
         // let list = [];
 
@@ -661,12 +702,12 @@ const server = new class WebServer extends Units.Module {
     }
 
     reloadApp(app_path = null){
-        if(app_path && !(app_path = this.util.getApp(app_path))) return false;
+        if(app_path && !(app_path = this.util.getAppPath(app_path))) return false;
         return this.reload(app_path || null)
     }
 
     getDomain(app_path){
-        if(!(app_path = this.util.getApp(app_path))) return false;
+        if(!(app_path = this.util.getAppPath(app_path))) return false;
 
         // for(domain in assignedDomains.keys()){
         //     if(assignedDomains.get(domain).path === req.getQuery(app_path)) return domain;
@@ -679,7 +720,7 @@ const server = new class WebServer extends Units.Module {
     }
 
     tempDomain(app_path){
-        if(!(app_path = this.util.getApp(app_path))) return false;
+        if(!(app_path = this.util.getAppPath(app_path))) return false;
 
         let random = backend.uuid();
         backend.domainRouter.add(random, applications.get(app_path));
@@ -698,44 +739,55 @@ function files_try(...files){
     }
 }
 
-function requestCachedFile(file, cacheKey){
-    // file = nodePath.normalize(file);
+async function files_try_async(...files){
+    for(let file of files){
+        try {
+            await fs.promises.access(file, fs.constants.F_OK);
+            return file;
+        } catch {}
+    }
+}
 
-    const key = file + (cacheKey || "");
+function requestCachedFile(file, group){
+    const cache = RequestCache[group || 0];
 
-    let cachedFile = cache.get(key);
+    let cachedFile = cache.get(file);
     let mtime = fs.statSync(file).mtimeMs;
+
+    // Use a single Date.now() call for performance
+    const now = Date.now();
 
     if(cachedFile
         && (
-            // ((Date.now() - cachedFile.updateTimer) < 1000) ||
+            ((now - cachedFile.updateTimer) < 1000) ||
             mtime <= cachedFile.lastModifyTime
         )
     ) {
-        // cachedFile.updateTimer = Date.now()
-        return cachedFile
+        cachedFile.updateTimer = now;
+        return cachedFile;
     }
 
     if(!cachedFile) {
-        cachedFile = {}
-        cache.set(key, cachedFile)
+        cachedFile = {};
+        cache.set(file, cachedFile);
     }
 
     cachedFile.lastModifyTime = mtime;
     cachedFile.refresh = true;
-    // cachedFile.updateTimer = Date.now();
+    cachedFile.updateTimer = now;
 
-    return cachedFile
+    return cachedFile;
 }
 
-function updateCache(file, cacheKey, content, headers){
-    if(typeof cacheKey !== "string") cacheKey = "";
+function updateCache(file, group, content, headers){
+    const cache = RequestCache[group || 0];
 
-    let cached = cache.get(file + cacheKey);
+    let cached = cache.get(file);
+
 
     if(!cached) {
         // Update the cache
-        cached = requestCachedFile(file, cacheKey);
+        cached = requestCachedFile(file, group);
     }
 
     cached.content = content;

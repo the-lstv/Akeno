@@ -99,7 +99,10 @@ function resolve(res, req) {
         req.begin = performance.now();
     }
 
+    // Uppercased because of the common convention, a lot of people expect methods to be uppercase
     req.method = req.getMethod().toUpperCase();
+    req.secure = Boolean(this.requestFlags?.secure);
+    req.origin = req.getHeader('origin');
 
     const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
     req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
@@ -120,15 +123,8 @@ function resolve(res, req) {
         return;
     }
 
-    try {
-        req.path = decodeURIComponent(req.getUrl());
-    } catch (e) {
-        res.writeStatus("400 Bad Request").end("Malformed URL");
-        return;
-    }
-
-    req.secure = Boolean(this.requestFlags?.secure);
-    req.origin = req.getHeader('origin');
+    const url = req.getUrl();
+    req.path = url.indexOf("%") === -1? url: decodeURIComponent(url);
 
     if(req.method !== "GET"){
         req.contentType = req.getHeader("content-type");
@@ -140,18 +136,6 @@ function resolve(res, req) {
         req.abort = true;
         res.aborted = true; // Possibly deprecated
     })
-
-
-    // A slightly faster implementation compared to .split("/").filter(Boolean)
-    req.pathSegments = [];
-    let segStart = 1;
-    for(let i = 1; i <= req.path.length; i++){
-        if(req.path.charCodeAt(i) === 47 || i === req.path.length) {
-            if(i > segStart) req.pathSegments.push(req.path.slice(segStart, i));
-            segStart = i + 1;
-        }
-    }
-
 
     // TODO: FIXME: Temporary hostname router, later move this to C++
     let handler = domainRouter.route(req.domain) || backend.webServerHandler;
@@ -577,6 +561,7 @@ const backend = {
         enabled: true,
 
         format: new Units.IndexedEnum([
+            "NONE",
             "GZIP",
             "DEFLATE",
             "BROTLI",
@@ -598,6 +583,10 @@ const backend = {
 
             if(typeof format !== "number") {
                 throw new Error(`Invalid compression format: ${format}`);
+            }
+
+            if(format === backend.compression.format.NONE) {
+                return buffer;
             }
 
             // const hash = xxh32(buffer);
@@ -633,6 +622,10 @@ const backend = {
 
             if(typeof format !== "number") {
                 throw new Error(`Invalid compression format: ${format}`);
+            }
+
+            if (format === backend.compression.format.NONE) {
+                return Buffer.from(data);
             }
 
             // if (backend.mode === backend.modes.DEVELOPMENT) {
@@ -823,9 +816,7 @@ if(backend.mode === backend.modes.DEVELOPMENT && IS_NODE_INSPECTOR_ENABLED) {
     console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
     console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
 
-    backend.exposeToDebugger("backend", backend)
-    backend.exposeToDebugger("addons", AddonCache)
-    backend.exposeToDebugger("api", API)
+    backend.exposeToDebugger("backend", backend);
 }
 
 if (process.platform !== 'linux') {
