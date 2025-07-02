@@ -3,7 +3,7 @@
   "id": "akeno.backend",
   "description": "Akeno Backend",
   "main": "app.js",
-  "version": "1.6.0-beta+57f9418",
+  "version": "1.6.1-beta",
   "author": "TheLSTV",
   "license": "GPL-3.0-only",
   "repository": {
@@ -15,11 +15,11 @@
     "akeno:kvdb": "./core/kvdb.js",
     "akeno:units": "./core/unit.js",
     "akeno:mime": "./core/mime.js",
-    "akeno:ipc": "./core/ipc.js"
+    "akeno:ipc": "./core/ipc.js",
+    "akeno:router": "./core/router.js"
   },
   "scripts": {
-    "start": "node app.js",
-    "prebuild": "node ./etc/prebuild.js"
+    "start": "node app.js"
   },
   "dependencies": {
     "@node-rs/xxhash": "^1.7.6",

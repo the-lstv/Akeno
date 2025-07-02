@@ -7,9 +7,11 @@
     See: https://github.com/the-lstv/akeno
 */
 
-
-const Units = require("./core/unit");
+// Module aliases
 const package = require("./package.json");
+require('module-alias/register');
+
+const Units = require("akeno:units");
 
 
 // Global variables
@@ -26,8 +28,12 @@ const
     uuid = (require("uuid")).v4,                          // UUIDv4
     fastJson = require("fast-json-stringify"),            // Fast JSON serializer
     { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),  // XXHash
-    MimeTypes = require("./core/mime"),                   // MIME types
-    
+
+    MimeTypes = require("akeno:mime"),                    // MIME types
+    Router = require("akeno:router"),                     // Router utilities
+
+    domainRouter = new Router.DomainRouter(),                   // Global router instance
+
     // - Authentication and security
     bcrypt = require("bcrypt"),                           // Secure hashing
     crypto = require('crypto'),                           // Cryptographic utilities
@@ -42,13 +48,9 @@ const
     KeyStorage = require("./core/kvdb"),                  // Key-value database (WARNING: will soon be deprecated)
 
     // Local modules
-    { ipc_server } = require("./core/ipc"),               // IPC server
+    { ipc_server } = require("akeno:ipc"),                // IPC server
     { parse, configTools } = require("./core/parser")     // Parser
 ;
-
-
-// Module aliases
-require('module-alias/register');
 
 
 // Misc constants
@@ -102,39 +104,43 @@ function resolve(res, req) {
     const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
     req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
 
+    if(req.domain.startsWith("www.") && backend.config.getBlock("web").get("www-redirect", Boolean, true)) {
+        res.writeStatus("301 Moved Permanently");
+        res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
+        res.end();
+        return;
+    }
+
+    // TODO: More flexible CORS handling, though I don't know how to approach this yet, preflight requests are such a stupid idea.
+    if(req.method === "OPTIONS"){
+        backend.helper.corsHeaders(req, res);
+        res.writeHeader("Cache-Control", "max-age=1382400");
+        res.writeHeader("Access-Control-Max-Age", "1382400");
+        res.end();
+        return;
+    }
+
     try {
         req.path = decodeURIComponent(req.getUrl());
     } catch (e) {
-        req.path = req.getUrl();
-        backend.warn("Failed to decode URL:", req.path)
+        res.writeStatus("400 Bad Request").end("Malformed URL");
+        return;
     }
 
     req.secure = Boolean(this.requestFlags?.secure);
     req.origin = req.getHeader('origin');
 
-    if(req.method === "OPTIONS"){
-        backend.helper.corsHeaders(req, res)
-        res.writeHeader("Cache-Control", "max-age=1382400");
-        res.writeHeader("Access-Control-Max-Age", "1382400");
-        res.end();
-        return
+    if(req.method !== "GET"){
+        req.contentType = req.getHeader("content-type");
+        req.contentLength = req.getHeader("content-length");
     }
 
-    const timeout = setTimeout(() => {
-        try {
-            if(req.abort) return;
-
-            if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
-        } catch {}
-    }, res.timeout || 15000)
-
     res.onAborted(() => {
-        clearTimeout(timeout)
+        // clearTimeout(timeout)
         req.abort = true;
+        res.aborted = true; // Possibly deprecated
     })
 
-
-    // Finally, lets route the request to find a handler.
 
     // A slightly faster implementation compared to .split("/").filter(Boolean)
     req.pathSegments = [];
@@ -146,13 +152,40 @@ function resolve(res, req) {
         }
     }
 
-    let handler = backend.defaultHTTPHandler;
 
-    // TODO: FIXME: Temporary CDN handler, replace with a proper modular router asap
+    // TODO: FIXME: Temporary hostname router, later move this to C++
+    let handler = domainRouter.route(req.domain) || backend.webServerHandler;
 
-    if(req.domain.startsWith("cdn.")){
-        handler = Units.Manager.module("akeno.cdn").HandleRequest;
+    if(typeof handler === "function"){
+        handler(req, res);
+        return;
     }
+
+    if(typeof handler === "object"){
+        if(typeof handler.onRequest === "function"){
+            handler.onRequest(req, res);
+            return;
+        } else if(handler instanceof Units.App){
+            backend.webServerHandler(req, res, handler);
+            return;
+        }
+    }
+    
+    res.writeStatus("400 Bad Request").end("400 Bad Request");
+
+
+
+    // const timeout = setTimeout(() => {
+    //     try {
+    //         if(req.abort) return;
+
+    //         if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
+    //     } catch {}
+    // }, res.timeout || 20000)
+
+    // if(req.domain.startsWith("cdn.")){
+    //     handler = Units.Manager.module("akeno.cdn").HandleRequest;
+    // }
 
     // TODO: Move API handlers to a separate module
     // if(handler === 2){
@@ -167,23 +200,19 @@ function resolve(res, req) {
     //     if(!handler) return backend.helper.error(req, res, 0);
     // }
 
-    if(typeof handler !== "function"){
-        return req.writeStatus("400 Bad Request").end("400 Bad Request")
-    }
+    // handler({
+    //     req,
+    //     res,
+    //     flags: this.requestFlags,
 
-    handler({
-        req,
-        res,
-        flags: this.requestFlags,
+    //     segments: req.pathSegments,
 
-        segments: req.pathSegments,
+    //     // /** @deprecated */
+    //     // shift: () => backend.helper.next(req),
 
-        // /** @deprecated */
-        // shift: () => backend.helper.next(req),
-
-        // /** @deprecated */
-        // error: (error, code, status) => backend.helper.error(req, res, error, code, status)
-    })
+    //     // /** @deprecated */
+    //     // error: (error, code, status) => backend.helper.error(req, res, error, code, status)
+    // })
 }
 
 
@@ -228,7 +257,7 @@ const backend = {
         backend.config = configTools(backend.configRaw);
 
         backend.mode = backend.modes[backend.config.getBlock("system").get("mode", String, "production").toUpperCase()] || backend.modes.PRODUCTION;
-        backend.logLevel = backend.config.getBlock("system").get("logLevel", Number) || backend.mode === backend.modes.DEVELOPMENT? 5 : 3;
+        backend.logLevel = backend.config.getBlock("system").get("logLevel", Number) || (backend.mode === backend.modes.DEVELOPMENT? 5 : 3);
 
         // Enable/disable protocols
         const protocols = backend.config.getBlock("protocols");
@@ -460,6 +489,8 @@ const backend = {
             }
 
             onReload(){
+                if(!this.server || this.enabled) return;
+
                 const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
 
                 if(SNIDomains && SNIDomains.length > 0) for(const domain of SNIDomains) {
@@ -768,7 +799,9 @@ const backend = {
 
     trustedOrigins: new Set,
 
-    resolve
+    resolve,
+
+    domainRouter
 }
 
 // We do this here to make code completions work in VSCode
@@ -799,7 +832,7 @@ db.apps = db.storages.main.openDbi("app.metadata", {}, true);
 
 Units.Manager.loadModule("./core/web");
 
-backend.defaultHTTPHandler = Units.Manager.module("akeno.web").HandleRequest;
+backend.webServerHandler = Units.Manager.module("akeno.web").onRequest;
 
 process.on('uncaughtException', (error) => {
     backend.fatal("[uncaught error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);

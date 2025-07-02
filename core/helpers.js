@@ -341,7 +341,8 @@ module.exports = {
             this.req = req;
             this.res = res;
 
-            req.contentType = this.type;
+            this.type = req.contentType;
+            this.length = req.contentLength || 0;            
 
             if(!backend.helper.bodyParser.hasBody(req)){
                 req.hasBody = false;
@@ -395,15 +396,7 @@ module.exports = {
         }
 
         static hasBody(req){
-            return req.method === "POST" || (req.hasBody && req.transferProtocol === "qblaze")
-        }
-
-        get type(){
-            return this.req.getHeader("content-type");
-        }
-
-        get length(){
-            return this.req.getHeader("content-length");
+            return req.contentLength > 0 || req.method === "POST" || (req.hasBody && req.transferProtocol === "qblaze")
         }
 
         get data(){

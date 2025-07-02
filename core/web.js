@@ -10,8 +10,6 @@
 
 */
 
-// Section: variables
-
 let
     // Libraries
     fs = require("fs"),
@@ -33,10 +31,9 @@ let
     applicationCache = [], // debug purposes
 
     // Backend object
-    backend,
+    backend = require("akeno:backend"),
 
     // Cache && optimisation helpers
-    assignedDomains = new Map,
     cache = new Map,
 
     // Maximal cache size for binary files per-file.
@@ -121,12 +118,12 @@ class WebApp extends Units.App {
                 }
 
                 if(!enabledDomains.includes(domain)){
-                    assignedDomains.delete(domain);
+                    backend.domainRouter.remove(domain);
                     this.domains.delete(domain);
-                    continue
+                    continue;
                 }
 
-                assignedDomains.set(domain, this);
+                backend.domainRouter.add(domain, this);
                 this.domains.add(domain);
             }
         }
@@ -200,9 +197,13 @@ class WebApp extends Units.App {
         //     backend.apiExtensions[api.attributes] = this.path + "/" + api.attributes[1]
         // }
 
-        // Reload modules
-        for(let [name, module] of this.modules){
-            module.restart()
+        // (Temporary) backend hooks
+        if(this.config.data.has("hook")){
+            const hook = this.config.getBlock("hook");
+            const path = this.path + "/" + hook.get("path", String, "hook.js");
+
+            this.warn("Web application " + this.basename + " has loaded a hook script from " + path + ". This feature may be removed at any time.");
+            this.hook = require(path);
         }
 
         for(let api of this.config.getBlocks("module")){
@@ -235,9 +236,7 @@ const server = new class WebServer extends Units.Module {
         this.registerType("WebApp", WebApp)
     }
 
-    Initialize($){
-        backend = $;
-
+    Initialize(){
         // Constants
         const header = `<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`;
 
@@ -331,16 +330,12 @@ const server = new class WebServer extends Units.Module {
         return backend.helper.send(req, res, cache.content, cache.headers)
     }
 
-    async HandleRequest({ segments, req, res, flags }){
+    async onRequest(req, res, app){
         // This is the main handler/router for websites/webapps.
-
-        if(req.domain.startsWith("www.")) req.domain = req.domain.slice(4);
-
-        const app = flags.app || (assignedDomains.get(req.domain) ?? assignedDomains.get(":default"));
 
         if(!app) return res.cork(() => {
             res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error)
-        })
+        })        
 
         // HTTPS Redirect
         if(backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))){
@@ -354,6 +349,7 @@ const server = new class WebServer extends Units.Module {
             return
         }
 
+        // Check if the client version is supported
         if(app.config.data.has("browserSupport")){
             let browserRequirements = app.config.getBlock("browserSupport");
 
@@ -365,8 +361,20 @@ const server = new class WebServer extends Units.Module {
             }
         }
 
+        // TEMPORARY SOLUTION: Backend hooks
+        if(app.hook && app.hook.onRequest){
+            try {
+                const result = await app.hook.onRequest(req, res);
+                if(result === false) return; // Skip the rest of the request handling
+            } catch (error) {
+                app.error("Error in onRequest hook for app \"" + app.path + "\": ", error);
+                backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
+                return
+            }
+        }
 
-        let url = req.original_url = `/${segments.join("/")}`;
+
+        let url = req.original_url = `/${req.pathSegments.join("/")}`;
 
 
         // Redirects (simple URL redirects)
@@ -388,7 +396,7 @@ const server = new class WebServer extends Units.Module {
             if(target && domain && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
                 return backend.resolve(res, req, { secure: req.secure }, {
                     domain,
-                    path: `/${target}${handle.get("appendPath", Boolean)? `/${segments.join("/")}`: ""}`,
+                    path: `/${target}${handle.get("appendPath", Boolean)? `/${req.pathSegments.join("/")}`: ""}`,
                     virtual: true
                 })
             }
@@ -408,7 +416,7 @@ const server = new class WebServer extends Units.Module {
         }
 
 
-        // *Finally*, handle content (don't worry routes will be cached)
+        // *Finally*, handle content (don't worry routes will be cached <- someday hopefully)
         try {
 
             let file = files_try(app.path + url + ".html", app.path + url + "/index.html", app.path + url);
@@ -604,9 +612,9 @@ const server = new class WebServer extends Units.Module {
     }
 
     list(){
-        for(let app of applicationCache){
-            app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain).path === app.path)
-        }
+        // for(let app of applicationCache){
+        //     app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain).path === app.path)
+        // }
 
         return applicationCache
     }
@@ -642,13 +650,14 @@ const server = new class WebServer extends Units.Module {
     listDomains(app_path){
         if(!(app_path = this.util.getApp(app_path))) return false;
 
-        let list = [];
+        // let list = [];
 
-        for(domain in assignedDomains.keys()){
-            if(assignedDomains.get(domain).path === app_path) list.push(domain);
-        }
+        // for(domain in assignedDomains.keys()){
+        //     if(assignedDomains.get(domain).path === app_path) list.push(domain);
+        // }
 
-        return list;
+        // return list;
+        return ["Temporarily disabled"];
     }
 
     reloadApp(app_path = null){
@@ -659,9 +668,12 @@ const server = new class WebServer extends Units.Module {
     getDomain(app_path){
         if(!(app_path = this.util.getApp(app_path))) return false;
 
-        for(domain in assignedDomains.keys()){
-            if(assignedDomains.get(domain).path === req.getQuery(app_path)) return domain;
-        }
+        // for(domain in assignedDomains.keys()){
+        //     if(assignedDomains.get(domain).path === req.getQuery(app_path)) return domain;
+        // }
+
+
+        return ["Temporarily disabled"];
 
         return "";
     }
@@ -670,7 +682,7 @@ const server = new class WebServer extends Units.Module {
         if(!(app_path = this.util.getApp(app_path))) return false;
 
         let random = backend.uuid();
-        assignedDomains.set(random, applications.get(app_path));
+        backend.domainRouter.add(random, applications.get(app_path));
 
         return random;
     }
@@ -897,7 +909,7 @@ function initParser(header){
 
                     switch(attrib){
                         case "bootstrap-icons":
-                            this.write(`<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.11.3"}/font/bootstrap-icons.min.css">`)
+                            this.write(`<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.13.1"}/font/bootstrap-icons.min.css">`)
                             break;
 
                         case "fa-icons":
