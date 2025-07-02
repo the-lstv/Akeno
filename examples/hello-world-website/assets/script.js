@@ -4,6 +4,6 @@
    When you make a change to this file, the cache will be automatically refreshed, both on server and client!
 */
 
-addEventListener('load', () => {
+window.addEventListener('load', () => {
     console.log("Hello world!");
 })

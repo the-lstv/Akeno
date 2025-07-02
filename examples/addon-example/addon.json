@@ -1,0 +1,13 @@
+{
+    "name": "Example Addon",
+    "id": "akeno.example-addon",
+    "version": "1.0",
+
+    "description": "Example addon for demonstration purposes.",
+    "author": "Your Name",
+    "license": "MIT",
+
+    "akenoVersion": ">=1.5.9",
+
+    "main": "index.js"
+}

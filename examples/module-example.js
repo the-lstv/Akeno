@@ -1,17 +1,19 @@
-
-
 // Sample Akeno Module
 
-const Units = require("@akeno/unit");
+const Units = require("akeno:units");
 
-module.exports = new class MyModule extends Units.Module {
+class MyModule extends Units.Module {
     constructor() {
         super({
             name: "My amazing module",
-            id: "com.yourname.example",
+            id: "com.name.example",
             version: "1.0.0"
         })
     }
 
-    // ...
+    doSomething() {
+        return "Hi";
+    }
 }
+
+module.exports = new MyModule();

@@ -15,10 +15,11 @@
 - Async file operations
 - Re-added cache timeout
 - helper.nextSegment() replaces the deprecated helper.next()
+- Bugfixes and performance improvements
 
 ## New in 1.6.1-beta
 - Added a new DomainRouter module, which handles internal hostname routing
-- Apps can now register hostnames more easily via an uniform API, with pattern and wildcard support (eg. `*.example.{com,net}`)
+- Apps can now register hostnames more easily via a uniform API, with group and wildcard support (eg. `*.example.{com,net}`)
 
 ## New in 1.6.0-beta
 - **MAJOR** changes all around (basically, preparing for a 2.0.0 release)
