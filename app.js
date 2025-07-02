@@ -2,800 +2,250 @@
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
 
-    Last modified: 2024
+    Last modified: 2025
     License: GPL-3.0
-    Version: 1.5.7
     See: https://github.com/the-lstv/akeno
 */
 
+// Module aliases
+const package = require("./package.json");
+require('module-alias/register');
 
+const Units = require("akeno:units");
+
+
+// Global variables
 let
-    version = "1.5.7",
-
-    since_startup = performance.now(),
-
-    // Modules
-    uws = require('uWebSockets.js'),
-    fastJson = require("fast-json-stringify"),
-    fs = require("fs"),
-
-    { ipc_server } = require("./core/ipc"),
-    ipc,
-
-    app,
-    SSLApp,
-    H3App,
-
-    ModuleManager = require("./core/module"),
-
-    // Storage/cache managers
-    KeyStorage = require("./core/kvdb"),
-    lsdb,
-
-    bcrypt = require("bcrypt"),     // Secure hashing
-    crypto = require('crypto'),     // Cryptographic utils
-    uuid = (require("uuid")).v4,    // UUID
-    jwt = require('jsonwebtoken'),  // Web tokens
-
-    // Config parser
-    { parse, stringify, merge, configTools } = require("./core/parser"),
-    // { proxyReq, proxyWebSocket } = require("./core/proxy"),
-
-    { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),
-
-    // For code compression
-    CleanCSS = new (require('clean-css')),
-    UglifyJS = require("uglify-js")
+    version = new Units.Version(package.version)
 ;
 
 
-try {
-    // Disable uWebSockets version header, remove to re-enable
-    uws._cfg('999999990007');
-} catch (error) {}
+// Modules
+const
+    // - Basic modules
+    fs = require("node:fs"),                              // File system
+    uws = require('uWebSockets.js'),                      // uWebSockets
+    uuid = (require("uuid")).v4,                          // UUIDv4
+    fastJson = require("fast-json-stringify"),            // Fast JSON serializer
+    { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),  // XXHash
 
+    MimeTypes = require("akeno:mime"),                    // MIME types
+    Router = require("akeno:router"),                     // Router utilities
+
+    domainRouter = new Router.DomainRouter(),                   // Global router instance
+
+    // - Authentication and security
+    bcrypt = require("bcrypt"),                           // Secure hashing
+    crypto = require('crypto'),                           // Cryptographic utilities
+    jwt = require('jsonwebtoken'),                        // Web tokens
+
+    // Compression
+    zlib = require("node:zlib"),                          // Gzip compression
+    CleanCSS = new (require('clean-css')),                // CSS minifier
+    UglifyJS = require("uglify-js"),                      // JS minifier
+
+    // - Database
+    KeyStorage = require("./core/kvdb"),                  // Key-value database (WARNING: will soon be deprecated)
+
+    // Local modules
+    { ipc_server } = require("akeno:ipc"),                // IPC server
+    { parse, configTools } = require("./core/parser")     // Parser
+;
+
+
+// Misc constants
+const PATH = __dirname + "/";
 const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_ARRAY = Object.freeze([]);
 const EMPTY_BUFFER = Buffer.alloc(0);
+const SINCE_STARTUP = performance.now();
+
+const IS_NODE_INSPECTOR_ENABLED = !!process.execArgv.find(arg => arg.startsWith("--inspect"));
+let JWT_KEY = process.env.AKENO_KEY;
 
 
-let
-    // Globals
-    AddonCache = {},
-
-    API = { handlers: new Map },
-
-    PATH = __dirname + "/",
+// Open databases [TODO: to be updated]
+const db = {
+    storages: {
+        // - Main database
+        main: KeyStorage.openDb(PATH, "db/main"),
     
-    total_hits,
+        // - Data database
+        data: KeyStorage.openDb(PATH, "db/data"),
+    
+        // - Cache database
+        cache: KeyStorage.openDb(PATH, "db/cache")
+    }
+}
 
-    domainRouter = new Map,
 
-    // TODO: you know what to do :sob:
-    trustedOrigins = new Set(["https://lstv.space", "https://lstv.test", "http://lstv.test", "https://dev.lstv.test", "https://dev.lstv.space"])
-;
+/**
+* Global HTTP request resolver
+* Note: Do not call this function directly, define a protocol and then .bind it instead.
+* TODO: Move this to the C++ side
+* @param {HttpResponse} res
+* @param {HttpRequest} req
+* @example
+* const myHandler = backend.resolve.bind(myProtocol);
+* myHandler(res, req);
+*/
+
+function resolve(res, req) {
+    if(!(this instanceof Units.Protocol)) {
+        throw new TypeError("resolve() must be called with Units.Protocol as context");
+    }
+
+    if(backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING){
+        req.begin = performance.now();
+    }
+
+    req.method = req.getMethod().toUpperCase();
+
+    const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
+    req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
+
+    if(req.domain.startsWith("www.") && backend.config.getBlock("web").get("www-redirect", Boolean, true)) {
+        res.writeStatus("301 Moved Permanently");
+        res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
+        res.end();
+        return;
+    }
+
+    // TODO: More flexible CORS handling, though I don't know how to approach this yet, preflight requests are such a stupid idea.
+    if(req.method === "OPTIONS"){
+        backend.helper.corsHeaders(req, res);
+        res.writeHeader("Cache-Control", "max-age=1382400");
+        res.writeHeader("Access-Control-Max-Age", "1382400");
+        res.end();
+        return;
+    }
+
+    try {
+        req.path = decodeURIComponent(req.getUrl());
+    } catch (e) {
+        res.writeStatus("400 Bad Request").end("Malformed URL");
+        return;
+    }
+
+    req.secure = Boolean(this.requestFlags?.secure);
+    req.origin = req.getHeader('origin');
+
+    if(req.method !== "GET"){
+        req.contentType = req.getHeader("content-type");
+        req.contentLength = req.getHeader("content-length");
+    }
+
+    res.onAborted(() => {
+        // clearTimeout(timeout)
+        req.abort = true;
+        res.aborted = true; // Possibly deprecated
+    })
 
 
-function KeyDB(name){
-    const path = PATH + name;
-
-    if(name.startsWith("db/")){
-        if(!fs.existsSync(path)){
-            fs.mkdirSync(path)
+    // A slightly faster implementation compared to .split("/").filter(Boolean)
+    req.pathSegments = [];
+    let segStart = 1;
+    for(let i = 1; i <= req.path.length; i++){
+        if(req.path.charCodeAt(i) === 47 || i === req.path.length) {
+            if(i > segStart) req.pathSegments.push(req.path.slice(segStart, i));
+            segStart = i + 1;
         }
-    } else throw new Error("Invalid database path");
-
-    return new KeyStorage(path)
-}
-
-
-// Open databases
-const cache_db = new KeyDB("db/cache");
-const data_db = new KeyDB("db/data");
-
-cache_db.open();
-data_db.open();
-
-const kvdb = {
-    compressionCache: cache_db.openDbi("compression_cache", { keyIsUint32: true }, true),
-    generalCache: cache_db.openDbi("general_cache", {}, true),
-    apps: data_db.openDbi("apps_data", {}, true),
-}
-
-
-function initialize(){
-    if (process.platform !== 'linux') {
-        console.warn(`[system] Warning: Your platform (${process.platform}) has experimental support. Internal API server is disabled and the CLI will not work as expected. Akeno is currently only supported on Linux.`);
     }
 
-    else {
-        const socketPath = (backend.config.block("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
-    
-        // Internal ipc server
-        ipc = new ipc_server({
-            onRequest(socket, request, respond){
-                
-                const command = typeof request === "string"? (request = [request] && request[0]): request[0];
-    
-                switch(command){
-                    case "ping":
-                        respond(null, {
-                            backend_path: PATH,
-                            version,
-                            isDev,
-                            server_enabled
-                        })
-                        break
-    
-                    case "usage":
-                        const res = {
-                            mem: process.memoryUsage(),
-                            cpu: process.cpuUsage(),
-                            uptime: process.uptime(),
-                            backend_path: PATH,
-                            version,
-                            isDev,
-                            server_enabled,
-                            modules: {
-                                count: ModuleManager.modules.size,
-                                sample: [...ModuleManager.modules.keys()]
-                            }
-                        };
-    
-                        // Calculate CPU usage in percentages
-                        if(request[1] === "cpu") {
-                            setTimeout(() => {
-                                const endUsage = process.cpuUsage(res.cpu);
-                                const userTime = endUsage.user / 1000;
-                                const systemTime = endUsage.system / 1000;
-    
-                                res.cpu.usage = ((userTime + systemTime) / 200) * 100
-                                respond(null, res)
-                            }, 200);
-                        } else respond(null, res);
-                        break
-    
-                    case "web.list":
-                        respond(null, backend.addon("core/web").util.list())
-                        break
-    
-                    case "web.list.domains":
-                        respond(null, backend.addon("core/web").util.listDomains(request[1]))
-                        break
-    
-                    case "web.list.getDomain":
-                        respond(null, backend.addon("core/web").util.getDomain(request[1]))
-                        break
-    
-                    case "web.enable":
-                        respond(null, backend.addon("core/web").util.enable(request[1]))
-                        break
-    
-                    case "web.disable":
-                        respond(null, backend.addon("core/web").util.disable(request[1]))
-                        break
-    
-                    case "web.reload":
-                        respond(null, backend.addon("core/web").util.reload(request[1]))
-                        break
-    
-                    case "web.tempDomain":
-                        respond(null, backend.addon("core/web").util.tempDomain(request[1]))
-                        break
-    
-                    default:
-                        respond("Invalid command")
-                }
-    
-            }
-        })
-    
-        ipc.listen(socketPath, () => {
-            console.log(`[system] IPC socket is listening on ${socketPath}`)
-        })
+
+    // TODO: FIXME: Temporary hostname router, later move this to C++
+    let handler = domainRouter.route(req.domain) || backend.webServerHandler;
+
+    if(typeof handler === "function"){
+        handler(req, res);
+        return;
     }
 
-    if (!server_enabled) return;
-
-    backend.log("Initializing the server...")
-
-    for(let version of API.handlers.values()){
-        if(version.Initialize) version.Initialize(backend)
+    if(typeof handler === "object"){
+        if(typeof handler.onRequest === "function"){
+            handler.onRequest(req, res);
+            return;
+        } else if(handler instanceof Units.App){
+            backend.webServerHandler(req, res, handler);
+            return;
+        }
     }
-
-    // Websocket handler
-    const wss = {
-
-        // idleTimeout: 32,
-        // maxBackpressure: 1024,
-        maxPayloadLength: backend.config.block("websocket").get("maxPayloadLength", Number) || 32 * 1024,
-        compression: uws[backend.config.block("websocket").get("compression", String)] || uws.DEDICATED_COMPRESSOR_32KB,
-
-        sendPingsAutomatically: true,
-
-        upgrade(res, req, context) {
-
-            // Upgrading a HTTP connection to a WebSocket
-
-            res.onAborted(() => {
-                continueUpgrade = false
-            })
-
-            let host = req.getHeader("host"), handler;
+    
+    res.writeStatus("400 Bad Request").end("400 Bad Request");
 
 
-            // Handle proxied websockets when needed
-            // if(shouldProxy(req, res, true, true, context)) return;
 
+    // const timeout = setTimeout(() => {
+    //     try {
+    //         if(req.abort) return;
 
-            /**
-             * @warning This router is currently outdated and will be replaced in the future.
-             */
+    //         if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
+    //     } catch {}
+    // }, res.timeout || 20000)
 
-            let segments = req.getUrl().split("/").filter(Boolean), continueUpgrade = true;
-            
-            const versionCode = req.pathSegments.shift();
-            const firstChar = versionCode && versionCode.charCodeAt(0);
+    // if(req.domain.startsWith("cdn.")){
+    //     handler = Units.Manager.module("akeno.cdn").HandleRequest;
+    // }
 
-            if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
-            
-            const api = API.handlers.get(parseInt(versionCode.slice(1), 10));
-            handler = api && api.HandleRequest;
+    // TODO: Move API handlers to a separate module
+    // if(handler === 2){
+    //     const versionCode = req.pathSegments.shift();
+    //     const firstChar = versionCode && versionCode.charCodeAt(0);
 
-            if(!handler) return backend.helper.error(req, res, 0);
-
-            if(!handler || !handler.HandleSocket) return res.end();
-
-            if(continueUpgrade) res.upgrade({
-                uuid: uuid(),
-                url: req.getUrl(),
-                query: req.getQuery(),
-                host,
-                ip: res.getRemoteAddress(),
-                ipAsText: res.getRemoteAddressAsText(),
-                handler: handler.HandleSocket,
-                segments
-            }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
-        },
-
-        open(ws) {
-            if(ws.handler.open) ws.handler.open(ws);
-        },
+    //     if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
         
-        message(ws, message, isBinary) {
-            if(ws.handler.message) ws.handler.message(ws, message, isBinary);
-        },
-        
-        close(ws, code, message) {
-            if(ws.handler.close) ws.handler.close(ws, code, message);
-        }
-    };
+    //     const api = API.handlers.get(parseInt(versionCode.slice(1), 10));
+    //     handler = api && api.HandleRequest;
 
+    //     if(!handler) return backend.helper.error(req, res, 0);
+    // }
 
-    const web_handler = backend.addon("core/web").HandleRequest;
+    // handler({
+    //     req,
+    //     res,
+    //     flags: this.requestFlags,
 
-    function resolve(res, req, flags, virtual = null) {
-        if(!flags) flags = EMPTY_OBJECT;
+    //     segments: req.pathSegments,
 
-        if(!virtual) {
+    //     // /** @deprecated */
+    //     // shift: () => backend.helper.next(req),
 
-            req.begin = performance.now()
-
-            // Lowercase is pretty but most code already uses uppercase :(
-            req.method = req.getMethod && req.getMethod().toUpperCase();
-
-            const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
-            req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
-
-            req.path = decodeURIComponent(req.getUrl());
-            req.origin = req.getHeader('origin');
-            req.secure = flags && !!flags.secure; // If the request is done over a secured connection
-
-
-        } else {
-
-            // Should this be kept or removed?
-            // It has a real use-case: selectively handling some requests by different handlers and localy emulating requests.
-            req.getMethod = () => virtual.method;
-            req.getUrl = () => virtual.path;
-            Object.assign(req, virtual)
-            req.virtual = true
-
-        }
-
-
-        // Handle preflight requests
-        // TODO: make this more flexible
-        if(req.method === "OPTIONS"){
-            backend.helper.corsHeaders(req, res)
-            res.writeHeader("Cache-Control", "max-age=1382400").writeHeader("Access-Control-Max-Age", "1382400").end()
-            return
-        }
-
-
-        if(!req._once){
-            req._once = true;
-
-            res.onAborted(() => {
-                clearTimeout(res.timeout)
-                req.abort = true;
-            })
-
-            // Handle proxied requests
-            // if(shouldProxy(req, res, flags)) return;
-
-            // Receive POST body
-            if(req.method === "POST" || (req.hasBody && req.transferProtocol === "qblaze")){
-                req.fullBody = Buffer.alloc(0);
-
-                req.hasFullBody = false;
-                req.contentType = req.getHeader('content-type');
-
-                res.onData((chunk, isLast) => {
-                    req.fullBody = Buffer.concat([req.fullBody, Buffer.from(chunk)]);
-
-                    if (isLast) {
-                        req.hasFullBody = true;
-                        if(req.onFullData) req.onFullData();
-                    }
-                })
-            }
-
-
-            // Default 15s timeout when the request doesnt get answered
-            res.timeout = setTimeout(() => {
-                try {
-                    if(req.abort) return;
-
-                    if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
-                } catch {}
-            }, res.timeout || 15000)
-        }
-
-
-        // Finally, lets route the request to find a handler.
-
-        // A slightly faster implementation compared to .split("/").filter(Boolean)
-        req.pathSegments = []
-        let last = 0
-        for(let i = 0; i < req.path.length +1; i++){
-            if(req.path.charCodeAt(i) === 47 || i === req.path.length) {
-                if(last !== i) req.pathSegments.push(req.path.slice(last, i));
-                last = i + 1
-            }
-        }
-
-        // Default handler is the web handler
-        let handler = domainRouter.get(req.domain) || web_handler;
-
-        // Handle the built-in API
-        if(handler === 2){
-            const versionCode = req.pathSegments.shift();
-            const firstChar = versionCode && versionCode.charCodeAt(0);
-
-            if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
-            
-            const api = API.handlers.get(parseInt(versionCode.slice(1), 10));
-            handler = api && api.HandleRequest;
-
-            if(!handler) return backend.helper.error(req, res, 0);
-        } else if(typeof handler !== "function"){
-            return req.writeStatus("400 Bad Request").end("400 Bad Request")
-        }
-
-        handler({
-            req,
-            res,
-            flags,
-
-            segments: req.pathSegments,
-
-            /** @deprecated */
-            shift: backend.helper.next(req),
-
-            /** @deprecated */
-            error: (error, code, status) => backend.helper.error(req, res, error, code, status)
-        })
-    }
-
-    backend.exposeToDebugger("router", resolve)
-
-    // Create server instances
-    app = uws.App()
-
-    backend.exposeToDebugger("uws", app)
-
-    // Initialize WebSockets
-    app.ws('/*', wss)
-    
-    // Initialize WebServer
-    app.any('/*', resolve)
-    
-    app.listen(HTTPort, (listenSocket) => {
-        if (listenSocket) {
-            console.log(`[system] Server has started and is listening on port ${HTTPort}! Total hits: ${typeof total_hits === "number"? total_hits: "(not counting)"}, startup took ${(performance.now() - since_startup).toFixed(2)}ms`)
-
-            // Configure SSL
-            if(ssl_enabled) {
-
-                SSLApp = uws.SSLApp();
-                backend.exposeToDebugger("uws_ssl", SSLApp);
-
-                if(h3_enabled){
-                    H3App = uws.H3App({
-                        key_file_name: '/etc/letsencrypt/live/lstv.space/privkey.pem',
-                        cert_file_name: '/etc/letsencrypt/live/lstv.space/fullchain.pem',
-                        passphrase: '1234'
-                    });
-    
-                    // HTTP3 doesn't have WebSockets, do not setup ws listeners.    
-                    H3App.any('/*', (res, req) => resolve(res, req, { secure: true, h3: true }))
-    
-                    backend.exposeToDebugger("uws_h3", H3App)
-                }
-
-
-                SSLApp.ws('/*', wss)
-                SSLApp.any('/*', (res, req) => resolve(res, req, { secure: true }))
-                
-
-                // If sslRouter is defined
-                if(backend.config.block("sslRouter")){
-                    let SNIDomains = backend.config.block("sslRouter").properties.domains;
-    
-                    if(SNIDomains){
-
-                        if(!backend.config.block("sslRouter").properties.certBase || !backend.config.block("sslRouter").properties.keyBase){
-                            return backend.log.error("Could not start server with SSL - you are missing your certificate files (either base or key)!")
-                        }
-
-                        function addSNIRoute(domain) {
-                            SSLApp.addServerName(domain, {
-                                key_file_name:  backend.config.block("sslRouter").properties.keyBase[0].replace("{domain}", domain.replace("*.", "")),
-                                cert_file_name: backend.config.block("sslRouter").properties.certBase[0].replace("{domain}", domain.replace("*.", ""))
-                            })
-
-                            // We still have to include a separate router like so:
-                            SSLApp.domain(domain).any("/*", (res, req) => resolve(res, req, {secure: true})).ws("/*", wss)
-                            // If we do not do this, the domain will respond with ERR_CONNECTION_CLOSED.
-                            // A bit wasteful right? For every domain..
-                        }
-
-                        for(let domain of SNIDomains) {
-                            addSNIRoute(domain)
-
-                            if(domain.startsWith("*.")){
-                                addSNIRoute(domain.replace("*.", ""))
-                            }
-                        }
-
-                        // if(backend.config.block("sslRouter").properties.autoAddDomains){
-                        //     SSLApp.missingServerName((hostname) => {
-                        //         backend.log.warn("You are missing a SSL server name <" + hostname + ">! Trying to use a certificate on the fly.");
-
-                        //         addSNIRoute(hostname)
-                        //     })
-                        // }
-                    }
-                }
-
-                SSLApp.listen(SSLPort, (listenSocket) => {
-                    if (listenSocket) {
-                        console.log(`[system] Listening with SSL on ${SSLPort}!`)
-                    } else backend.log.error("[error] Could not start the SSL server! If you do not need SSL, you can ignore this, but it is recommended to remove it from the config. If you do need SSL, make sure nothing is taking the port you configured (" +SSLPort+ ")")
-                });
-
-                if(h3_enabled){
-                    H3App.listen(H3Port, (listenSocket) => {
-                        if (listenSocket) {
-                            console.log(`[system] HTTP3 Listening with SSL on ${H3Port}!`)
-                        } else backend.log.error("[error] Could not start the HTTP3 server! If you do not need HTTP3, you can ignore this, but it is recommended to remove it from the config. Make sure nothing is taking the port you configured for H3 (" +H3Port+ ")")
-                    });
-                }
-            }
-        } else backend.log.error("[fatal error] Could not start the server on port " + HTTPort + "!")
-    });
-
-    backend.resolve = resolve;
-
-    if(backend.config.block("server").get("preloadWeb", Boolean)) backend.addon("core/web");
+    //     // /** @deprecated */
+    //     // error: (error, code, status) => backend.helper.error(req, res, error, code, status)
+    // })
 }
 
-const jwt_key = process.env.AKENO_KEY;
-const devInspecting = !!process.execArgv.find(arg => arg.startsWith("--inspect"));
 
+// Central backend object
 const backend = {
     version,
 
+    PATH,
     get path(){
         return PATH
     },
 
-    get PATH(){
-        return PATH
-    },
+    mime: MimeTypes,
 
-    helper: {
-        writeHeaders(req, res, headers){
-            if(headers) {
-                res.cork(() => {
-                    for(let header in headers){
-                        if(!headers[header]) return;
-                        res.writeHeader(header, headers[header])
-                    }
-                });
-            }
+    db,
 
-            return backend.helper
+    jwt: {
+        verify(something, options){
+            return jwt.verify(something, JWT_KEY, options)
         },
 
-        types: {
-            json: "application/json; charset=utf-8",
-            js: "text/javascript; charset=utf-8",
-            css: "text/css; charset=utf-8",
-            html: "text/html; charset=utf-8",
-        },
-
-        corsHeaders(req, res, credentials = false) {
-
-            if(trustedOrigins.has(req.origin)){
-                credentials = true
-            }
-            
-            res.cork(() => {
-                res.writeHeader('X-Powered-By', 'Akeno Server/' + version);
-                
-                if(credentials){
-                    res.writeHeader("Access-Control-Allow-Credentials", "true");
-                    res.writeHeader("Access-Control-Allow-Origin", req.origin);
-                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
-                } else {
-                    res.writeHeader('Access-Control-Allow-Origin', '*');
-                    res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");
-                }
-
-                res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,DELETE,OPTIONS");
-
-                if(h3_enabled){
-                    // EXPERIMENTAL: add alt-svc header for HTTP3
-                    res.writeHeader("alt-svc", `h3=":${H3Port}"`)
-                }
-            })
-                
-            return backend.helper
-        },
-
-
-        // This helper should be avoided.
-        // Only use this if: 1) You are lazy; ...
-        send(req, res, data, headers = {}, status){
-            if(req.abort) return;            
-
-            if(data !== undefined && (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof Buffer)) || Array.isArray(data)) {
-                headers["content-type"] = backend.helper.types["json"];    
-                data = JSON.stringify(data);
-            }
-
-            res.cork(() => {
-                res.writeStatus(status || "200 OK")
-
-                if(req.begin) {
-                    res.writeHeader("server-timing", `generation;dur=${performance.now() - req.begin}`)
-                }
-
-                backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers)
-
-                if(data !== undefined) res.end(data)
-            });
-        },
-
-        next(req){
-            if(!req._segmentsIndex) req._segmentsIndex = 0; else req._segmentsIndex ++;
-            return req.pathSegments[req._segmentsIndex] || ""; // Returning null is more correct
-        },
-
-        // This helper should likely be avoided.
-        error(req, res, error, code, status){
-            if(req.abort) return;
-
-            if(typeof error == "number" && backend.Errors[error]){
-                let _code = code;
-                code = error;
-                error = (_code? code : "") + backend.Errors[code]
-            }
-
-            res.cork(() => {
-                res.writeStatus(status || (code >= 400 && code <= 599? String(code) : '400'))
-                backend.helper.corsHeaders(req, res)
-                res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":${(JSON.stringify(error) || '"Unknown error"')}}`);
-            })
-        },
-
-        stream(req, res, stream, totalSize){
-            stream.on('data', (chunk) => {
-                let buffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength), lastOffset = res.getWriteOffset();
-
-                res.cork(() => {
-                    // Try writing the chunk
-                    const [ok, done] = res.tryEnd(buffer, totalSize);
-
-                    if (!done && !ok) {
-                        // Backpressure handling
-                        stream.pause();
-    
-                        // Resume once the client is ready
-                        res.onWritable((offset) => {
-                            const [ok, done] = res.tryEnd(buffer.slice(offset - lastOffset), totalSize);
-    
-                            if (done) {
-                                stream.close();
-                            } else if (ok) {
-                                stream.resume();
-                            }
-    
-                            return ok;
-                        });
-                    } else if (done) stream.close();
-                })
-                
-            });
-
-            stream.on('error', (err) => {
-                res.writeStatus('500 Internal Server Error').end();
-            });
-
-            stream.on('end', () => {
-                res.end();
-            });
-
-            res.onAborted(() => {
-                stream.destroy();
-            });
-        },
-
-        bodyParser: class {
-            constructor(req, res, callback){
-                this.req = req;
-                this.res = res;
-                this.callback = callback;
-            }
-
-            get type(){
-                return this.req.getHeader("content-type")
-            }
-
-            get length(){
-                return this.req.getHeader("content-length")
-            }
-
-            upload(key = "file", hash){
-
-                function done(){
-                    let parts = uws.getParts(this.req.fullBody, this.req.contentType);
-                    this.processFiles(parts, hash, this.callback);
-                }
-
-                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
-
-            }
-
-            processFiles(files, hash, callback){
-                for(let part of files){
-                    part.data = Buffer.from(part.data)
-
-                    if(hash) {
-                        if(hash === "xxh3") part.hash = xxh3.xxh64(part.data).toString(16); else
-                        if(hash === "xxh32") part.hash = xxh32(part.data).toString(16); else
-                        if(hash === "xxh64") part.hash = xxh64(part.data).toString(16); else
-                        if(hash === "xxh128") part.hash = xxh3.xxh128(part.data).toString(16); else
-
-                        part.hash = crypto.createHash('md5').update(part.data).digest('hex');
-                    }
-                }
-
-                callback(files)
-            }
-
-            parts(){
-
-                function done(){
-                    let parts = uws.getParts(this.req.fullBody, this.req.contentType);
-
-                    this.callback(parts)
-                }
-
-                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
-
-            }
-
-            data(){
-                function done(){
-                    this.req.body = {
-                        get data(){
-                            return this.req.fullBody
-                        },
-
-                        get string(){
-                            return this.req.fullBody.toString('utf8');
-                        },
-
-                        get json(){
-                            let data;
-
-                            try{
-                                data = JSON.parse(this.req.fullBody.toString('utf8'));
-                            } catch {
-                                return null
-                            }
-
-                            return data
-                        }
-                    }
-
-                    this.callback(this.req.body)
-                }
-
-
-                if(this.req.hasFullBody) done(); else this.req.onFullData = done;
-            }
-        },
-
-        parseBody(req, res, callback){
-            return new backend.helper.bodyParser(req, res, callback)
+        sign(something, options){
+            return jwt.sign(something, JWT_KEY, options)
         }
     },
 
     refreshConfig(){
-        backend.log("Refreshing configuration")
+        if(backend.config) backend.log("Refreshing configuration");
 
         if(!fs.existsSync(PATH + "/config")){
             backend.log("No main config file found in /config, creating a default config file.")
             fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
         }
-
-        // let alreadyResolved = {}; // Prevent infinite loops
-
-        // TODO: Merge function must be updated
-
-        // function resolveImports(parsed, stack, referer){
-        //     let imports = [];
-
-            
-        //     configTools(parsed).forEach("import", (block, remove) => {
-        //         remove() // remove the block from the config
-
-        //         if(block.attributes.length !== 0){
-        //             let path = block.attributes[0].replace("./", PATH + "/");
-
-        //             if(path === stack) return backend.log.warn("Warning: You have a self-import of \"" + path + "\", stopped import to prevent an infinite loop.");
-
-        //             if(!fs.existsSync(path)){
-        //                 backend.log.warn("Failed import of \"" + path + "\", file not found")
-        //                 return;
-        //             }
-
-        //             imports.push(path)
-        //         }
-        //     })
-
-        //     alreadyResolved[stack] = imports;
-
-        //     for(let path of imports){
-        //         if(stack === referer || (alreadyResolved[path] && alreadyResolved[path].includes(stack))){
-        //             backend.log.warn("Warning: You have a recursive import of \"" + path + "\" in \"" + stack + "\", stopped import to prevent an infinite loop.");
-        //             continue
-        //         }
-
-        //         parsed = merge(parsed, resolveImports(parse(fs.readFileSync(path, "utf8"), {
-        //             strict: true,
-        //             asLookupTable: true
-        //         }), path, stack))
-        //     }
-
-
-
-        //     return parsed
-        // }
 
         let path = PATH + "/config";
 
@@ -805,154 +255,475 @@ const backend = {
         });
 
         backend.config = configTools(backend.configRaw);
+
+        backend.mode = backend.modes[backend.config.getBlock("system").get("mode", String, "production").toUpperCase()] || backend.modes.PRODUCTION;
+        backend.logLevel = backend.config.getBlock("system").get("logLevel", Number) || (backend.mode === backend.modes.DEVELOPMENT? 5 : 3);
+
+        // Enable/disable protocols
+        const protocols = backend.config.getBlock("protocols");
+
+        backend.protocols.ipc.socketPath = (protocols.getBlock("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
+        if(process.platform === 'win32'){
+            const pipeName = (protocols.getBlock("ipc").get("windowsPipeName", String)) || 'akeno.backend.sock';
+            if (/[/\\]/.test(pipeName)) throw new Error('protocols.ipc.windowsPipeName should not contain slashes - make sure you are not adding a full path.');
+            backend.protocols.ipc.socketPath = `\\\\.\\pipe\\${pipeName}`;
+        }
+        backend.protocols.ipc.enabled = protocols.getBlock("ipc").get("enabled", Boolean, true);
+
+        // TODO: Better handling of ports (due to apps being able to request custom ports)
+
+        // Note: setting "enabled" has to be last, as it calls the init() method. Also, ws has to be enabled before HTTP.
+
+        const http_ws_enabled = protocols.getBlock("http").get("websockets", String, "false");
+        backend.protocols.http.ports = protocols.getBlock("http").get(["port", "ports"], Array, [80]);
+        backend.protocols.http.enableWebSockets = http_ws_enabled === "true"? true: http_ws_enabled === "dev-only"? backend.mode === backend.modes.DEVELOPMENT: false;
+
+        backend.protocols.https.ports = protocols.getBlock("https").get(["port", "ports"], Array, [443]);
+        backend.protocols.https.enableWebSockets = protocols.getBlock("https").get("websockets", Boolean, true);
+
+        backend.protocols.h3.ports = protocols.getBlock("h3").get(["port", "ports"], Array, [443]);
+
+        backend.protocols.ws.enabled = backend.protocols.http.enableWebSockets || backend.protocols.https.enableWebSockets;
+        backend.protocols.http.enabled = protocols.getBlock("http").get("enabled", Boolean, true);
+        backend.protocols.https.enabled = protocols.getBlock("https").get("enabled", Boolean, false);
+        backend.protocols.h3.enabled = protocols.getBlock("h3").get("enabled", Boolean, false);
+
+        if(backend.protocols.http.onReload) backend.protocols.http.onReload();
+        if(backend.protocols.https.onReload) backend.protocols.https.onReload();
+
+        // TODO: Add something like "in production only".
+        backend.compression.enabled = backend.config.getBlock("web").get("compress", Boolean, true);
+    },
+
+    exposeToDebugger(key, item){
+        if(!IS_NODE_INSPECTOR_ENABLED) return;
+
+        Object.defineProperty(global, key, {
+            get(){
+                return item
+            }
+        })
+
+        return item
+    },
+
+    broadcast(topic, data, isBinary, compress){
+        if(backend.config.getBlock("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
+    },
+
+    /**
+     * Logs messages to the console with different log levels, colors, and sources.
+     *
+     * @param {string|any[]} data - The log message(s) as a string or an array of values to output.
+     * @param {number} [level=2] - The log level (0: Debug, 1: Info (Verbose), 2: Info, 3: Warning, 4: Error, 5: Fatal).
+     * @param {string} [source="api"] - The source of the log message.
+     *
+     * @example
+     * writeLog(['User created successfully'], 1, 'user-service');
+     */
+    writeLog(data, level = 2, source = "api"){
+        if(level < (5 - backend.logLevel)) return;
+
+        const color = level >= 4 ? "1;31" : level === 3 ? "1;33" : "36";
+        const consoleFunction = console[level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log"];
+        const sourceName = typeof source === "string" ? source : source?.name || "unknown";
+
+        const tag = `${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`;
+
+        if(!Array.isArray(data)){
+            consoleFunction(tag, data);
+        } else {
+            consoleFunction(tag, ...data);
+        }
+    },
+
+    constants: {
+        EMPTY_OBJECT, EMPTY_ARRAY, EMPTY_BUFFER, SINCE_STARTUP,
+        IS_NODE_INSPECTOR_ENABLED,
+
+        MIN_COMPRESSION_SIZE: 1024,
+    },
+
+    mode: 0,
+
+    modes: new Units.IndexedEnum([
+        "PRODUCTION",
+        "DEVELOPMENT",
+        "TESTING",
+        "MAINTENANCE"
+    ]),
+
+    protocols: {
+        ipc: new class IPCProtocol extends Units.Protocol {
+            constructor(){
+                super({
+                    name: "IPC",
+                    protocol: "ipc",
+                    type: "ipc"
+                })
+            }
+
+            init() {
+                // Internal ipc server
+                this.server = new ipc_server({
+                    onRequest(socket, request, respond){
+
+                        const full_path = typeof request === "string"? (request = [request] && request[0]): request[0];
+
+                        const index = target.indexOf(".");
+                        const target = index !== -1? target.slice(0, index): target;
+                        const path = index !== -1? target.slice(index + 1): full_path;
+
+                        switch(target){
+                            case "ping":
+                                respond(null, {
+                                    backend_path: PATH,
+                                    version,
+                                    mode: backend.modes.get(backend.mode),
+                                })
+                                break
+
+                            case "usage":
+                                const res = {
+                                    mem: process.memoryUsage(),
+                                    cpu: process.cpuUsage(),
+                                    uptime: process.uptime(),
+                                    backend_path: PATH,
+                                    mode: backend.modes.get(backend.mode),
+                                    version,
+                                    modules: {
+                                        count: Units.Manager.count,
+                                        sample: Units.Manager.list(),
+                                    }
+                                };
+
+                                // Calculate CPU usage in percentages
+                                if(request[1] === "cpu") {
+                                    setTimeout(() => {
+                                        const endUsage = process.cpuUsage(res.cpu);
+                                        const userTime = endUsage.user / 1000;
+                                        const systemTime = endUsage.system / 1000;
+
+                                        res.cpu.usage = ((userTime + systemTime) / 200) * 100
+                                        respond(null, res)
+                                    }, 200);
+                                } else respond(null, res);
+                                break
+
+                            default:
+                                const targetModule = Units.module(target);
+
+                                if(targetModule && targetModule.onIPCRequest){
+                                    targetModule.onIPCRequest(path, request, respond);
+                                } else {
+                                    respond("Invalid command")
+                                }
+                        }
+
+                    }
+                })
+            }
+
+            enable() {
+                if(!this._initialized){
+                    this._initialized = true;
+                    this.init();
+                }
+
+                this.server.listen(this.socketPath, () => {
+                    this.log(`Listening on ${this.socketPath}`)
+                })
+            }
+
+            disable() {
+                this.server.close(() => {
+                    this.log(`Closed`)
+                })
+            }
+        },
+
+        http: new class HTTPProtocol extends Units.HTTPProtocol {
+            constructor(){
+                super({
+                    name: "HTTP",
+                    protocol: "http",
+                    type: "http"
+                })
+
+                this.requestFlags = {
+                    secure: false
+                }
+
+                this.defaultResolver = resolve.bind(this);
+
+                this.ports = [];
+            }
+
+            init() {
+                this.server = uws.App();
+                this.server.any("/*", this.defaultResolver);
+
+                if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
+            }
+        },
+
+        // TODO: Allow multiple App/SSLApp/H3App instances, maybe through some abstract interface
+
+        https: new class HTTPSProtocol extends Units.HTTPProtocol {
+            constructor(){
+                super({
+                    name: "HTTPS",
+                    protocol: "https",
+                    type: "http"
+                })
+
+                this.requestFlags = {
+                    secure: true
+                }
+
+                this.defaultResolver = resolve.bind(this);
+
+                this.ports = [];
+
+                this.SNINames = new Set();
+            }
+
+            onReload(){
+                if(!this.server || this.enabled) return;
+
+                const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
+
+                if(SNIDomains && SNIDomains.length > 0) for(const domain of SNIDomains) {
+                    this.addSNIRoute(domain);
+
+                    // Not sure if we should be adding a root domain handler by default.
+                    if(domain.startsWith("*.")){
+                        this.addSNIRoute(domain.replace("*.", ""));
+                    }
+                }
+            }
+
+            addSNIRoute(domain, key = null, cert = null) {
+                if(this.SNINames.has(domain)) {
+                    return false;
+                }
+
+                this.server.addServerName(domain, {
+                    key_file_name:  key  || backend.config.getBlock("ssl").get("keyBase", String, "") .replace("{domain}", domain.replace("*.", "")),
+                    cert_file_name: cert || backend.config.getBlock("ssl").get("certBase", String, "").replace("{domain}", domain.replace("*.", ""))
+                })
+
+                // TODO: Better routing options
+                const route = this.server.domain(domain);
+
+                this.SNINames.add(domain);
+
+                route.any("/*", this.defaultResolver);
+
+                if(this.enableWebSockets) route.ws("/*", backend.protocols.ws.options);
+                return true;
+            }
+
+            init() {
+                // TODO: Support passphrases
+
+                const default_key = backend.config.getBlock("ssl").get("key", String, null);
+                const default_cert = backend.config.getBlock("ssl").get("cert", String, null);
+
+                const ssl_config = (default_key && default_cert)? {
+                    key_file_name: default_key,
+                    cert_file_name: default_cert
+                }: null;
+
+                // No, you can't put the ternary inside the constructor.
+                this.server = ssl_config? uws.SSLApp(ssl_config): uws.SSLApp();
+                this.server.any("/*", this.defaultResolver);
+
+                // if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
+            }
+        },
+
+        h3: new class H3Protocol extends Units.HTTPProtocol {
+            constructor(){
+                super({
+                    name: "HTTP3",
+                    protocol: "h3",
+                    type: "http"
+                })
+
+                this.requestFlags = {
+                    secure: true,
+                    h3: true
+                }
+
+                this.defaultResolver = resolve.bind(this);
+
+                this.ports = [];
+            }
+
+            init() {
+                this.server = uws.H3App();
+                this.server.any("/*", this.defaultResolver);
+            }
+        },
+
+        ws: new class WebSocketProtocol extends Units.Protocol {
+            constructor(){
+                super({
+                    name: "WebSocket",
+                    protocol: "ws",
+                    type: "ws"
+                })
+            }
+
+            init() {
+                // TODO: In the future, this could be moved to the C++ side
+                this.options = {
+                    idleTimeout: backend.config.getBlock("websocket").get("idleTimeout", Number) || 60,
+                    maxBackpressure: backend.config.getBlock("websocket").get("maxBackpressure", Number) || 1024 * 1024,
+                    maxPayloadLength: backend.config.getBlock("websocket").get("maxPayloadLength", Number) || 32 * 1024,
+                    compression: uws[backend.config.getBlock("websocket").get("compression", String, "DEDICATED_COMPRESSOR_32KB").toLowerCase()] || uws.DEDICATED_COMPRESSOR_32KB,
+            
+                    sendPingsAutomatically: true,
+
+                    upgrade(res, req, context) {
+                    },
+
+                    open(ws) {
+                        if(ws.handler.open) ws.handler.open(ws);
+                    },
+                    
+                    message(ws, message, isBinary) {
+                        if(ws.handler.message) ws.handler.message(ws, message, isBinary);
+                    },
+                    
+                    close(ws, code, message) {
+                        if(ws.handler.close) ws.handler.close(ws, code, message);
+                    }
+                };
+            }
+
+            enable() {
+                if(!this._initialized){
+                    this._initialized = true;
+                    this.init();
+                }
+            }
+        }
     },
 
     compression: {
 
+        // If to enable compression, overriden by the config - actual code may not, but should respect this.
+        enabled: true,
+
+        format: new Units.IndexedEnum([
+            "GZIP",
+            "DEFLATE",
+            "BROTLI",
+            "JS",
+            "CSS",
+            "JSON"
+        ]),
+
+        compress(buffer, format = 0){
+            if(!(buffer instanceof Buffer)) {
+                buffer = Buffer.from(buffer);
+            }
+
+            if(!buffer || !buffer.length) return buffer;
+
+            if(typeof format === "string") {
+                format = backend.compression.format[format.toUpperCase()];
+            }
+
+            if(typeof format !== "number") {
+                throw new Error(`Invalid compression format: ${format}`);
+            }
+
+            // const hash = xxh32(buffer);
+
+            switch (format) {
+                case backend.compression.format.GZIP:
+                    return zlib.gzipSync(buffer, { level: 6 });
+
+                case backend.compression.format.DEFLATE:
+                    return zlib.deflateSync(buffer, { level: 6 });
+
+                case backend.compression.format.BROTLI:
+                    return zlib.brotliCompressSync(buffer, {
+                        params: {
+                            [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
+                            [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT
+                        }
+                    });
+
+                default:
+                    throw new Error(`Unknown compression format: ${format}`);
+            }
+        },
+
         // Code compression with both disk and memory cache.
-        code(code, isCSS){
-            const hash = xxh32(code);
+        code(data, format){
+            // Sadly no Buffer support yet :(
+            if(typeof data !== "string") {
+                throw new TypeError("A string must be provided for code compression.");
+            }
+
+            if(!data || !data.length) return Buffer.from(data);
+
+            if(typeof format !== "number") {
+                throw new Error(`Invalid compression format: ${format}`);
+            }
+
+            // if (backend.mode === backend.modes.DEVELOPMENT) {
+            //     return Buffer.from(data);
+            // }
+
+            const hash = xxh32(data);
 
             let compressed;
-            // Try to read from memory cache
-            if(compressed = kvdb.compressionCache.getCache(hash)) return compressed;
+
+            if(compressed = db.compressionCache.getCache(hash)) return compressed;
+
 
             // We have no disk nor memory cache, compress on the fly and store.
-            if(!kvdb.compressionCache.has(hash)){
-                compressed = isCSS? CleanCSS.minify(code).styles: UglifyJS.minify(code).code
+            if(!db.compressionCache.has(hash)){
+                switch(format){
+                    case backend.compression.format.JS:
+                        compressed = UglifyJS.minify(data).code;
+                        break;
+
+                    case backend.compression.format.CSS:
+                        compressed = CleanCSS.minify(data).styles;
+                        break;
+
+                    case backend.compression.format.JSON:
+                        compressed = JSON.stringify(JSON.parse(data));
+                        break;
+                }
 
                 // If compression failed, return the original code
-                if(!compressed) return Buffer.from(code);
+                if(!compressed) return Buffer.from(data);
 
                 compressed = Buffer.from(compressed);
 
-                kvdb.compressionCache.commitSet(hash, compressed)
+                db.compressionCache.commitSet(hash, compressed)
                 return compressed;
             }
             
             else {
-                // Read from disk cache
-                return kvdb.compressionCache.get(hash, Buffer)
+                // Read from memory/disk cache
+                return db.compressionCache.get(hash, Buffer)
             }
         }
 
     },
 
-    kvdb,
-
-    KeyDB,
-
-    jwt: {
-        verify(something, options){
-            return jwt.verify(something, jwt_key, options)
-        },
-
-        sign(something, options){
-            return jwt.sign(something, jwt_key, options)
-        }
-    },
-
-    uuid,
-    bcrypt,
-    fastJson,
-
-    app,
-    SSLApp,
-
-    API,
-    apiExtensions: {},
-
-    broadcast(topic, data, isBinary, compress){
-        if(backend.config.block("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
-    },
-
-    writeLog(data, severity = 2, source = "api"){
-        // 0 = Debug (Verbose), 1 = Info (Verbose), 2 = Info, 3 = Warning, 4 = Error, 5 = Important
-
-        if(severity < (5 - backend.logLevel)) return;
-        if(!Array.isArray(data)) return;
-
-        console[severity == 4? "error": severity == 3? "warn": severity < 2? "debug": "log"](`\x1b[${severity == 4? "1;31": "36"}m[${source}]\x1b[0m`, ...data)
-    },
-
-    createLoggerContext(target){
-        let logger = function (...data){
-            backend.writeLog(data, 2, target)
-        }
-
-        logger.debug = function (...data){
-            backend.writeLog(data, 0, target)
-        }
-
-        logger.verbose = function (...data){
-            backend.writeLog(data, 1, target)
-        }
-
-        logger.info = function (...data){
-            backend.writeLog(data, 2, target)
-        }
-
-        logger.warn = function (...data){
-            backend.writeLog(data, 3, target)
-        }
-
-        logger.error = function (...data){
-            backend.writeLog(data, 4, target)
-        }
-
-        logger.impotant = function (...data){
-            backend.writeLog(data, 5, target)
-        }
-
-        return logger
-    },
-
-    addon(name, path){
-        if(!AddonCache[name]){
-            path = path || `./${name.startsWith("core/") ? "" : "addons/"}${name}`;
-
-            backend.log("Loading addon;", name);
-
-            AddonCache[name] = require(path);
-
-            AddonCache[name].log = backend.createLoggerContext(name)
-
-            if(AddonCache[name].Initialize) AddonCache[name].Initialize(backend);
-        }
-
-        return AddonCache[name]
-    },
-
-    ModuleManager,
-
-    Module: ModuleManager.Module,
-
-    module: ModuleManager.loadModule,
-
-    mime: {
-        // My own mimetype checker since the current mimetype library for Node is meh.
-
-        types: null,
-        extensions: null,
-
-        load(){
-            backend.mime.types = JSON.parse(fs.readFileSync(PATH + "/etc/mimetypes.json", "utf8"))
-            backend.mime.extensions = {}
-
-            for(let extension in backend.mime.types){
-                backend.mime.extensions[backend.mime.types[extension]] = extension
-            }
-        },
-
-        getType(extension){
-            if(!backend.mime.types) backend.mime.load();
-            return backend.mime.types[extension] || null
-        },
-
-        getExtension(mimetype){
-            if(!backend.mime.extensions) backend.mime.load();
-            return backend.mime.extensions[mimetype] || null
-        }
+    stringTemplate(strings, ...keys) {
+        return strings.flatMap((str, i) =>
+            [Buffer.from(str), keys[i] != null ? keys[i] : null]
+        ).filter(Boolean);
     },
 
     Errors: {
@@ -965,16 +736,16 @@ const backend = {
         6: "User not found.",
         7: "Username already taken.",
         8: "Email address is already registered.",
-        9: "Your login session has expired. Please log-in again.",
-        10: "Incorrect verification code.", // FIXME: What does this even mean
+        9: null,
+        10: "Incorrect verification code.",
         11: "Invalid password.",
         12: "Authentication failed.",
-        13: "Session/API token missing or expired.", // FIXME: Identical to 9
+        13: "Your login session is missing or expired.",
         14: "This account is suspended.",
-        15: "Forbidden action.", // FIXME: Unclear
+        15: "Forbidden action.",
         16: "Entity not found.",
         17: "Request timed out.",
-        18: "Too many requests. Try again in a few seconds.", // FIXME: Identical to 34/36/429
+        18: "Too many requests. Try again in a few seconds.", // FIXME: Use 429
         19: "Service temporarily unavailable.",
         20: "Service/Feature not enabled. It might first require setup from your panel, is not available (or is paid and you don't have access).",
         21: "Unsupported media type.",
@@ -986,16 +757,16 @@ const backend = {
         27: "This endpoint has been removed from this version of the API. Please migrate your code to the latest API version to keep using it.",
         28: "Access blocked for the suspicion of fraudulent/illegal activity. Contact our support team to get this resolved.",
         29: "This endpoint requires an additional parametter (cannot be called directly)",
-        30: "Invalid method.", // FIXME: Identical to 39
+        30: "Invalid method.", // FIXME: Use 405
         31: "Underlying host could not be resolved.",
-        32: "Underlying host could not resolve this request due to a server error.",
+        32: null,
         33: "Temporarily down due to high demand. Please try again in a few moments.",
-        34: "Global rate-limit has been reached. Please try again in a few moments.",
-        35: "This endpoint may handle sensitive data, so you must use HTTPS. Do not use unsecured connections to avoid your information being vulnerable to attacks.",
-        36: "Rate-Limited. Please try again in a few minutes.",
-        37: "Rate-Limited. You have used all of your requests for a given time period.",
-        38: "Rate-Limited. Please contact support for more information.",
-        39: "Invalid method for this endpoint.",
+        34: null,
+        35: "Unsecured access is not allowed on this endpoint. Please use HTTPS instead.",
+        36: null,
+        37: null,
+        38: null,
+        39: null,
         40: "This is a WebSocket-only endpoint. Use the ws:// or wss:// protocol instead of http.",
         41: "Wrong protocol.",
         42: "Internal error: Configured backend type doesn't have a driver for it. Please contact support.",
@@ -1008,7 +779,7 @@ const backend = {
         49: "Sent data exceed maximum allowed size.",
 
 
-        // HTTP-compatible error codes, this does NOT mean this list is meant for HTTP status codes.
+        // HTTP-compatible error codes, this does not mean this list is for HTTP status codes.
         404: "Not found.",
         500: "Internal server error.",
         503: "Service unavailable.",
@@ -1026,114 +797,78 @@ const backend = {
         502: "Bad gateway.",
     },
 
-    exposeToDebugger(key, thing){
-        if(!devInspecting) return;
+    trustedOrigins: new Set,
 
-        Object.defineProperty(global, key, {
-            get(){
-                return thing
-            }
-        })
+    resolve,
 
-        return thing
-    },
-
-    db: {
-        sql_connections: {},
-
-        sql_open(db, host, user, password){
-            if(!user && !host) {
-                if(!db) db = backend.config.block("database.sql").get("db", String)
-                host = backend.config.block("database.sql").get("host", String)
-                user = backend.config.block("database.sql").get("user", String)
-                password = backend.config.block("database.sql").get("password", String)
-
-                if(!host || !db || !user || !password) {
-                    return null
-                }
-            }
-
-            if(!lsdb) lsdb = require("./addons/lsdb_mysql");
-            if(backend.db.sql_connections[db]) return backend.db.sql_connections[db];
-            return backend.db.sql_connections[db] = lsdb.Server(host, user, password, db)
-        }
-    },
-
-    constants: {
-        EMPTY_OBJECT, EMPTY_ARRAY, EMPTY_BUFFER
-    }
+    domainRouter
 }
 
+// We do this here to make code completions work in VSCode
+Units.Manager.initCore(backend);
 
-backend.log = backend.createLoggerContext("api")
+// Do not rely on this
+global.backend = backend;
 
-backend.refreshConfig()
+module.exports = backend;
 
-const server_enabled = backend.config.block("server").get("enable", Boolean);
-const ssl_enabled = backend.config.block("server").get("enableSSL", Boolean);
-const h3_enabled = backend.config.block("server").get("enableH3", Boolean);
-
-const HTTPort = backend.config.block("server").get("port", Number, 80);
-const SSLPort = backend.config.block("server").get("sslPort", Number, 443);
-const H3Port = backend.config.block("server").get("h3Port", Number, 443);
-
-const isDev = backend.config.block("system").get("developmentMode", Boolean);
+backend.helper = require("./core/helpers");
 
 
-backend.log("Starting Akeno v" + version + " in " + (isDev? "development": "production") + " mode.")
-
-const handlers = {
-    cdn: backend.addon("cdn").HandleRequest,
-    api: 2
-}
 
 
-for (const block of backend.config.blocks("route")) {
-    for(const name of block.attributes) {
-        domainRouter.set(name, handlers[block.get("to", String)])
-    }
-}
+// First initialization
+
+// Load configuration file
+backend.refreshConfig();
+
+db.storages.cache.open();
+db.storages.data.open();
+
+db.compressionCache = db.storages.cache.openDbi("compression", { keyIsUint32: true }, true);
+db.generalCache = db.storages.cache.openDbi("general", {}, true);
+db.apps = db.storages.main.openDbi("app.metadata", {}, true);
 
 
-// Setup API versions/modules
-API.default = backend.config.block("api").get("default", Number, 1)
+Units.Manager.loadModule("./core/web");
 
-for (const block of backend.config.blocks("api.version")) {
-    for(const name of block.attributes) {
-        API.handlers.set(+name, require("./api/" + block.get("module", String)))
-    }
-}
-
-
-backend.isDev = isDev;
-backend.logLevel = backend.config.block("system").get("logLevel", Number) || isDev? 5 : 3;
-
-if(isDev){
-    backend.log("NOTE: API is running in development mode.")
-
-    if(devInspecting){
-        console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
-        console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
-    }
-}
-
-backend.exposeToDebugger("backend", backend)
-backend.exposeToDebugger("addons", AddonCache)
-backend.exposeToDebugger("api", API)
+backend.webServerHandler = Units.Manager.module("akeno.web").onRequest;
 
 process.on('uncaughtException', (error) => {
-    console.debug("[system] [error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
+    backend.fatal("[uncaught error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
 })
 
 process.on('exit', () => {
-    const buffer = Buffer.alloc(4);
-
-    buffer.writeUInt32LE(total_hits, 0);
-    fs.writeFileSync(PATH + "./etc/hits", buffer);
-
     console.log(`[system] API is stopping.`);
 })
 
-initialize()
+backend.log(`Starting \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${(performance.now() - SINCE_STARTUP).toFixed(2)}ms\x1b[0m.`);
 
-module.exports = backend
+if (!JWT_KEY) {
+    JWT_KEY = crypto.randomBytes(32).toString("hex");
+    try {
+        fs.appendFileSync(PATH + ".env", `\nAKENO_KEY=${JWT_KEY}\n`);
+    } catch (err) {
+        console.warn("Warning: Failed to export generated JWT key to .env file.", err);
+    }
+}
+
+try {
+    // Disable uWebSockets version header, remove to re-enable
+    uws._cfg('999999990007');
+} catch (error) {}
+
+Units.Manager.refreshAddons();
+
+if(backend.mode === backend.modes.DEVELOPMENT && IS_NODE_INSPECTOR_ENABLED) {
+    console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
+    console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
+
+    backend.exposeToDebugger("backend", backend)
+    backend.exposeToDebugger("addons", AddonCache)
+    backend.exposeToDebugger("api", API)
+}
+
+if (process.platform !== 'linux') {
+    backend.warn(`Warning: Your platform (${process.platform}) has experimental support. Akeno is currently only officially supported on Linux, so you may run into unexpected issues.${process.platform === 'win32' ? ' You can try using WSL or other types of Linux VM to run this software.' : ''}`);
+}

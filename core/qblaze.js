@@ -3,18 +3,10 @@
 
 /*
 
-    qBlaze is a HIGHLY experimental protocol that emulates HTTP requests over a WebSocket connection.
-    It has minimal overhead and for small, frequent requests to the same origin is VERY fast, many times faster than HTTP 1.1, and can handle thousands of requests at once.
+    Deprecated
+    A revive could be made
 
-    (It requires a special client for connections).
-
-    It is partially compatible with existing HTTP libraries (eg. the fetch API in JS, and uWebSocket HTTP server)
-
-
-    It should be used with EXTREME caution and never 100% relied on.
-
-    By default, akeno sets up your server to route any qBlaze traffic to your regular server, meaning it will respond to the same requests.
-    qBlaze is listening at /quicc of any domain unless disabled.
+    This was basically a HTTP wrapper using WebSockets for transport, implementing the same API as HTTP requests.
 
 */
 

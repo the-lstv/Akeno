@@ -1,9 +1,1864 @@
+/*!
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
 
-
-/* This stylesheet will automatically be compressed and cached on transit!
-   When you make a change to this file, the cache will be automatically refreshed, both on server and client!
+    Last modified: 2025
+    License: GPL-3.0
+    Version: 5.1.1
+    See: https://github.com/thelstv/LS
 */
-
-body {
-    padding: 0 15px;
-}
+[ls-theme=light] {
+    --background: var(--base-90);
+    --color: var(--base-20);
+    --surface-n3: var(--base-100);
+    --surface-n2: var(--base-98);
+    --surface-n1: var(--base-95);
+    --surface-0: var(--base-90);
+    --surface-1: var(--base-85);
+    --surface-2: var(--base-80);
+    --surface-3: var(--base-75);
+    --surface-4: var(--base-70);
+    --surface-5: var(--base-65);
+    --surface-6: var(--base-60);
+    --surface-7: var(--base-55);
+    --surface-8: var(--base-50);
+    --surface-9: var(--base-45);
+    --surface-10: var(--base-40);
+    --surface-top: var(--base-10);
+    --ui-element: var(--base-95);
+    --ui-border: var(--base-40);
+  }
+  [ls-theme=light], [ls-theme=light] [ls-accent], [ls-theme=light] :disabled {
+    --on-background: var(--accent-40);
+    --on-accent: var(--accent-90);
+    --on-transparent: var(--accent-30);
+  }
+  [ls-theme=light] [ls-accent=auto], [ls-theme=light][ls-accent=auto] {
+    --accent: var(--accent-10);
+    --on-accent: var(--accent-95);
+  }
+  
+  [ls-theme=dark], body:not([ls-theme]) {
+    --background: var(--base-10);
+    --color: var(--accent-90);
+    --surface-n3: var(--base-0);
+    --surface-n2: var(--base-6);
+    --surface-n1: var(--base-8);
+    --surface-0: var(--base-10);
+    --surface-1: var(--base-15);
+    --surface-2: var(--base-20);
+    --surface-3: var(--base-25);
+    --surface-4: var(--base-30);
+    --surface-5: var(--base-35);
+    --surface-6: var(--base-40);
+    --surface-7: var(--base-45);
+    --surface-8: var(--base-50);
+    --surface-9: var(--base-55);
+    --surface-10: var(--base-60);
+    --surface-top: var(--base-100);
+    --ui-element: var(--base-20);
+    --ui-border: var(--base-0);
+  }
+  [ls-theme=dark], [ls-theme=dark] [ls-accent], [ls-theme=dark] :disabled, body:not([ls-theme]), body:not([ls-theme]) [ls-accent], body:not([ls-theme]) :disabled {
+    --on-background: var(--accent-70);
+    --on-transparent: var(--accent-80);
+    --on-accent: var(--accent-95);
+  }
+  [ls-theme=dark] [ls-accent=auto], [ls-theme=dark][ls-accent=auto], body:not([ls-theme]) [ls-accent=auto], body:not([ls-theme])[ls-accent=auto] {
+    --accent: var(--accent-90);
+    --on-accent: var(--accent-10);
+  }
+  
+  .ls-checkbox, .ls-radio {
+    padding-left: calc(1em + 10px);
+    position: relative;
+    display: inline-block;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .ls-checkbox > span, .ls-radio > span {
+    width: calc(1em + 2px);
+    height: calc(1em + 2px);
+    position: absolute;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+  }
+  .ls-checkbox > input:checked ~ span::after, .ls-radio > input:checked ~ span::after {
+    display: block;
+  }
+  
+  :is(.ls-checkbox, .ls-radio, .ls-radio-button) > input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute !important;
+  }
+  
+  .ls-checkbox > span::after {
+    content: "";
+    width: 0.2em;
+    height: 0.5em;
+    border: solid var(--on-accent);
+    border-width: 0 0.15em 0.15em 0;
+    -webkit-transform: rotate(45deg);
+    transform: rotate(45deg);
+    display: none;
+    margin-top: -0.1em;
+  }
+  
+  .ls-radio > span::after {
+    content: "";
+    width: 0.5em;
+    height: 0.5em;
+    background: var(--on-accent);
+    display: none;
+  }
+  
+  ls-box {
+    display: block;
+  }
+  ls-box:not(.contained, .color, .inline) {
+    box-shadow: 0 10px 20px 0 rgba(0, 0, 0, 0.1333333333);
+  }
+  ls-box :first-child {
+    margin-top: 0;
+  }
+  ls-box :last-child {
+    margin-bottom: 0;
+  }
+  ls-box:not(.contained) {
+    display: block;
+  }
+  ls-box:not(.inline) {
+    border-radius: var(--border-radius);
+    padding: var(--padding-content-v) var(--padding-content-h);
+  }
+  ls-box.inline {
+    display: inline-block;
+    border-radius: var(--border-radius-small);
+  }
+  ls-box.inline:not(.full-padding) {
+    padding: 0 var(--padding-label-h);
+  }
+  ls-box.inline.pill {
+    border-radius: var(--border-radius-full);
+  }
+  ls-box.inline.pill:not(.full-padding) {
+    padding: 0 var(--padding-label-h-pill);
+  }
+  ls-box::selection {
+    background: var(--accent-mix-40);
+  }
+  
+  ls-div {
+    display: block;
+    margin: var(--margin-content-v) 0;
+  }
+  
+  ls-group {
+    display: inline-flex;
+    margin: var(--margin-control-v) var(--margin-control-h);
+  }
+  ls-group > * {
+    margin: 0 !important;
+  }
+  ls-group.fill {
+    width: 100%;
+  }
+  ls-group.fill > * {
+    width: 100%;
+  }
+  ls-group > *:not(:only-child):not(:first-child, :last-child) {
+    border-radius: 0 !important;
+  }
+  ls-group > *:not(:only-child):first-child {
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+  }
+  ls-group > *:not(:only-child):last-child {
+    border-top-left-radius: 0 !important;
+    border-bottom-left-radius: 0 !important;
+  }
+  
+  #ls-top-layer {
+    position: fixed;
+    z-index: 50000000;
+  }
+  
+  .ls-toast-layer {
+    pointer-events: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 1em;
+    padding-bottom: 1em;
+    gap: 1em;
+  }
+  
+  .ls-toast {
+    pointer-events: all;
+    opacity: 0;
+    padding: 4px var(--padding-control-h-pill);
+    border-radius: 2em;
+    overflow: hidden;
+    transition: opacity 0.2s;
+    -webkit-user-select: none;
+    user-select: none;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    box-shadow: 0 10px 20px 0 rgba(0, 0, 0, 0.1333333333);
+    max-width: 100%;
+    flex-wrap: wrap;
+    word-break: break-word;
+  }
+  
+  .ls-toast.open {
+    opacity: 1;
+  }
+  
+  button.ls-toast-close.ls-toast-close.ls-toast-close {
+    margin: 0;
+    font-size: 1.2em;
+    box-sizing: content-box;
+    margin-left: 12px;
+    margin-right: -10px;
+  }
+  
+  .ls-toast-content {
+    display: inline-block;
+    padding: 0.5em 0;
+  }
+  
+  .ls-toast > i {
+    margin-right: 0.8em;
+    margin-left: -0.4em;
+  }
+  
+  .ls-sidebar-container {
+    display: flex;
+    width: 100%;
+    overflow: hidden;
+    position: relative;
+  }
+  .ls-sidebar-container > .ls-sidebar {
+    width: 260px;
+    display: flex;
+    overflow: hidden;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  
+  .ls-sidebar-items {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    overflow: auto;
+    flex: 1;
+  }
+  
+  .ls-sidebar-item {
+    cursor: pointer;
+    border-radius: var(--border-radius);
+    padding: var(--padding-content-v) var(--padding-content-h);
+    background: var(--elevate);
+  }
+  
+  @media screen and (max-width: 860px) {
+    .ls-sidebar-container > .ls-sidebar {
+      position: absolute;
+      transition: transform 0.2s;
+      height: 100%;
+      z-index: 5;
+    }
+    .ls-sidebar-container:not(.open) > .ls-sidebar {
+      transform: translateX(-100%);
+    }
+  }
+  .ls-sidebar-container > .sidebar-content {
+    padding: 10px 45px;
+    padding-bottom: 145px;
+    flex: 1;
+    overflow: auto;
+  }
+  
+  ls-tab {
+    display: block;
+  }
+  
+  ls-tabs {
+    display: block;
+  }
+  ls-tabs.ls-tabs-styled {
+    display: flex;
+    flex-direction: column;
+  }
+  ls-tabs.ls-tabs-styled .ls-tabs-list {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-bottom: 4px solid var(--ui-element);
+    box-shadow: 0 1px 0 0 var(--elevate-0);
+    padding: 4px 0 0 6px;
+  }
+  ls-tabs.ls-tabs-styled .ls-tabs-content > *:not(.tab-active) {
+    display: none;
+  }
+  ls-tabs.ls-tabs-styled .ls-tab-close.ls-tab-close.ls-tab-close {
+    border-radius: 5px;
+    padding: 0;
+    height: 20px;
+    width: 20px;
+    font-size: large;
+    margin-left: 10px;
+    margin-right: -8px;
+    z-index: 1;
+  }
+  ls-tabs.ls-tabs-styled .ls-tab-handle {
+    cursor: pointer;
+    padding: 4px var(--padding-control-h);
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    --background: none;
+    background: var(--background);
+    transition: background-color 0.1s;
+    white-space: nowrap;
+    user-select: none;
+  }
+  ls-tabs.ls-tabs-styled .ls-tab-handle:hover {
+    --background: var(--accent-mix-10);
+  }
+  ls-tabs.ls-tabs-styled .ls-tab-handle.active {
+    --background: var(--ui-element);
+    z-index: 1;
+    box-shadow: 0 4px 12px 2px rgba(0, 0, 0, 0.1333333333);
+  }
+  ls-tabs.ls-tabs-styled .ls-tab-handle::after, ls-tabs.ls-tabs-styled .ls-tab-handle::before {
+    content: "";
+    position: absolute;
+    background-color: transparent;
+    box-shadow: 0 -24px 0 0 var(--background);
+    bottom: -18px;
+    height: 46px;
+    width: 10px;
+    pointer-events: none;
+    transition: box-shadow 0.1s;
+    z-index: 0;
+  }
+  ls-tabs.ls-tabs-styled .ls-tab-handle::after {
+    transform: rotate(-90deg);
+    left: calc(100% + 18px);
+    border-top-left-radius: 8px;
+  }
+  ls-tabs.ls-tabs-styled .ls-tab-handle::before {
+    transform: rotate(90deg);
+    left: -28px;
+    border-top-right-radius: 8px;
+  }
+  
+  .ls-tootlip-layer {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    display: none;
+  }
+  
+  .ls-tootlip-layer.shown {
+    display: block;
+  }
+  
+  .ls-tooltip-content {
+    position: absolute;
+    background: var(--surface-1);
+    padding: 2px 14px;
+    border: 1px solid var(--ui-border);
+    box-shadow: inset 0 1px 0 0 var(--ui-element);
+    border-radius: var(--border-radius);
+  }
+  
+  :root {
+    --ls-color-navy: rgb(40, 28, 108);
+    --ls-color-blue: rgb(0, 133, 255);
+    --ls-color-pastel-indigo: rgb(70, 118, 181);
+    --ls-color-lapis: rgb(34, 114, 154);
+    --ls-color-teal: rgb(0, 128, 128);
+    --ls-color-pastel-teal: rgb(69, 195, 205);
+    --ls-color-aquamarine: rgb(58, 160, 125);
+    --ls-color-green: rgb(25, 135, 84);
+    --ls-color-lime: rgb(133, 210, 50);
+    --ls-color-neon: rgb(173, 255, 110);
+    --ls-color-yellow: rgb(255, 236, 32);
+    --ls-color-orange: rgb(255, 140, 32);
+    --ls-color-deep-orange: rgb(255, 112, 52);
+    --ls-color-red: rgb(245, 47, 47);
+    --ls-color-rusty-red: rgb(220, 53, 69);
+    --ls-color-pink: rgb(230, 52, 164);
+    --ls-color-hotpink: rgb(245, 100, 169);
+    --ls-color-purple: rgb(155, 77, 175);
+    --ls-color-soap: rgb(210, 190, 235);
+    --ls-color-burple: rgb(81, 101, 246);
+    --ls-color-white: rgb(255, 255, 255);
+    --ls-color-lstv-red: rgb(237, 108, 48);
+    --ls-color-lstv-yellow: rgb(252, 194, 27);
+    --ls-color-lstv-blue: rgb(64, 192, 231);
+    --ls-color-mint: rgb(106, 238, 189);
+    --base-0: rgb(0, 0, 0);
+    --base-100: rgb(255, 255, 255);
+  }
+  
+  [ls-accent=navy] {
+    --base-6: rgb(14, 13, 16);
+    --base-8: rgb(19, 18, 22);
+    --base-10: rgb(23, 23, 27);
+    --base-15: rgb(35, 34, 41);
+    --base-20: rgb(47, 46, 55);
+    --base-25: rgb(59, 57, 69);
+    --base-30: rgb(71, 69, 83);
+    --base-35: rgb(83, 80, 97);
+    --base-40: rgb(95, 92, 111);
+    --base-45: rgb(107, 103, 125);
+    --base-50: rgb(119, 115, 139);
+    --base-55: rgb(132, 129, 151);
+    --base-60: rgb(146, 143, 162);
+    --base-65: rgb(159, 157, 174);
+    --base-70: rgb(173, 171, 185);
+    --base-75: rgb(187, 185, 197);
+    --base-80: rgb(200, 199, 208);
+    --base-85: rgb(214, 213, 220);
+    --base-90: rgb(227, 227, 231);
+    --base-95: rgb(241, 241, 243);
+    --base-98: rgb(249, 249, 250);
+    --accent-10: rgb(14, 10, 40);
+    --accent-20: rgb(29, 20, 81);
+    --accent-30: rgb(44, 31, 121);
+    --accent-35: rgb(52, 36, 141);
+    --accent-40: rgb(59, 41, 162);
+    --accent-45: rgb(67, 47, 182);
+    --accent-50: rgb(74, 52, 202);
+    --accent-55: rgb(92, 72, 207);
+    --accent-60: rgb(110, 93, 212);
+    --accent-70: rgb(146, 133, 223);
+    --accent-80: rgb(183, 174, 233);
+    --accent-90: rgb(219, 214, 244);
+    --accent-95: rgb(237, 234, 249);
+  }
+  
+  [ls-accent=blue], :root {
+    --base-6: rgb(12, 15, 17);
+    --base-8: rgb(17, 20, 23);
+    --base-10: rgb(21, 25, 29);
+    --base-15: rgb(32, 38, 44);
+    --base-20: rgb(42, 51, 59);
+    --base-25: rgb(53, 64, 73);
+    --base-30: rgb(64, 77, 88);
+    --base-35: rgb(74, 89, 103);
+    --base-40: rgb(85, 102, 118);
+    --base-45: rgb(96, 115, 133);
+    --base-50: rgb(107, 128, 147);
+    --base-55: rgb(121, 141, 158);
+    --base-60: rgb(136, 153, 169);
+    --base-65: rgb(151, 166, 180);
+    --base-70: rgb(166, 179, 190);
+    --base-75: rgb(181, 191, 201);
+    --base-80: rgb(195, 204, 212);
+    --base-85: rgb(210, 217, 222);
+    --base-90: rgb(225, 229, 233);
+    --base-95: rgb(240, 242, 244);
+    --base-98: rgb(249, 249, 250);
+    --accent-10: rgb(0, 26, 51);
+    --accent-20: rgb(0, 53, 102);
+    --accent-30: rgb(0, 79, 153);
+    --accent-35: rgb(0, 93, 178);
+    --accent-40: rgb(0, 106, 204);
+    --accent-45: rgb(0, 119, 229);
+    --accent-50: rgb(0, 132, 255);
+    --accent-55: rgb(25, 145, 255);
+    --accent-60: rgb(50, 157, 255);
+    --accent-70: rgb(101, 181, 255);
+    --accent-80: rgb(153, 206, 255);
+    --accent-90: rgb(204, 230, 254);
+    --accent-95: rgb(229, 242, 255);
+  }
+  
+  [ls-accent=pastel-indigo] {
+    --base-6: rgb(14, 15, 16);
+    --base-8: rgb(18, 20, 21);
+    --base-10: rgb(23, 25, 27);
+    --base-15: rgb(35, 37, 40);
+    --base-20: rgb(47, 50, 54);
+    --base-25: rgb(59, 63, 68);
+    --base-30: rgb(71, 75, 81);
+    --base-35: rgb(82, 88, 95);
+    --base-40: rgb(94, 101, 109);
+    --base-45: rgb(106, 113, 122);
+    --base-50: rgb(118, 126, 136);
+    --base-55: rgb(132, 139, 148);
+    --base-60: rgb(145, 152, 160);
+    --base-65: rgb(159, 164, 172);
+    --base-70: rgb(173, 177, 183);
+    --base-75: rgb(186, 190, 195);
+    --base-80: rgb(200, 203, 207);
+    --base-85: rgb(214, 216, 219);
+    --base-90: rgb(227, 229, 231);
+    --base-95: rgb(241, 242, 243);
+    --base-98: rgb(249, 249, 250);
+    --accent-10: rgb(14, 23, 36);
+    --accent-20: rgb(28, 47, 73);
+    --accent-30: rgb(42, 71, 110);
+    --accent-35: rgb(49, 83, 128);
+    --accent-40: rgb(56, 95, 147);
+    --accent-45: rgb(64, 107, 165);
+    --accent-50: rgb(71, 119, 183);
+    --accent-55: rgb(89, 133, 190);
+    --accent-60: rgb(107, 146, 198);
+    --accent-70: rgb(144, 173, 212);
+    --accent-80: rgb(181, 200, 226);
+    --accent-90: rgb(218, 227, 240);
+    --accent-95: rgb(236, 241, 247);
+  }
+  
+  [ls-accent=lapis] {
+    --base-6: rgb(13, 15, 16);
+    --base-8: rgb(18, 21, 22);
+    --base-10: rgb(22, 26, 28);
+    --base-15: rgb(34, 39, 42);
+    --base-20: rgb(45, 52, 56);
+    --base-25: rgb(57, 65, 70);
+    --base-30: rgb(68, 79, 84);
+    --base-35: rgb(80, 92, 98);
+    --base-40: rgb(91, 105, 112);
+    --base-45: rgb(103, 118, 126);
+    --base-50: rgb(114, 131, 140);
+    --base-55: rgb(128, 144, 151);
+    --base-60: rgb(142, 156, 163);
+    --base-65: rgb(156, 168, 174);
+    --base-70: rgb(170, 181, 186);
+    --base-75: rgb(184, 193, 197);
+    --base-80: rgb(198, 205, 209);
+    --base-85: rgb(212, 218, 220);
+    --base-90: rgb(226, 230, 232);
+    --base-95: rgb(240, 242, 243);
+    --base-98: rgb(249, 250, 250);
+    --accent-10: rgb(9, 30, 41);
+    --accent-20: rgb(18, 61, 83);
+    --accent-30: rgb(27, 92, 125);
+    --accent-35: rgb(32, 108, 146);
+    --accent-40: rgb(36, 123, 167);
+    --accent-45: rgb(41, 139, 187);
+    --accent-50: rgb(46, 154, 208);
+    --accent-55: rgb(67, 164, 213);
+    --accent-60: rgb(87, 174, 218);
+    --accent-70: rgb(129, 194, 227);
+    --accent-80: rgb(171, 214, 236);
+    --accent-90: rgb(213, 234, 245);
+    --accent-95: rgb(234, 244, 250);
+  }
+  
+  [ls-accent=teal] {
+    --base-6: rgb(12, 17, 17);
+    --base-8: rgb(17, 23, 23);
+    --base-10: rgb(21, 29, 29);
+    --base-15: rgb(32, 44, 44);
+    --base-20: rgb(42, 59, 59);
+    --base-25: rgb(53, 73, 73);
+    --base-30: rgb(64, 88, 88);
+    --base-35: rgb(74, 103, 103);
+    --base-40: rgb(85, 118, 118);
+    --base-45: rgb(96, 133, 133);
+    --base-50: rgb(107, 147, 147);
+    --base-55: rgb(121, 158, 158);
+    --base-60: rgb(136, 169, 169);
+    --base-65: rgb(151, 180, 180);
+    --base-70: rgb(166, 190, 190);
+    --base-75: rgb(181, 201, 201);
+    --base-80: rgb(195, 212, 212);
+    --base-85: rgb(210, 222, 222);
+    --base-90: rgb(225, 233, 233);
+    --base-95: rgb(240, 244, 244);
+    --base-98: rgb(249, 250, 250);
+    --accent-10: rgb(0, 50, 51);
+    --accent-20: rgb(0, 101, 102);
+    --accent-30: rgb(0, 152, 153);
+    --accent-35: rgb(0, 178, 178);
+    --accent-40: rgb(0, 203, 204);
+    --accent-45: rgb(0, 229, 229);
+    --accent-50: rgb(0, 254, 255);
+    --accent-55: rgb(25, 254, 255);
+    --accent-60: rgb(50, 254, 255);
+    --accent-70: rgb(101, 254, 255);
+    --accent-80: rgb(153, 254, 255);
+    --accent-90: rgb(204, 254, 254);
+    --accent-95: rgb(229, 255, 255);
+  }
+  
+  [ls-accent=pastel-teal] {
+    --base-6: rgb(13, 16, 16);
+    --base-8: rgb(18, 22, 22);
+    --base-10: rgb(23, 27, 27);
+    --base-15: rgb(34, 41, 41);
+    --base-20: rgb(46, 55, 55);
+    --base-25: rgb(57, 68, 69);
+    --base-30: rgb(69, 82, 83);
+    --base-35: rgb(81, 96, 97);
+    --base-40: rgb(92, 110, 111);
+    --base-45: rgb(104, 123, 125);
+    --base-50: rgb(115, 137, 139);
+    --base-55: rgb(129, 149, 150);
+    --base-60: rgb(143, 161, 162);
+    --base-65: rgb(157, 172, 173);
+    --base-70: rgb(171, 184, 185);
+    --base-75: rgb(185, 196, 197);
+    --base-80: rgb(199, 208, 208);
+    --base-85: rgb(213, 219, 220);
+    --base-90: rgb(227, 231, 231);
+    --base-95: rgb(241, 243, 243);
+    --base-98: rgb(249, 250, 250);
+    --accent-10: rgb(10, 38, 40);
+    --accent-20: rgb(21, 76, 80);
+    --accent-30: rgb(32, 114, 120);
+    --accent-35: rgb(37, 133, 140);
+    --accent-40: rgb(43, 152, 160);
+    --accent-45: rgb(48, 171, 180);
+    --accent-50: rgb(54, 190, 200);
+    --accent-55: rgb(74, 196, 206);
+    --accent-60: rgb(94, 203, 211);
+    --accent-70: rgb(134, 216, 222);
+    --accent-80: rgb(174, 229, 233);
+    --accent-90: rgb(214, 242, 244);
+    --accent-95: rgb(234, 248, 249);
+  }
+  
+  [ls-accent=aquamarine] {
+    --base-6: rgb(14, 16, 15);
+    --base-8: rgb(18, 21, 20);
+    --base-10: rgb(23, 27, 26);
+    --base-15: rgb(35, 41, 39);
+    --base-20: rgb(47, 54, 52);
+    --base-25: rgb(58, 68, 65);
+    --base-30: rgb(70, 82, 78);
+    --base-35: rgb(82, 95, 91);
+    --base-40: rgb(94, 109, 104);
+    --base-45: rgb(106, 123, 117);
+    --base-50: rgb(117, 137, 130);
+    --base-55: rgb(131, 148, 142);
+    --base-60: rgb(145, 160, 155);
+    --base-65: rgb(159, 172, 167);
+    --base-70: rgb(172, 184, 180);
+    --base-75: rgb(186, 196, 192);
+    --base-80: rgb(200, 207, 205);
+    --base-85: rgb(213, 219, 217);
+    --base-90: rgb(227, 231, 230);
+    --base-95: rgb(241, 243, 242);
+    --base-98: rgb(249, 250, 250);
+    --accent-10: rgb(13, 37, 29);
+    --accent-20: rgb(27, 74, 58);
+    --accent-30: rgb(40, 112, 87);
+    --accent-35: rgb(47, 131, 102);
+    --accent-40: rgb(54, 149, 116);
+    --accent-45: rgb(61, 168, 131);
+    --accent-50: rgb(67, 187, 146);
+    --accent-55: rgb(86, 193, 157);
+    --accent-60: rgb(105, 200, 167);
+    --accent-70: rgb(142, 214, 189);
+    --accent-80: rgb(180, 227, 211);
+    --accent-90: rgb(217, 241, 233);
+    --accent-95: rgb(236, 248, 244);
+  }
+  
+  [ls-accent=green] {
+    --base-6: rgb(13, 16, 15);
+    --base-8: rgb(18, 22, 20);
+    --base-10: rgb(22, 28, 25);
+    --base-15: rgb(34, 42, 38);
+    --base-20: rgb(45, 56, 51);
+    --base-25: rgb(56, 70, 64);
+    --base-30: rgb(68, 84, 77);
+    --base-35: rgb(79, 99, 89);
+    --base-40: rgb(90, 113, 102);
+    --base-45: rgb(102, 127, 115);
+    --base-50: rgb(113, 141, 128);
+    --base-55: rgb(127, 152, 141);
+    --base-60: rgb(141, 164, 153);
+    --base-65: rgb(155, 175, 166);
+    --base-70: rgb(170, 186, 179);
+    --base-75: rgb(184, 198, 191);
+    --base-80: rgb(198, 209, 204);
+    --base-85: rgb(212, 220, 217);
+    --base-90: rgb(226, 232, 229);
+    --base-95: rgb(240, 243, 242);
+    --base-98: rgb(249, 250, 249);
+    --accent-10: rgb(7, 43, 26);
+    --accent-20: rgb(15, 86, 53);
+    --accent-30: rgb(23, 129, 80);
+    --accent-35: rgb(27, 150, 93);
+    --accent-40: rgb(31, 172, 107);
+    --accent-45: rgb(35, 193, 120);
+    --accent-50: rgb(39, 215, 133);
+    --accent-55: rgb(61, 219, 145);
+    --accent-60: rgb(82, 223, 158);
+    --accent-70: rgb(125, 231, 182);
+    --accent-80: rgb(168, 239, 206);
+    --accent-90: rgb(211, 247, 230);
+    --accent-95: rgb(233, 251, 242);
+  }
+  
+  [ls-accent=lime] {
+    --base-6: rgb(15, 16, 13);
+    --base-8: rgb(20, 22, 18);
+    --base-10: rgb(25, 28, 22);
+    --base-15: rgb(38, 42, 34);
+    --base-20: rgb(51, 56, 45);
+    --base-25: rgb(63, 70, 57);
+    --base-30: rgb(76, 84, 68);
+    --base-35: rgb(89, 98, 80);
+    --base-40: rgb(102, 112, 91);
+    --base-45: rgb(115, 126, 102);
+    --base-50: rgb(127, 140, 114);
+    --base-55: rgb(140, 152, 128);
+    --base-60: rgb(153, 163, 142);
+    --base-65: rgb(166, 174, 156);
+    --base-70: rgb(178, 186, 170);
+    --base-75: rgb(191, 197, 184);
+    --base-80: rgb(204, 209, 198);
+    --base-85: rgb(216, 220, 212);
+    --base-90: rgb(229, 232, 226);
+    --base-95: rgb(242, 243, 240);
+    --base-98: rgb(249, 250, 249);
+    --accent-10: rgb(26, 41, 9);
+    --accent-20: rgb(52, 83, 18);
+    --accent-30: rgb(78, 125, 27);
+    --accent-35: rgb(91, 146, 32);
+    --accent-40: rgb(104, 167, 36);
+    --accent-45: rgb(117, 188, 41);
+    --accent-50: rgb(130, 209, 45);
+    --accent-55: rgb(143, 213, 66);
+    --accent-60: rgb(155, 218, 87);
+    --accent-70: rgb(180, 227, 129);
+    --accent-80: rgb(205, 236, 171);
+    --accent-90: rgb(230, 245, 213);
+    --accent-95: rgb(242, 250, 234);
+  }
+  
+  [ls-accent=neon] {
+    --base-6: rgb(14, 17, 12);
+    --base-8: rgb(19, 23, 17);
+    --base-10: rgb(24, 29, 21);
+    --base-15: rgb(37, 44, 32);
+    --base-20: rgb(49, 59, 42);
+    --base-25: rgb(62, 73, 53);
+    --base-30: rgb(74, 88, 64);
+    --base-35: rgb(87, 103, 74);
+    --base-40: rgb(99, 118, 85);
+    --base-45: rgb(112, 133, 96);
+    --base-50: rgb(124, 147, 107);
+    --base-55: rgb(137, 158, 121);
+    --base-60: rgb(150, 169, 136);
+    --base-65: rgb(163, 180, 151);
+    --base-70: rgb(176, 190, 166);
+    --base-75: rgb(189, 201, 181);
+    --base-80: rgb(202, 212, 195);
+    --base-85: rgb(215, 222, 210);
+    --base-90: rgb(228, 233, 225);
+    --base-95: rgb(241, 244, 240);
+    --base-98: rgb(249, 250, 249);
+    --accent-10: rgb(22, 51, 0);
+    --accent-20: rgb(44, 102, 0);
+    --accent-30: rgb(66, 153, 0);
+    --accent-35: rgb(77, 178, 0);
+    --accent-40: rgb(88, 204, 0);
+    --accent-45: rgb(99, 229, 0);
+    --accent-50: rgb(110, 255, 0);
+    --accent-55: rgb(125, 255, 25);
+    --accent-60: rgb(139, 255, 50);
+    --accent-70: rgb(168, 255, 101);
+    --accent-80: rgb(197, 255, 153);
+    --accent-90: rgb(226, 254, 204);
+    --accent-95: rgb(240, 255, 229);
+  }
+  
+  [ls-accent=yellow] {
+    --base-6: rgb(17, 17, 12);
+    --base-8: rgb(23, 23, 17);
+    --base-10: rgb(29, 28, 21);
+    --base-15: rgb(44, 43, 32);
+    --base-20: rgb(59, 57, 42);
+    --base-25: rgb(73, 72, 53);
+    --base-30: rgb(88, 86, 64);
+    --base-35: rgb(103, 101, 74);
+    --base-40: rgb(118, 115, 85);
+    --base-45: rgb(133, 129, 96);
+    --base-50: rgb(147, 144, 107);
+    --base-55: rgb(158, 155, 121);
+    --base-60: rgb(169, 166, 136);
+    --base-65: rgb(180, 177, 151);
+    --base-70: rgb(190, 188, 166);
+    --base-75: rgb(201, 199, 181);
+    --base-80: rgb(212, 210, 195);
+    --base-85: rgb(222, 221, 210);
+    --base-90: rgb(233, 232, 225);
+    --base-95: rgb(244, 243, 240);
+    --base-98: rgb(250, 250, 249);
+    --accent-10: rgb(51, 46, 0);
+    --accent-20: rgb(102, 93, 0);
+    --accent-30: rgb(153, 139, 0);
+    --accent-35: rgb(178, 163, 0);
+    --accent-40: rgb(204, 186, 0);
+    --accent-45: rgb(229, 209, 0);
+    --accent-50: rgb(255, 233, 0);
+    --accent-55: rgb(255, 235, 25);
+    --accent-60: rgb(255, 237, 50);
+    --accent-70: rgb(255, 241, 101);
+    --accent-80: rgb(255, 246, 153);
+    --accent-90: rgb(254, 250, 204);
+    --accent-95: rgb(255, 252, 229);
+  }
+  
+  [ls-accent=orange] {
+    --base-6: rgb(17, 15, 12);
+    --base-8: rgb(23, 20, 17);
+    --base-10: rgb(29, 25, 21);
+    --base-15: rgb(44, 38, 32);
+    --base-20: rgb(59, 50, 42);
+    --base-25: rgb(73, 63, 53);
+    --base-30: rgb(88, 76, 64);
+    --base-35: rgb(103, 88, 74);
+    --base-40: rgb(118, 101, 85);
+    --base-45: rgb(133, 114, 96);
+    --base-50: rgb(147, 126, 107);
+    --base-55: rgb(158, 139, 121);
+    --base-60: rgb(169, 152, 136);
+    --base-65: rgb(180, 165, 151);
+    --base-70: rgb(190, 178, 166);
+    --base-75: rgb(201, 190, 181);
+    --base-80: rgb(212, 203, 195);
+    --base-85: rgb(222, 216, 210);
+    --base-90: rgb(233, 229, 225);
+    --base-95: rgb(244, 242, 240);
+    --base-98: rgb(250, 249, 249);
+    --accent-10: rgb(51, 24, 0);
+    --accent-20: rgb(102, 49, 0);
+    --accent-30: rgb(153, 74, 0);
+    --accent-35: rgb(178, 86, 0);
+    --accent-40: rgb(204, 98, 0);
+    --accent-45: rgb(229, 111, 0);
+    --accent-50: rgb(255, 123, 0);
+    --accent-55: rgb(255, 136, 25);
+    --accent-60: rgb(255, 149, 50);
+    --accent-70: rgb(255, 176, 101);
+    --accent-80: rgb(255, 202, 153);
+    --accent-90: rgb(254, 228, 204);
+    --accent-95: rgb(255, 241, 229);
+  }
+  
+  [ls-accent=deep-orange] {
+    --base-6: rgb(17, 14, 12);
+    --base-8: rgb(23, 19, 17);
+    --base-10: rgb(29, 23, 21);
+    --base-15: rgb(44, 35, 32);
+    --base-20: rgb(59, 47, 42);
+    --base-25: rgb(73, 59, 53);
+    --base-30: rgb(88, 71, 64);
+    --base-35: rgb(103, 83, 74);
+    --base-40: rgb(118, 95, 85);
+    --base-45: rgb(133, 107, 96);
+    --base-50: rgb(147, 119, 107);
+    --base-55: rgb(158, 132, 121);
+    --base-60: rgb(169, 146, 136);
+    --base-65: rgb(180, 159, 151);
+    --base-70: rgb(190, 173, 166);
+    --base-75: rgb(201, 187, 181);
+    --base-80: rgb(212, 200, 195);
+    --base-85: rgb(222, 214, 210);
+    --base-90: rgb(233, 227, 225);
+    --base-95: rgb(244, 241, 240);
+    --base-98: rgb(250, 249, 249);
+    --accent-10: rgb(51, 15, 0);
+    --accent-20: rgb(102, 30, 0);
+    --accent-30: rgb(153, 45, 0);
+    --accent-35: rgb(178, 52, 0);
+    --accent-40: rgb(204, 60, 0);
+    --accent-45: rgb(229, 67, 0);
+    --accent-50: rgb(255, 75, 0);
+    --accent-55: rgb(255, 93, 25);
+    --accent-60: rgb(255, 111, 50);
+    --accent-70: rgb(255, 147, 101);
+    --accent-80: rgb(255, 183, 153);
+    --accent-90: rgb(254, 219, 204);
+    --accent-95: rgb(255, 237, 229);
+  }
+  
+  [ls-accent=red] {
+    --base-6: rgb(17, 13, 13);
+    --base-8: rgb(23, 17, 17);
+    --base-10: rgb(29, 21, 21);
+    --base-15: rgb(43, 32, 32);
+    --base-20: rgb(58, 43, 43);
+    --base-25: rgb(73, 54, 54);
+    --base-30: rgb(87, 65, 65);
+    --base-35: rgb(102, 76, 76);
+    --base-40: rgb(116, 87, 87);
+    --base-45: rgb(131, 98, 98);
+    --base-50: rgb(146, 108, 108);
+    --base-55: rgb(156, 123, 123);
+    --base-60: rgb(167, 138, 138);
+    --base-65: rgb(178, 152, 152);
+    --base-70: rgb(189, 167, 167);
+    --base-75: rgb(200, 181, 181);
+    --base-80: rgb(211, 196, 196);
+    --base-85: rgb(222, 211, 211);
+    --base-90: rgb(233, 225, 225);
+    --base-95: rgb(244, 240, 240);
+    --base-98: rgb(250, 249, 249);
+    --accent-10: rgb(48, 2, 2);
+    --accent-20: rgb(97, 4, 4);
+    --accent-30: rgb(145, 7, 7);
+    --accent-35: rgb(170, 8, 8);
+    --accent-40: rgb(194, 9, 9);
+    --accent-45: rgb(218, 10, 10);
+    --accent-50: rgb(243, 11, 11);
+    --accent-55: rgb(244, 36, 36);
+    --accent-60: rgb(245, 60, 60);
+    --accent-70: rgb(247, 109, 109);
+    --accent-80: rgb(250, 157, 157);
+    --accent-90: rgb(252, 206, 206);
+    --accent-95: rgb(253, 230, 230);
+  }
+  
+  [ls-accent=rusty-red] {
+    --base-6: rgb(17, 13, 13);
+    --base-8: rgb(22, 18, 18);
+    --base-10: rgb(28, 22, 23);
+    --base-15: rgb(42, 33, 34);
+    --base-20: rgb(56, 45, 46);
+    --base-25: rgb(70, 56, 57);
+    --base-30: rgb(85, 67, 69);
+    --base-35: rgb(99, 79, 81);
+    --base-40: rgb(113, 90, 92);
+    --base-45: rgb(127, 101, 104);
+    --base-50: rgb(141, 113, 115);
+    --base-55: rgb(153, 127, 129);
+    --base-60: rgb(164, 141, 143);
+    --base-65: rgb(175, 155, 157);
+    --base-70: rgb(187, 169, 171);
+    --base-75: rgb(198, 184, 185);
+    --base-80: rgb(209, 198, 199);
+    --base-85: rgb(221, 212, 213);
+    --base-90: rgb(232, 226, 227);
+    --base-95: rgb(243, 240, 241);
+    --base-98: rgb(250, 249, 249);
+    --accent-10: rgb(43, 7, 10);
+    --accent-20: rgb(86, 15, 21);
+    --accent-30: rgb(130, 22, 32);
+    --accent-35: rgb(152, 26, 38);
+    --accent-40: rgb(173, 30, 43);
+    --accent-45: rgb(195, 33, 49);
+    --accent-50: rgb(217, 37, 54);
+    --accent-55: rgb(221, 59, 74);
+    --accent-60: rgb(224, 81, 94);
+    --accent-70: rgb(232, 124, 134);
+    --accent-80: rgb(239, 168, 174);
+    --accent-90: rgb(247, 211, 214);
+    --accent-95: rgb(251, 233, 234);
+  }
+  
+  [ls-accent=pink] {
+    --base-6: rgb(17, 13, 15);
+    --base-8: rgb(22, 17, 21);
+    --base-10: rgb(28, 22, 26);
+    --base-15: rgb(43, 33, 39);
+    --base-20: rgb(57, 44, 52);
+    --base-25: rgb(71, 55, 65);
+    --base-30: rgb(86, 66, 78);
+    --base-35: rgb(100, 78, 92);
+    --base-40: rgb(114, 89, 105);
+    --base-45: rgb(129, 100, 118);
+    --base-50: rgb(143, 111, 131);
+    --base-55: rgb(154, 125, 143);
+    --base-60: rgb(165, 140, 156);
+    --base-65: rgb(176, 154, 168);
+    --base-70: rgb(188, 168, 180);
+    --base-75: rgb(199, 183, 193);
+    --base-80: rgb(210, 197, 205);
+    --base-85: rgb(221, 211, 217);
+    --base-90: rgb(232, 226, 230);
+    --base-95: rgb(243, 240, 242);
+    --base-98: rgb(250, 249, 250);
+    --accent-10: rgb(45, 5, 30);
+    --accent-20: rgb(90, 11, 61);
+    --accent-30: rgb(136, 16, 91);
+    --accent-35: rgb(158, 19, 107);
+    --accent-40: rgb(181, 22, 122);
+    --accent-45: rgb(204, 25, 137);
+    --accent-50: rgb(227, 27, 153);
+    --accent-55: rgb(229, 50, 163);
+    --accent-60: rgb(232, 73, 173);
+    --accent-70: rgb(238, 118, 193);
+    --accent-80: rgb(243, 164, 214);
+    --accent-90: rgb(249, 209, 234);
+    --accent-95: rgb(252, 232, 244);
+  }
+  
+  [ls-accent=hotpink] {
+    --base-6: rgb(17, 13, 15);
+    --base-8: rgb(23, 17, 20);
+    --base-10: rgb(29, 21, 25);
+    --base-15: rgb(43, 32, 37);
+    --base-20: rgb(58, 43, 50);
+    --base-25: rgb(72, 54, 63);
+    --base-30: rgb(87, 65, 75);
+    --base-35: rgb(101, 76, 88);
+    --base-40: rgb(116, 87, 101);
+    --base-45: rgb(130, 98, 113);
+    --base-50: rgb(145, 109, 126);
+    --base-55: rgb(156, 124, 139);
+    --base-60: rgb(167, 138, 152);
+    --base-65: rgb(178, 153, 165);
+    --base-70: rgb(189, 167, 177);
+    --base-75: rgb(200, 182, 190);
+    --base-80: rgb(211, 196, 203);
+    --base-85: rgb(222, 211, 216);
+    --base-90: rgb(233, 225, 229);
+    --base-95: rgb(244, 240, 242);
+    --base-98: rgb(250, 249, 249);
+    --accent-10: rgb(47, 3, 24);
+    --accent-20: rgb(95, 6, 48);
+    --accent-30: rgb(143, 9, 73);
+    --accent-35: rgb(167, 10, 85);
+    --accent-40: rgb(191, 12, 97);
+    --accent-45: rgb(215, 13, 109);
+    --accent-50: rgb(239, 15, 122);
+    --accent-55: rgb(241, 39, 135);
+    --accent-60: rgb(242, 63, 148);
+    --accent-70: rgb(245, 111, 175);
+    --accent-80: rgb(248, 159, 201);
+    --accent-90: rgb(251, 207, 228);
+    --accent-95: rgb(253, 231, 241);
+  }
+  
+  [ls-accent=purple] {
+    --base-6: rgb(15, 14, 16);
+    --base-8: rgb(21, 19, 21);
+    --base-10: rgb(26, 23, 27);
+    --base-15: rgb(39, 35, 40);
+    --base-20: rgb(52, 47, 54);
+    --base-25: rgb(66, 59, 67);
+    --base-30: rgb(79, 71, 81);
+    --base-35: rgb(92, 83, 94);
+    --base-40: rgb(105, 95, 108);
+    --base-45: rgb(118, 107, 121);
+    --base-50: rgb(132, 119, 135);
+    --base-55: rgb(144, 133, 147);
+    --base-60: rgb(156, 146, 159);
+    --base-65: rgb(169, 160, 171);
+    --base-70: rgb(181, 173, 183);
+    --base-75: rgb(193, 187, 195);
+    --base-80: rgb(205, 200, 207);
+    --base-85: rgb(218, 214, 219);
+    --base-90: rgb(230, 227, 231);
+    --base-95: rgb(242, 241, 243);
+    --base-98: rgb(250, 249, 250);
+    --accent-10: rgb(31, 15, 35);
+    --accent-20: rgb(62, 31, 70);
+    --accent-30: rgb(94, 46, 106);
+    --accent-35: rgb(109, 54, 123);
+    --accent-40: rgb(125, 62, 141);
+    --accent-45: rgb(141, 70, 159);
+    --accent-50: rgb(156, 77, 177);
+    --accent-55: rgb(166, 95, 184);
+    --accent-60: rgb(176, 113, 192);
+    --accent-70: rgb(196, 148, 208);
+    --accent-80: rgb(215, 184, 223);
+    --accent-90: rgb(235, 219, 239);
+    --accent-95: rgb(245, 237, 247);
+  }
+  
+  [ls-accent=soap] {
+    --base-6: rgb(15, 14, 16);
+    --base-8: rgb(20, 18, 22);
+    --base-10: rgb(25, 23, 27);
+    --base-15: rgb(37, 35, 41);
+    --base-20: rgb(50, 46, 55);
+    --base-25: rgb(63, 58, 69);
+    --base-30: rgb(75, 70, 82);
+    --base-35: rgb(88, 81, 96);
+    --base-40: rgb(101, 93, 110);
+    --base-45: rgb(113, 105, 124);
+    --base-50: rgb(126, 116, 138);
+    --base-55: rgb(139, 130, 149);
+    --base-60: rgb(152, 144, 161);
+    --base-65: rgb(164, 158, 173);
+    --base-70: rgb(177, 172, 184);
+    --base-75: rgb(190, 185, 196);
+    --base-80: rgb(203, 199, 208);
+    --base-85: rgb(216, 213, 219);
+    --base-90: rgb(229, 227, 231);
+    --base-95: rgb(242, 241, 243);
+    --base-98: rgb(249, 249, 250);
+    --accent-10: rgb(23, 12, 39);
+    --accent-20: rgb(47, 24, 78);
+    --accent-30: rgb(71, 36, 116);
+    --accent-35: rgb(83, 42, 136);
+    --accent-40: rgb(95, 48, 156);
+    --accent-45: rgb(107, 54, 175);
+    --accent-50: rgb(119, 60, 195);
+    --accent-55: rgb(133, 79, 201);
+    --accent-60: rgb(146, 98, 207);
+    --accent-70: rgb(173, 138, 219);
+    --accent-80: rgb(200, 177, 231);
+    --accent-90: rgb(227, 216, 243);
+    --accent-95: rgb(241, 235, 249);
+  }
+  
+  [ls-accent=burple] {
+    --base-6: rgb(13, 13, 17);
+    --base-8: rgb(17, 18, 23);
+    --base-10: rgb(21, 22, 29);
+    --base-15: rgb(32, 34, 43);
+    --base-20: rgb(43, 45, 58);
+    --base-25: rgb(54, 56, 72);
+    --base-30: rgb(65, 68, 87);
+    --base-35: rgb(76, 79, 102);
+    --base-40: rgb(87, 90, 116);
+    --base-45: rgb(98, 102, 131);
+    --base-50: rgb(109, 113, 145);
+    --base-55: rgb(123, 127, 156);
+    --base-60: rgb(138, 141, 167);
+    --base-65: rgb(152, 155, 178);
+    --base-70: rgb(167, 170, 189);
+    --base-75: rgb(182, 184, 200);
+    --base-80: rgb(196, 198, 211);
+    --base-85: rgb(211, 212, 222);
+    --base-90: rgb(225, 226, 233);
+    --base-95: rgb(240, 240, 244);
+    --base-98: rgb(249, 249, 250);
+    --accent-10: rgb(2, 8, 48);
+    --accent-20: rgb(5, 16, 96);
+    --accent-30: rgb(7, 24, 145);
+    --accent-35: rgb(8, 28, 169);
+    --accent-40: rgb(10, 32, 193);
+    --accent-45: rgb(11, 36, 218);
+    --accent-50: rgb(12, 40, 242);
+    --accent-55: rgb(36, 61, 243);
+    --accent-60: rgb(61, 83, 244);
+    --accent-70: rgb(109, 126, 247);
+    --accent-80: rgb(158, 169, 249);
+    --accent-90: rgb(206, 212, 252);
+    --accent-95: rgb(230, 233, 253);
+  }
+  
+  [ls-accent=white], [ls-accent=auto], [ls-accent].ls-static {
+    --base-6: rgb(15, 15, 15);
+    --base-8: rgb(20, 20, 20);
+    --base-10: rgb(25, 25, 25);
+    --base-15: rgb(38, 38, 38);
+    --base-20: rgb(51, 51, 51);
+    --base-25: rgb(63, 63, 63);
+    --base-30: rgb(76, 76, 76);
+    --base-35: rgb(89, 89, 89);
+    --base-40: rgb(102, 102, 102);
+    --base-45: rgb(114, 114, 114);
+    --base-50: rgb(127, 127, 127);
+    --base-55: rgb(140, 140, 140);
+    --base-60: rgb(153, 153, 153);
+    --base-65: rgb(165, 165, 165);
+    --base-70: rgb(178, 178, 178);
+    --base-75: rgb(191, 191, 191);
+    --base-80: rgb(204, 204, 204);
+    --base-85: rgb(216, 216, 216);
+    --base-90: rgb(229, 229, 229);
+    --base-95: rgb(242, 242, 242);
+    --base-98: rgb(249, 249, 249);
+  }
+  
+  [ls-accent=white], [ls-accent=auto] {
+    --accent-10: rgb(25, 25, 25);
+    --accent-20: rgb(51, 51, 51);
+    --accent-30: rgb(76, 76, 76);
+    --accent-35: rgb(89, 89, 89);
+    --accent-40: rgb(102, 102, 102);
+    --accent-45: rgb(114, 114, 114);
+    --accent-50: rgb(127, 127, 127);
+    --accent-55: rgb(140, 140, 140);
+    --accent-60: rgb(153, 153, 153);
+    --accent-70: rgb(178, 178, 178);
+    --accent-80: rgb(204, 204, 204);
+    --accent-90: rgb(229, 229, 229);
+    --accent-95: rgb(242, 242, 242);
+  }
+  
+  [class*=level-], ls-box {
+    background: var(--background);
+    color: var(--color);
+  }
+  
+  .level-n3 {
+    --background: var(--surface-n3);
+    --elevate: var(--surface-n2);
+    --elevate-1: var(--surface-n1);
+    --elevate-2: var(--surface-0);
+    --elevate-3: var(--surface-1);
+  }
+  
+  .level-n2 {
+    --background: var(--surface-n2);
+    --elevate-0: var(--surface-n3);
+    --elevate: var(--surface-n1);
+    --elevate-1: var(--surface-0);
+    --elevate-2: var(--surface-1);
+    --elevate-3: var(--surface-2);
+  }
+  
+  .level-n1 {
+    --background: var(--surface-n1);
+    --elevate-0: var(--surface-n2);
+    --elevate-n1: var(--surface-n3);
+    --elevate: var(--surface-0);
+    --elevate-1: var(--surface-1);
+    --elevate-2: var(--surface-2);
+    --elevate-3: var(--surface-3);
+  }
+  
+  .level-0, :root {
+    --background: var(--surface-0);
+    --elevate-0: var(--surface-n1);
+    --elevate-n1: var(--surface-n2);
+    --elevate: var(--surface-1);
+    --elevate-1: var(--surface-2);
+    --elevate-2: var(--surface-3);
+    --elevate-3: var(--surface-4);
+  }
+  
+  .level-0.color {
+    --background: var(--accent-mix-10);
+  }
+  
+  .level-1, ls-box {
+    --background: var(--surface-1);
+    --elevate-0: var(--surface-0);
+    --elevate-n1: var(--surface-n1);
+    --elevate: var(--surface-2);
+    --elevate-1: var(--surface-3);
+    --elevate-2: var(--surface-4);
+    --elevate-3: var(--surface-5);
+  }
+  
+  .level-1.color {
+    --background: var(--accent-mix-20);
+  }
+  
+  .level-2 {
+    --background: var(--surface-2);
+    --elevate-0: var(--surface-1);
+    --elevate-n1: var(--surface-0);
+    --elevate: var(--surface-3);
+    --elevate-1: var(--surface-4);
+    --elevate-2: var(--surface-5);
+    --elevate-3: var(--surface-6);
+  }
+  
+  .level-2.color {
+    --background: var(--accent-mix-40);
+  }
+  
+  .level-3 {
+    --background: var(--surface-3);
+    --elevate-0: var(--surface-2);
+    --elevate-n1: var(--surface-1);
+    --elevate: var(--surface-4);
+    --elevate-1: var(--surface-5);
+    --elevate-2: var(--surface-6);
+    --elevate-3: var(--surface-7);
+  }
+  
+  .level-3.color {
+    --background: var(--accent-mix-60);
+  }
+  
+  .level-4 {
+    --background: var(--surface-4);
+    --elevate-0: var(--surface-3);
+    --elevate-n1: var(--surface-2);
+    --elevate: var(--surface-5);
+    --elevate-1: var(--surface-6);
+    --elevate-2: var(--surface-7);
+    --elevate-3: var(--surface-8);
+  }
+  
+  .level-4.color {
+    --background: var(--accent-mix-80);
+  }
+  
+  .level-5 {
+    --background: var(--surface-5);
+    --elevate-0: var(--surface-4);
+    --elevate-n1: var(--surface-3);
+    --elevate: var(--surface-6);
+    --elevate-1: var(--surface-7);
+    --elevate-2: var(--surface-8);
+    --elevate-3: var(--surface-9);
+  }
+  
+  .level-5.color {
+    --background: var(--accent-40);
+    --color: var(--on-accent);
+  }
+  
+  .level-6 {
+    --background: var(--surface-6);
+    --elevate-0: var(--surface-5);
+    --elevate-n1: var(--surface-4);
+    --elevate: var(--surface-7);
+    --elevate-1: var(--surface-8);
+    --elevate-2: var(--surface-9);
+    --elevate-3: var(--surface-10);
+  }
+  
+  .level-7 {
+    --background: var(--surface-7);
+    --elevate-0: var(--surface-6);
+    --elevate-n1: var(--surface-5);
+    --elevate: var(--surface-8);
+    --elevate-1: var(--surface-9);
+    --elevate-2: var(--surface-10);
+    --elevate-3: var(--surface-11);
+    --color: var(--surface-0);
+  }
+  
+  .level-8 {
+    --background: var(--surface-8);
+    --elevate-0: var(--surface-7);
+    --elevate-n1: var(--surface-6);
+    --elevate: var(--surface-9);
+    --elevate-1: var(--surface-10);
+    --elevate-2: var(--surface-11);
+    --color: var(--surface-0);
+  }
+  
+  .level-9 {
+    --background: var(--surface-9);
+    --elevate-0: var(--surface-8);
+    --elevate-n1: var(--surface-7);
+    --elevate: var(--surface-10);
+    --elevate-1: var(--surface-11);
+    --color: var(--surface-0);
+  }
+  
+  .level-10 {
+    --background: var(--surface-10);
+    --elevate-0: var(--surface-9);
+    --elevate-n1: var(--surface-8);
+    --elevate: var(--surface-11);
+    --color: var(--surface-0);
+  }
+  
+  .level-top {
+    --background: var(--surface-top);
+    --color: var(--surface-0);
+  }
+  
+  [class*=level-].round {
+    border-radius: var(--border-radius);
+  }
+  
+  [class*=level-].round-lg {
+    border-radius: var(--border-radius-large);
+  }
+  
+  [class*=level-].pill {
+    border-radius: var(--border-radius-full);
+  }
+  
+  [ls-accent], ls-box:not(.color), html, [class*=level-]:not(.color), .sidebar-items {
+    --accent: var(--accent-40);
+    --accent-mix-10: color-mix(in oklab, var(--background) 100%, var(--accent) 10%);
+    --accent-mix-20: color-mix(in oklab, var(--background) 100%, var(--accent) 20%);
+    --accent-mix-40: color-mix(in oklab, var(--background) 100%, var(--accent) 40%);
+    --accent-mix-60: color-mix(in oklab, var(--background) 100%, var(--accent) 60%);
+    --accent-mix-80: color-mix(in oklab, var(--background) 70%, var(--accent) 100%);
+  }
+  
+  /*! normalize.css v8.0.1 | MIT License | github.com/necolas/normalize.css */
+  /* Document
+     ========================================================================== */
+  /**
+   * 1. Correct the line height in all browsers.
+   * 2. Prevent adjustments of font size after orientation changes in iOS.
+   */
+  html {
+    /* 1 */
+    -webkit-text-size-adjust: 100%;
+    /* 2 */
+  }
+  
+  /* Sections
+       ========================================================================== */
+  /**
+     * Remove the margin in all browsers.
+     */
+  body {
+    margin: 0;
+  }
+  
+  /**
+     * Render the `main` element consistently in IE.
+     */
+  main {
+    display: block;
+  }
+  
+  /**
+     * Correct the font size and margin on `h1` elements within `section` and
+     * `article` contexts in Chrome, Firefox, and Safari.
+     */
+  h1 {
+    font-size: 2em;
+    margin: 0.67em 0;
+  }
+  
+  /* Grouping content
+       ========================================================================== */
+  /**
+     * 1. Add the correct box sizing in Firefox.
+     * 2. Show the overflow in Edge and IE.
+     */
+  hr {
+    box-sizing: content-box;
+    /* 1 */
+    height: 0;
+    /* 1 */
+    overflow: visible;
+    /* 2 */
+  }
+  
+  /**
+     * 1. Correct the inheritance and scaling of font size in all browsers.
+     * 2. Correct the odd `em` font sizing in all browsers.
+     */
+  pre {
+    font-family: monospace, monospace;
+    /* 1 */
+    font-size: 1em;
+    /* 2 */
+  }
+  
+  /* Text-level semantics
+       ========================================================================== */
+  /**
+     * Remove the gray background on active links in IE 10.
+     */
+  a {
+    background-color: transparent;
+  }
+  
+  /**
+     * 1. Remove the bottom border in Chrome 57-
+     * 2. Add the correct text decoration in Chrome, Edge, IE, Opera, and Safari.
+     */
+  abbr[title] {
+    border-bottom: none;
+    /* 1 */
+    text-decoration: underline;
+    /* 2 */
+    text-decoration: underline dotted;
+    /* 2 */
+  }
+  
+  /**
+     * Add the correct font weight in Chrome, Edge, and Safari.
+     */
+  b,
+  strong {
+    font-weight: bolder;
+  }
+  
+  /**
+     * 1. Correct the inheritance and scaling of font size in all browsers.
+     * 2. Correct the odd `em` font sizing in all browsers.
+     */
+  code,
+  kbd,
+  samp {
+    font-family: monospace, monospace;
+    /* 1 */
+    font-size: 1em;
+    /* 2 */
+  }
+  
+  /**
+     * Add the correct font size in all browsers.
+     */
+  small {
+    font-size: 80%;
+  }
+  
+  /**
+     * Prevent `sub` and `sup` elements from affecting the line height in
+     * all browsers.
+     */
+  sub,
+  sup {
+    font-size: 75%;
+    line-height: 0;
+    position: relative;
+    vertical-align: baseline;
+  }
+  
+  sub {
+    bottom: -0.25em;
+  }
+  
+  sup {
+    top: -0.5em;
+  }
+  
+  /* Embedded content
+       ========================================================================== */
+  /**
+     * Remove the border on images inside links in IE 10.
+     */
+  img {
+    border-style: none;
+  }
+  
+  /* Forms
+       ========================================================================== */
+  /**
+     * 1. Change the font styles in all browsers.
+     * 2. Remove the margin in Firefox and Safari.
+     */
+  button,
+  input,
+  optgroup,
+  select,
+  textarea {
+    font-family: inherit;
+    /* 1 */
+    font-size: 100%;
+    /* 1 */
+    line-height: 1.15;
+    /* 1 */
+    margin: 0;
+    /* 2 */
+  }
+  
+  /**
+     * Show the overflow in IE.
+     * 1. Show the overflow in Edge.
+     */
+  button,
+  input {
+    /* 1 */
+    overflow: visible;
+  }
+  
+  /**
+     * Remove the inheritance of text transform in Edge, Firefox, and IE.
+     * 1. Remove the inheritance of text transform in Firefox.
+     */
+  button,
+  select {
+    /* 1 */
+    text-transform: none;
+  }
+  
+  /**
+     * Correct the inability to style clickable types in iOS and Safari.
+     */
+  button,
+  [type=button],
+  [type=reset],
+  [type=submit] {
+    -webkit-appearance: button;
+  }
+  
+  /**
+     * Remove the inner border and padding in Firefox.
+     */
+  button::-moz-focus-inner,
+  [type=button]::-moz-focus-inner,
+  [type=reset]::-moz-focus-inner,
+  [type=submit]::-moz-focus-inner {
+    border-style: none;
+    padding: 0;
+  }
+  
+  /**
+     * Restore the focus styles unset by the previous rule.
+     */
+  button:-moz-focusring,
+  [type=button]:-moz-focusring,
+  [type=reset]:-moz-focusring,
+  [type=submit]:-moz-focusring {
+    outline: 1px dotted ButtonText;
+  }
+  
+  /**
+     * Correct the padding in Firefox.
+     */
+  fieldset {
+    padding: 0.35em 0.75em 0.625em;
+  }
+  
+  /**
+     * 1. Correct the text wrapping in Edge and IE.
+     * 2. Correct the color inheritance from `fieldset` elements in IE.
+     * 3. Remove the padding so developers are not caught out when they zero out
+     *    `fieldset` elements in all browsers.
+     */
+  legend {
+    box-sizing: border-box;
+    /* 1 */
+    color: inherit;
+    /* 2 */
+    display: table;
+    /* 1 */
+    max-width: 100%;
+    /* 1 */
+    padding: 0;
+    /* 3 */
+    white-space: normal;
+    /* 1 */
+  }
+  
+  /**
+     * Add the correct vertical alignment in Chrome, Firefox, and Opera.
+     */
+  progress {
+    vertical-align: baseline;
+  }
+  
+  /**
+     * Remove the default vertical scrollbar in IE 10+.
+     */
+  textarea {
+    overflow: auto;
+  }
+  
+  /**
+     * 1. Add the correct box sizing in IE 10.
+     * 2. Remove the padding in IE 10.
+     */
+  [type=checkbox],
+  [type=radio] {
+    box-sizing: border-box;
+    /* 1 */
+    padding: 0;
+    /* 2 */
+  }
+  
+  /**
+     * Correct the cursor style of increment and decrement buttons in Chrome.
+     */
+  [type=number]::-webkit-inner-spin-button,
+  [type=number]::-webkit-outer-spin-button {
+    height: auto;
+  }
+  
+  /**
+     * 1. Correct the odd appearance in Chrome and Safari.
+     * 2. Correct the outline style in Safari.
+     */
+  [type=search] {
+    -webkit-appearance: textfield;
+    /* 1 */
+    outline-offset: -2px;
+    /* 2 */
+  }
+  
+  /**
+     * Remove the inner padding in Chrome and Safari on macOS.
+     */
+  [type=search]::-webkit-search-decoration {
+    -webkit-appearance: none;
+  }
+  
+  /**
+     * 1. Correct the inability to style clickable types in iOS and Safari.
+     * 2. Change font properties to `inherit` in Safari.
+     */
+  ::-webkit-file-upload-button {
+    -webkit-appearance: button;
+    /* 1 */
+    font: inherit;
+    /* 2 */
+  }
+  
+  /* Interactive
+       ========================================================================== */
+  /*
+     * Add the correct display in Edge, IE 10+, and Firefox.
+     */
+  details {
+    display: block;
+  }
+  
+  /*
+     * Add the correct display in all browsers.
+     */
+  summary {
+    display: list-item;
+  }
+  
+  /* Misc
+       ========================================================================== */
+  /**
+     * Add the correct display in IE 10+.
+     */
+  template {
+    display: none;
+  }
+  
+  /**
+     * Add the correct display in IE 10.
+     */
+  [hidden] {
+    display: none;
+  }
+  
+  [ls] :is(:is(button, input[type=button], input[type=submit], input[type=reset], .ls-button), input, select, textarea), [ls] {
+    font-family: var(--font);
+  }
+  
+  body {
+    margin: 0;
+  }
+  
+  :root {
+    color-scheme: only light;
+  }
+  
+  [ls] {
+    --padding-control-h: 16px;
+    --padding-control-v: 8px;
+    --padding-content-h: 16px;
+    --padding-content-v: 8px;
+    --padding-control-h-pill: 18px;
+    --padding-label-h: 4px;
+    --padding-label-h-pill: 8px;
+    --padding-input-h: 8px;
+    --margin-control-v: 0;
+    --margin-control-h: 0;
+    --margin-content-v: 14px;
+    --margin-content-v-large: 18px;
+    background: var(--background);
+    color: var(--color);
+    overflow-y: overlay;
+  }
+  [ls] * {
+    box-sizing: border-box;
+  }
+  [ls] :is(:is(button, input[type=button], input[type=submit], input[type=reset], .ls-button), input, select, textarea) {
+    box-sizing: border-box;
+    border: 0;
+    outline: none;
+    position: relative;
+  }
+  [ls] :is(:is(button, input[type=button], input[type=submit], input[type=reset], .ls-button), input, select, textarea):not(textarea) {
+    line-height: 1;
+  }
+  [ls] :is(button, input[type=button], input[type=submit], input[type=reset], .ls-button) {
+    padding: var(--padding-control-v) var(--padding-control-h);
+    margin: var(--margin-control-v) var(--margin-control-h);
+    cursor: pointer;
+  }
+  [ls] :is(button, input[type=button], input[type=submit], input[type=reset], .ls-button) i {
+    margin: 0 4px 0 2px;
+  }
+  [ls] :is(button, input[type=button], input[type=submit], input[type=reset], .ls-button) i:only-child {
+    margin: 0;
+  }
+  [ls] input, [ls] textarea {
+    height: calc(1em + var(--padding-control-v) * 2);
+    padding: 0 var(--padding-input-h);
+    margin: var(--margin-control-v) var(--margin-control-h);
+    color: inherit;
+  }
+  [ls] textarea {
+    line-height: normal;
+  }
+  [ls] :is(button, input[type=button], input[type=submit], input[type=reset], .ls-button).circle {
+    height: calc(1em + var(--padding-control-v) * 2);
+    width: calc(1em + var(--padding-control-v) * 2);
+    padding: 0;
+  }
+  [ls] :is(button, input[type=button], input[type=submit], input[type=reset], .ls-button).circle > :first-child {
+    margin: 0;
+    padding: 0;
+  }
+  [ls] a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  [ls] a:focus:not(.ls-button, .ls-plain) {
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.2666666667);
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 3px;
+  }
+  [ls] hr {
+    border: 1px solid var(--elevate);
+    border-radius: 10px;
+    margin: var(--hr-spacing, 18px) 0;
+  }
+  [ls] :is(textarea, input[type=text], input:not([type]))::selection {
+    background-color: var(--accent-mix-40);
+  }
+  [ls] h1 {
+    font-weight: 800;
+  }
+  [ls] h2 {
+    font-weight: 600;
+  }
+  [ls] h3 {
+    font-weight: 500;
+  }
+  [ls] h4 {
+    font-weight: 300;
+  }
+  [ls] h3, [ls] h4 {
+    color: var(--surface-8);
+  }
+  [ls] table {
+    background-color: rgba(255, 255, 255, 0.0666666667);
+    border-collapse: collapse;
+    border: 1px solid rgba(255, 255, 255, 0.3333333333);
+    overflow: hidden;
+    border-radius: 15px;
+  }
+  [ls] table :is(th, td) {
+    border: 1px solid rgba(255, 255, 255, 0.1333333333);
+    text-align: center;
+    padding: 5px;
+  }
+  
+  ::-webkit-scrollbar {
+    width: var(--scrollbar-size, 6px);
+    height: var(--scrollbar-size, 6px);
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: var(--elevate);
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    border-radius: var(--scrollbar-radius, 8px);
+    background: var(--elevate-1);
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--elevate-2);
+  }
+  
+  /*# sourceMappingURL=ls.css.map */
+  

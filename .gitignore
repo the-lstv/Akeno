@@ -6,14 +6,11 @@ etc/generated
 archive
 config
 
-cdn/*
-!cdn/lib/example
-
 api/*
 !api/v1.example.js
 
 addons/*
-!addons/cdn.js
+!addons/.gitkeep
 
 db/*
 !db/cache/.gitkeep
@@ -22,5 +19,11 @@ db/*
 core/native/build
 
 node_modules
-package.json
+# package.json
 package-lock.json
+
+core/native/build
+core/native/node
+core/native/test*
+
+.env

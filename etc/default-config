@@ -1,70 +1,93 @@
-# This is the default config. You can change it to fit your needs or use it as an example of how a config may look like and build your own.
-# This does not explain or contain all the things that can be specified here. Please refer to the docs for more information.
+# This is the default server config.
+
+# This does not list all the things that can be specified here.
+# Please refer to the docs for more information for specific options.
 
 system {
-    # You can enable development mode when debugging.
-    # developmentMode;
-    # logLevel: 5;
+    # You can use "development" mode if Akeno is running in a local/dev environment.
+    mode: "production";
+    logLevel: 5;
 }
 
-server {
-    # The port to use for HTTP
-    port: 80;
 
-    # Enable SSL (HTTPS)
-    # enableSSL;
-    sslPort: 443;
 
-    # Enable HTTP3
-    # enableH3;
-    h3Port: 443;
+# Protocols configuration
+# Multiple ports can be specified as well.
 
-    # Enable server
-    enable;
+protocols {
+    ipc {
+        enabled: true;
+        path: "/tmp/akeno.backend.sock";
+        
+        # Windows has named pipes instead.
+        windowsPipeName: "akeno.backend.sock";
+    }
+
+    http {
+        enabled: true;
+        port: 80;
+
+        # Disable unsecured WebSockets in production.
+        websockets: dev-only;
+    }
+
+    https {
+        enabled: true;
+        port: 443;
+
+        websockets: true;
+    }
+
+    # Experimental HTTP/3 (QUIC)
+    h3 {
+        enabled: false;
+        port: 443;
+
+        # Note: HTTP/3 doesn't have WebSockets.
+    }
 }
 
-# Webserver configuration
+
+
+# SSL/TLS configuration for HTTPS and HTTP/3.
+# Tip: If you are using Let's Encrypt, the only thing you need to do is enter your domain names, the rest will "just work".
+
+ssl {
+    # Simply add domain names below.
+    # Wildcard certificates are also supported (add *. before your domain)
+    domains: example.com, *.example.com;
+
+    # To specify a certificate override per domain, you can use the following format in the domains list:
+    # example.com["key.pem", "cert.pem"]
+
+    # Per-domain key/cert path template:
+    keyBase: "/etc/letsencrypt/live/{domain}/privkey.pem";
+    certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
+
+    # Path to default certificate and key files (can be left empty).
+    key: "";
+    cert: "";
+}
+
+# Auto provisioning of Let's Encrypt SSL certificates (an upcomming experimental feature).
+
+ssl.autoProvision {
+    enabled: false;
+
+    # The email address to use for Let's Encrypt registration.
+    email: "";
+}
+
+
+
+# Webserver/Web app configuration
+
 web {
     locations:
-        # Website locations - * searches all subdirectories.
-        # A website/webapp becomes valid when it contains an app.conf file.
+        # Website locations.
+        # "*" looks through subdirectories (eg. if you have a folder of folders for individual websites).
+
         "/var/www/akeno/*",
-        "./examples/hello-world-website",
-        "./core/gui"
+        "./examples/hello-world-website"
     ;
-}
-
-
-# API configuration
-api {
-    default: 1;
-}
-
-# Example of an API version. This will route /v1/ API requests to api/v1.example.js
-api.version(1) {
-    module: v1.example.js;
-}
-
-# Setup domains to route to API:
-route ("api.example.com") { to: api }
-# More spefic routing can be set later within web applications.
-
-
-sslRouter {
-    # To allow multiple certificates, you add server names below.
-    # Wildcard certificates are supported (add *. before your domain)!
-
-    certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
-    keyBase: "/etc/letsencrypt/live/{domain}/privkey.pem";
-
-    domains: example.com, example.net, *.example.com, *.example.net;
-}
-
-
-# If you intend to use a SQL database, eg. for user management
-database.sql {
-    db: "...";
-    host: "...";
-    user: "...";
-    password: "...";
 }

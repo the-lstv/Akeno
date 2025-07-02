@@ -8,6 +8,8 @@
     Description: Key-value database storage module built for Akeno
 */
 
+const fs = require("node:fs");
+
 let lmdb;
 
 try {
@@ -103,6 +105,18 @@ class KeyStorage {
             txn.abort();
             throw error;
         }
+    }
+
+    static openDb(path, name) {
+        path = path + name;
+    
+        if (name.startsWith("db/")) {
+            if (!fs.existsSync(path)) {
+                fs.mkdirSync(path)
+            }
+        } else throw new Error("Invalid database path");
+    
+        return new KeyStorage(path)
     }
 }
 
@@ -291,8 +305,10 @@ class dbi {
      */
 
     has(key){
-        if(!lmdb || (this.memoryCache && this.cache.has(key))){
-            return true;
+        const hasCached = this.memoryCache && this.cache.has(key);
+
+        if(!lmdb || hasCached){
+            return hasCached;
         }
 
         const txn = this.env.beginTxn({ readOnly: true });
