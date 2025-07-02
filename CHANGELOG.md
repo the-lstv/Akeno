@@ -5,6 +5,20 @@
 - Rework many parts, including the CLI, dynamic content, and the router
 - Write a proper documentation
 - Add a proper installation script
+- A cleaner API for compression and caching
+
+## New in 1.6.2-beta
+- Better compression cache management
+- Improved cache hit ratio (smarter compression caching)
+- Router performance improved
+- Changed request routing syntax
+- Async file operations
+- Re-added cache timeout
+- helper.nextSegment() replaces the deprecated helper.next()
+
+## New in 1.6.1-beta
+- Added a new DomainRouter module, which handles internal hostname routing
+- Apps can now register hostnames more easily via an uniform API, with pattern and wildcard support (eg. `*.example.{com,net}`)
 
 ## New in 1.6.0-beta
 - **MAJOR** changes all around (basically, preparing for a 2.0.0 release)
@@ -18,7 +32,7 @@
 - Added custom Unit types for consistency across the whole system
 - Deprecated HTTP traffic for websites and API - in production mode, HTTP will now redirect to HTTPS automatically unless explicitly disabled per application
 - PM2 name lowercased (Akeno -> akeno)
-- Chaged config strucure
+- Changed config structure
 - Added support for auto compression via Brotli or Gzip
 - Deprecated "Initialize" callback in modules. Use onLoad instead and do not rely on the backend object being provided.
 - Deprecated "HandleRequest" and "HandleSocket" callbacks - a new method will be introduced in the future.
