@@ -32,7 +32,7 @@ const
     MimeTypes = require("akeno:mime"),                    // MIME types
     Router = require("akeno:router"),                     // Router utilities
 
-    domainRouter = new Router.DomainRouter(),                   // Global router instance
+    domainRouter = new Router.DomainRouter(),             // Global router instance
 
     // - Authentication and security
     bcrypt = require("bcrypt"),                           // Secure hashing
@@ -172,47 +172,6 @@ function resolve(res, req) {
     }
     
     res.writeStatus("400 Bad Request").end("400 Bad Request");
-
-
-
-    // const timeout = setTimeout(() => {
-    //     try {
-    //         if(req.abort) return;
-
-    //         if(res && !res.sent && !res.wait) res.writeStatus("408 Request Timeout").tryEnd();
-    //     } catch {}
-    // }, res.timeout || 20000)
-
-    // if(req.domain.startsWith("cdn.")){
-    //     handler = Units.Manager.module("akeno.cdn").HandleRequest;
-    // }
-
-    // TODO: Move API handlers to a separate module
-    // if(handler === 2){
-    //     const versionCode = req.pathSegments.shift();
-    //     const firstChar = versionCode && versionCode.charCodeAt(0);
-
-    //     if(!firstChar || (firstChar !== 118 && firstChar !== 86)) return backend.helper.error(req, res, 0);
-        
-    //     const api = API.handlers.get(parseInt(versionCode.slice(1), 10));
-    //     handler = api && api.HandleRequest;
-
-    //     if(!handler) return backend.helper.error(req, res, 0);
-    // }
-
-    // handler({
-    //     req,
-    //     res,
-    //     flags: this.requestFlags,
-
-    //     segments: req.pathSegments,
-
-    //     // /** @deprecated */
-    //     // shift: () => backend.helper.next(req),
-
-    //     // /** @deprecated */
-    //     // error: (error, code, status) => backend.helper.error(req, res, error, code, status)
-    // })
 }
 
 
