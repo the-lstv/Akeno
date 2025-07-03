@@ -284,7 +284,7 @@ const backend = {
         EMPTY_OBJECT, EMPTY_ARRAY, EMPTY_BUFFER, SINCE_STARTUP,
         IS_NODE_INSPECTOR_ENABLED,
 
-        MIN_COMPRESSION_SIZE: 1024,
+        MIN_COMPRESSION_SIZE: 512,
     },
 
     mode: 0,
@@ -782,6 +782,7 @@ db.generalCache = db.storages.cache.openDbi("general", {}, true);
 db.apps = db.storages.main.openDbi("app.metadata", {}, true);
 
 
+
 Units.Manager.loadModule("./core/web");
 
 backend.webServerHandler = Units.Manager.module("akeno.web").onRequest;
@@ -795,6 +796,7 @@ process.on('exit', () => {
 })
 
 backend.log(`Starting \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${(performance.now() - SINCE_STARTUP).toFixed(2)}ms\x1b[0m.`);
+
 
 if (!JWT_KEY) {
     JWT_KEY = crypto.randomBytes(32).toString("hex");

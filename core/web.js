@@ -244,9 +244,9 @@ const server = new class WebServer extends Units.Module {
         this.registerType("WebApp", WebApp)
     }
 
-    Initialize(){
+    onLoad(){
         // Constants
-        const header = `<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`;
+        const header = backend.config.getBlock("web").get("htmlHeader", String, `<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`) || '';
 
         this.etc = {
             notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`),
