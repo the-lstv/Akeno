@@ -1,14 +1,13 @@
-
-
 /*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
 
-    Welcome to the Akeno Web App module!
-    This is an Akeno module created for static/dynamic web application handling & routing,
-    optimized for performance, with on-the-fly code compression, smart caching etc.
-
-    It also features a dynamic HTML processor.
-
+    Last modified: 2025
+    License: GPL-3.0
+    Version: 2.0.0
+    Description: A performance optimized web application framework for Akeno.
 */
+
 
 let
     // Libraries
@@ -84,7 +83,7 @@ class WebApp extends Units.App {
     }
 
     reloadConfig(){
-        let configPath = files_try(this.path + "/app.conf", this.path + "/app.manifest");
+        let configPath = this.path + "/app.conf";
 
         if(!configPath){
             return false;
@@ -242,7 +241,6 @@ const server = new class WebServer extends Units.Module {
         initParser(header);
 
         backend.exposeToDebugger("parser", parser);
-
         this.reload(null, true);
     }
 
@@ -262,23 +260,25 @@ const server = new class WebServer extends Units.Module {
 
             if(!fs.existsSync(location.replace("/*", ""))) {
                 this.warn("Web application (at " + location + ") does not exist - skipped.");
-                continue
+                continue;
             }
 
             // Handle wildcard (multi) locations
             if(location.endsWith("*")){
-                let path = nodePath.normalize(location.slice(0, -1) + "/");
+                let appDirectory = nodePath.normalize(location.slice(0, -1) + "/");
 
-                for(let new_location of fs.readdirSync(path)){
-                    new_location = path + new_location;
-                    if(!fs.statSync(path).isDirectory()) continue;
-                    locations.push(new_location)
+                for(let path of fs.readdirSync(appDirectory)){
+                    path = appDirectory + path;
+
+                    if(!fs.statSync(path).isDirectory() || !fs.existsSync(path + "/app.conf")) continue;
+                    locations.push(path);
                 }
-                continue
+                continue;
             }
 
             if(!fs.statSync(location).isDirectory()) {
-                return this.warn("Web application (at " + location + ") is a file - skipped.")
+                this.warn("Web application (at " + location + ") is a file - skipped.");
+                continue;
             }
 
             this.load(location)
@@ -286,7 +286,6 @@ const server = new class WebServer extends Units.Module {
 
         this.log(`Loaded ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
     }
-
 
     load(path){
         path = nodePath.normalize(path);
@@ -308,15 +307,6 @@ const server = new class WebServer extends Units.Module {
 
         if(!app.config) return false;
         return true
-    }
-
-    ServeCache(req, res, cache, app, url){
-        // Dynamic content
-        if(Array.isArray(cache.content)){
-            return this.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
-        }
-
-        return backend.helper.send(req, res, cache.content, cache.headers)
     }
 
     async onRequest(req, res, app){
@@ -550,6 +540,14 @@ const server = new class WebServer extends Units.Module {
         }
     }
 
+    ServeCache(req, res, cache, app, url){
+        // Dynamic content
+        if(Array.isArray(cache.content)){
+            return this.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
+        }
+
+        return backend.helper.send(req, res, cache.content, cache.headers)
+    }
 
     /*
         To be replaced with a more advanced dynamic content handler
@@ -688,7 +686,6 @@ const server = new class WebServer extends Units.Module {
     }
 }
 
-
 // Section: utils
 function files_try(...files){
     for(let file of files){
@@ -753,7 +750,6 @@ function updateCache(file, group, content, headers){
     cached.refresh = false;
     cached.headers = headers;
 }
-
 
 function checkSupportedBrowser(userAgent, properties) {
     const ua = userAgent.toLowerCase();
