@@ -71,6 +71,7 @@ class WebApp extends Units.App {
         this.name = this.config.getBlock("app").get("name", String, this.basename);
         this.enabled = null;
         this.ports = new Set;
+        this.quickRoutes = new Map;
 
         /**
          * @warning Do not use this set for routing - it is only a copy to allow for easy removal of domains.
@@ -81,16 +82,17 @@ class WebApp extends Units.App {
         applications.set(this.path, this);
 
         // Only for quick retrieval of website information
+        const _this = this;
         applicationCache.push({
-            basename: this.basename,
+            basename: _this.basename,
             path,
 
-            get enabled(){
-                return this.enabled
+            get enabled() {
+                return _this.enabled
             },
 
-            get ports(){
-                return [...this.ports]
+            get ports() {
+                return [..._this.ports]
             }
         })
 
@@ -108,6 +110,9 @@ class WebApp extends Units.App {
             strict: true,
             asLookupTable: true
         }))
+
+        this.configUpdated = true;
+        return true;
     }
 
     reload(){
@@ -200,12 +205,7 @@ class WebApp extends Units.App {
             }
         }
 
-        // TODO: API extensions
-        // for(let api of this.config.getBlocks("api")){
-        //     backend.apiExtensions[api.attributes] = this.path + "/" + api.attributes[1]
-        // }
-
-        // (Temporary) backend hooks
+        // FIXME: (Temporary) backend hooks
         if(this.config.data.has("hook")){
             const hook = this.config.getBlock("hook");
             const path = this.path + "/" + hook.get("path", String, "hook.js");
@@ -391,7 +391,7 @@ const server = new class WebServer extends Units.Module {
 
             if(target && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
                 res.writeStatus('302 Found').writeHeader('Location', target).end();
-                return
+                return;
             }
         }
 
@@ -417,8 +417,8 @@ const server = new class WebServer extends Units.Module {
                 const negate = route.get("not");
 
                 if(!negate || !negate.length || !(route.negate_picomatchCache || (route.negate_picomatchCache = picomatch(negate)))(url)){
-                    url = `/${route.get("to", String)}`
-                    break
+                    url = `/${route.get("to", String)}`;
+                    break;
                 }
             }
         }
@@ -507,8 +507,8 @@ const server = new class WebServer extends Units.Module {
 
                 switch(extension){
                     case "html":
-                        parserContext.data = { url, app, secure: req.secure };
-                        content = await parser.fromFile(file, parserContext)
+                        parserContext.data = { url, file, app, secure: req.secure };
+                        content = parser.fromFile(file, parserContext);
                         // content = await fs.promises.readFile(file);
                         break;
 
@@ -607,34 +607,34 @@ const server = new class WebServer extends Units.Module {
     }
 
 
-    onIPCRequest(path, args, respond){
-        switch(path){
+    onIPCRequest(segments, req, res){
+        switch(segments[0]){
             case "list":
-                respond(null, this.list())
+                res.end(this.list());
                 break
 
             case "list.domains":
-                respond(null, this.listDomains(request[1]))
+                res.end(this.listDomains(req.data[0]));
                 break
 
             case "list.getDomain":
-                respond(null, this.getDomain(request[1]))
+                res.end(this.getDomain(req.data[0]));
                 break
 
             case "enable":
-                respond(null, this.enableApp(request[1]))
+                res.end(this.enableApp(req.data[0]));
                 break
 
             case "disable":
-                respond(null, this.disableApp(request[1]))
+                res.end(this.disableApp(req.data[0]));
                 break
 
             case "reload":
-                respond(null, this.reloadApp(request[1]))
+                res.end(this.reloadApp(req.data[0]));
                 break
 
             case "tempDomain":
-                respond(null, this.tempDomain(request[1]))
+                res.end(this.tempDomain(req.data[0]));
                 break
         }
     }
@@ -657,6 +657,7 @@ const server = new class WebServer extends Units.Module {
         //     app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain).path === app.path)
         // }
 
+        // return [...applicationCache]
         return applicationCache
     }
 
@@ -901,12 +902,17 @@ function initParser(header){
                     const components = has_component_list && entry.values.length > 0? []: backend.constants.EMPTY_ARRAY;
 
                     // We sort alphabetically and remove duplicates to maximize cache hits
-                    // This is the fastest method based on my benchmark: https://jsbm.dev/Au74tivWZWKEo
+                    // This is the fastest implementation based on my benchmark: https://jsbm.dev/Au74tivWZWKEo
                     if(has_component_list) {
-                        let last = null;
-                        for (let v of entry.values.sort()) {
-                            let lower = attrib === "google-fonts"? v: v.toLowerCase();
-                            if (v && lower !== last) {
+                        const is_google_fonts = attrib === "google-fonts";
+
+                        let last = "";
+                        entry.values.sort();
+                        for (let i = 0, len = entry.values.length; i < len; i++) {
+                            let v = entry.values[i];
+                            if (!v) continue;
+                            let lower = is_google_fonts? v: v.toLowerCase();
+                            if (lower !== last) {
                                 components.push(lower);
                                 last = lower;
                             }
@@ -1057,16 +1063,16 @@ function initParser(header){
 
                     let mimeType = backend.mime.getType(extension) || "image/x-icon";
 
-                    this.write(`<link rel="shortcut icon" href="${block.properties.favicon}" type="${mimeType}">`)
+                    this.write(`<link rel="shortcut icon" href="${block.properties.favicon}" type="${mimeType}">`);
                 }
 
-                this.setBodyAttributes(bodyAttributes)
+                this.setBodyAttributes(bodyAttributes);
 
-                if(typeof block.properties.meta === "object"){
-                    // for(let key in block.properties.meta){
-                    //     this.write(`<meta name="${key}" content="${block.properties.meta[key]}">`)
-                    // }
-                }
+                // if(typeof block.properties.meta === "object"){
+                //     for(let key in block.properties.meta){
+                //         this.write(`<meta name="${key}" content="${block.properties.meta[key]}">`);
+                //     }
+                // }
                 break;
 
             case "import":
@@ -1076,7 +1082,7 @@ function initParser(header){
                     try {
                         this.import(this.data.app.path + "/" + item);
                     } catch (error) {
-                        this.data.app.warn("Failed to import: importing " + item, error)
+                        this.data.app.warn("Failed to import: importing " + item, error);
                     }
                 }
                 break;
@@ -1090,18 +1096,6 @@ function initParser(header){
                         this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
                     } catch (error) {
                         this.data.app.warn("Failed to import (raw): importing " + item, error)
-                    }
-                }
-                break;
-
-            case "dynamicImport":
-                if(!this.data.app.path) break;
-
-                for(let item of block.attributes){
-                    try {
-                        this.import(this.data.app.path + "/" + item);
-                    } catch (error) {
-                        this.data.app.warn("Failed to import: importing " + item, error)
                     }
                 }
                 break;

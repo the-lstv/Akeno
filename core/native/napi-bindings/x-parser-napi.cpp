@@ -120,6 +120,12 @@ void ParserContext::import(const Napi::CallbackInfo& info) {
     }
 
     std::streamsize size = file.tellg();
+    const std::streamsize MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    if (size > MAX_FILE_SIZE) {
+        Napi::Error::New(info.Env(), "File too large for import").ThrowAsJavaScriptException();
+        return;
+    }
+
     file.seekg(0, std::ios::beg);
     std::vector<char> buffer(size);
     if (!file.read(buffer.data(), size)) {

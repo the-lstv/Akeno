@@ -48,7 +48,7 @@ const
     KeyStorage = require("./core/kvdb"),                  // Key-value database (WARNING: will soon be deprecated)
 
     // Local modules
-    { ipc_server } = require("akeno:ipc"),                // IPC server
+    { Server: IPCServer } = require("./core/ipc"),        // IPC server
     { parse, configTools } = require("./core/parser")     // Parser
 ;
 
@@ -308,18 +308,29 @@ const backend = {
 
             init() {
                 // Internal ipc server
-                this.server = new ipc_server({
-                    onRequest(socket, request, respond){
+                this.server = new IPCServer({
+                    onRequest(req, res) {
+                        // TODO: This needs rework I guess
+                        
+                        let target;
+                        if(typeof req.data === "string"){
+                            target = req.data;
+                            req.data = [];
+                        } else if(Array.isArray(req.data) && req.data.length > 0){
+                            target = req.data.shift();
+                        } else {
+                            res.error("Invalid request").end();
+                            return;
+                        }
 
-                        const full_path = typeof request === "string"? (request = [request] && request[0]): request[0];
+                        const segments = target.split("/");
+                        target = segments.shift();
 
-                        const index = target.indexOf(".");
-                        const target = index !== -1? target.slice(0, index): target;
-                        const path = index !== -1? target.slice(index + 1): full_path;
+                        // return res.write("???").end();
 
                         switch(target){
                             case "ping":
-                                respond(null, {
+                                res.end({
                                     backend_path: PATH,
                                     version,
                                     mode: backend.modes.get(backend.mode),
@@ -327,39 +338,40 @@ const backend = {
                                 break
 
                             case "usage":
-                                const res = {
+                                const usageData = {
                                     mem: process.memoryUsage(),
                                     cpu: process.cpuUsage(),
                                     uptime: process.uptime(),
                                     backend_path: PATH,
                                     mode: backend.modes.get(backend.mode),
-                                    version,
+                                    version: String(version),
                                     modules: {
                                         count: Units.Manager.count,
-                                        sample: Units.Manager.list(),
+                                        sample: [] // Units.Manager.list(),
                                     }
                                 };
 
                                 // Calculate CPU usage in percentages
-                                if(request[1] === "cpu") {
+                                if(segments.includes("cpu")) {
                                     setTimeout(() => {
-                                        const endUsage = process.cpuUsage(res.cpu);
+                                        const endUsage = process.cpuUsage(usageData.cpu);
                                         const userTime = endUsage.user / 1000;
                                         const systemTime = endUsage.system / 1000;
 
-                                        res.cpu.usage = ((userTime + systemTime) / 200) * 100
-                                        respond(null, res)
+                                        usageData.cpu.usage = ((userTime + systemTime) / 200) * 100;
+                                        res.end(usageData);
                                     }, 200);
-                                } else respond(null, res);
+                                } else res.end(usageData);
                                 break
 
                             default:
-                                const targetModule = Units.module(target);
+                                const targetModule = Units.Manager.module(target);
 
                                 if(targetModule && targetModule.onIPCRequest){
-                                    targetModule.onIPCRequest(path, request, respond);
+                                    targetModule.onIPCRequest(segments, req, res);
                                 } else {
-                                    respond("Invalid command")
+                                    res.error("Invalid command").end();
+                                    return;
                                 }
                         }
 
