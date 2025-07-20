@@ -629,7 +629,7 @@ Some examples:
         case "start": {
             log(`${signature} Launching Akeno (without a process manager).`);
             
-            const childProcess = spawn('node ' + (argv.inspect? "--inspect " : "") + __dirname + '/../app' + process.argv.slice(process.argv.indexOf("start") + 1).join(" "), {
+            const childProcess = spawn('node ' + (argv.inspect? "--inspect " : "") + __dirname + '/../app ' + process.argv.slice(process.argv.indexOf("start") + 1).join(" "), {
                 shell: true,
                 env: {
                     ...process.env
