@@ -27,14 +27,13 @@ const
     { parse, stringify } = require("./parser"),
     { Client } = require("./ipc"),
 
-    socketPath = '/tmp/akeno.backend.sock',
-
-    client = new Client(socketPath)
+    socketPath = '/tmp/akeno.backend.sock'
 ;
 
 // To be removed
 const COMMAND_PATH = "/www/cmd/bin/";
 
+let client;
 
 
 let logo = argv.ascii === false? "" : (gradient(`\x1b[1m
@@ -415,6 +414,12 @@ if(process.argv.length < 3 || argv.h || argv.help || argv._[0] === "help" || arg
 }
 
 async function resolve(argv){
+
+    // FIXME: Temporary
+    if(["status", "info", "reload", "list", "ls", "enable", "disable", "create", "init",].includes(argv._[0])) {
+        client = new Client(socketPath)
+    }
+
     switch(argv._[0]) {
         case "status": case "info":
             client.request(["usage/cpu"], (error, response) => {
@@ -518,7 +523,6 @@ Some examples:
 
         break;
 
-
         case "update":
             try {
                 log("Pulling updates from the repository...");
@@ -530,7 +534,6 @@ Some examples:
                 log_error("Failed to update:", err);
             }
         break;
-
 
         case "parse-config": case "parse":
             let input = argv.t || argv.text;
@@ -548,7 +551,6 @@ Some examples:
 
             return log(data)
 
-
         case "enable":
             client.request(["akeno.web/enable", argv._[1]], (error, response) => {
                 client.close()
@@ -559,17 +561,15 @@ Some examples:
             })
             break;
 
-
         case "disable":
             client.request(["akeno.web/disable", argv._[1]], (error, response) => {
                 client.close()
 
                 if(response){
-                    log(`${signature} Sucessfully disabled app!`)
-                } else log_error(`${signature} Couldnt disable app (it either doesnt exist or Akeno is not running).`)
+                    log(`${signature} Successfully disabled app!`)
+                } else log_error(`${signature} Couldn't disable app (it either doesn't exist or Akeno is not running).`)
             })
             break;
-
 
         case "temp-hostname":
             client.request(["akeno.web/tempDomain", argv._[1]], (error, response) => {
@@ -577,7 +577,6 @@ Some examples:
                 log(response)
             })
             break;
-
 
         case "create": case "init":
             return (()=>{
@@ -648,7 +647,6 @@ Some examples:
             
             break;
         }
-
 
         // DO NOT USE THIS COMMAND :D
         // It is here just for backwards compatibility with my old system, and this part is still (sigh...) relied on.

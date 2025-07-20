@@ -326,8 +326,6 @@ const backend = {
                         const segments = target.split("/");
                         target = segments.shift();
 
-                        // return res.write("???").end();
-
                         switch(target){
                             case "ping":
                                 res.end({
@@ -386,7 +384,15 @@ const backend = {
                 }
 
                 this.server.listen(this.socketPath, () => {
-                    this.log(`Listening on ${this.socketPath}`)
+                    this.log(`Listening on ${this.socketPath}`);
+
+                    if (backend.config.getBlock("protocols").getBlock("ipc").get("openPermissions", Boolean, false)) {
+                        try {
+                            fs.chmodSync(this.socketPath, 0o777);
+                        } catch (err) {
+                            this.log(`Failed to set permissions for ${this.socketPath}: ${err.message}`);
+                        }
+                    }
                 })
             }
 
