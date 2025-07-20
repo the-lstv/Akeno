@@ -41,9 +41,7 @@ class DomainRouter extends Units.Module {
 
             for (let value of groupValues.split(',')) {
                 value = value.trim();
-                if (value) {
-                    yield* this.expandPattern(patternStart + value + patternEnd);
-                }
+                yield* this.expandPattern(patternStart + value + (value === "" && patternEnd.startsWith('.') ? patternEnd.slice(1) : patternEnd));
             }
             return;
         }
@@ -56,8 +54,12 @@ class DomainRouter extends Units.Module {
             throw new Error('Invalid route definition');
         }
 
-        if(pattern.endsWith('.')) {
+        if (pattern.endsWith('.')) {
             pattern = pattern.slice(0, -1);
+        }
+
+        if (!pattern) {
+            return;
         }
 
         // Expand pattern groups

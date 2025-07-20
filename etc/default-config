@@ -12,7 +12,8 @@ system {
 
 
 # Protocols configuration
-# Multiple ports can be specified as well.
+# Multiple default ports can be specified as well.
+# Additional ports can also be registered later by individual apps.
 
 protocols {
     ipc {
@@ -54,7 +55,7 @@ protocols {
 
 ssl {
     # Simply add domain names below.
-    # Wildcard certificates are also supported (add *. before your domain)
+    # Wildcard certificates (all subdomains) are also supported (add *. before your domain)
     domains: example.com, *.example.com;
 
     # To specify a certificate override per domain, you can use the following format in the domains list:
@@ -65,27 +66,20 @@ ssl {
     certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
 
     # Path to default certificate and key files (can be left empty).
+    # Use this for self-signed certificates for example.
     key: "";
     cert: "";
 }
-
-# Auto provisioning of Let's Encrypt SSL certificates (an upcomming experimental feature).
-
-ssl.autoProvision {
-    enabled: false;
-
-    # The email address to use for Let's Encrypt registration.
-    email: "";
-}
-
 
 
 # Webserver/Web app configuration
 
 web {
     locations:
-        # Website locations.
-        # "*" looks through subdirectories (eg. if you have a folder of folders for individual websites).
+        # Web-app locations.
+        # A web-app is a folder containing your website files and a config file (app.conf).
+        # They will be automatically served by Akeno based on the config file.
+        # "/*" looks through subdirectories (eg. if you have a folder like /websites/ that contains one website per folder).
 
         "/var/www/akeno/*",
         "./examples/hello-world-website"

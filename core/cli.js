@@ -4,9 +4,9 @@
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
 
-    Last modified: 2024
+    Last modified: 2025
     License: GPL-3.0
-    Version: 1.0.0
+    Version: 1.1.0
     Description: Command line interface for Akeno
 */
 
@@ -24,12 +24,12 @@ const
     fs = require("fs-extra"),
 
     // Local libraries
-    { parse, stringify, configTools, merge } = require("./parser"),
-    { ipc_client } = require("./ipc"),
+    { parse, stringify } = require("./parser"),
+    { Client } = require("./ipc"),
 
     socketPath = '/tmp/akeno.backend.sock',
 
-    client = new ipc_client(socketPath)
+    client = new Client(socketPath)
 ;
 
 // To be removed
@@ -100,7 +100,13 @@ const ROOT_COMMANDS = [
             {
                 name: "start",
                 type: "command",
-                description: "Start the server (without a PM)"
+                description: "Start the server (without a PM)",
+                options: [
+                    {
+                        name: "--inspect",
+                        description: "Enable Node.js inspector for debugging"
+                    }
+                ]
             },
             {
                 name: "reload",
@@ -411,17 +417,17 @@ if(process.argv.length < 3 || argv.h || argv.help || argv._[0] === "help" || arg
 async function resolve(argv){
     switch(argv._[0]) {
         case "status": case "info":
-            client.request(["usage", "cpu"], (error, response) => {
+            client.request(["usage/cpu"], (error, response) => {
                 if(error){
                     if(error.code === "ECONNREFUSED") {
                         return client.close() && log_error(`${signature} Can't get status: Akeno is not running! Make sure you have started it either with a process manager, or the "akeno start" command.`)
                     }
         
-                    return client.close() && log_error(`${signature} Couln't get information, the server may not be running!\nError:`, error)
-                }        
-        
-                const mem_total = response.mem.heapTotal
-                const mem_used = response.mem.heapUsed
+                    return client.close() && log_error(`${signature} Couldn't get information, the server may not be running!\nError:`, error)
+                }
+
+                const mem_total = response.mem.heapTotal;
+                const mem_used = response.mem.heapUsed;
             
                 log(logo + box(`You are running the Akeno backend - an open source, fast, modern and fully automated
 web application, API and content delivery management system / server!
@@ -429,10 +435,10 @@ web application, API and content delivery management system / server!
 \x1b[95mCreated with <3 by \x1b[1mTheLSTV\x1b[0m\x1b[95m (https://lstv.space).\x1b[0m
 
 Version: ${response.version}
-Server is ${response.server_enabled? `\x1b[32monline\x1b[0m for \x1b[36m\x1b[1m${formatUptime(response.uptime)}\x1b[0m`: "\x1b[31moffline\x1b[0m"}
-${response.server_enabled?`Running in \x1b[36m\x1b[1m${response.isDev? "development": "production"}\x1b[0m environment.
+Server is \x1b[32monline\x1b[0m for \x1b[36m\x1b[1m${formatUptime(response.uptime)}\x1b[0m
+Running in \x1b[36m\x1b[1m${response.mode.toLowerCase()}\x1b[0m mode.
 ---
-Currently using \x1b[36m\x1b[1m${(mem_used / 1000000).toFixed(2)} MB\x1b[0m RAM out of a \x1b[36m\x1b[1m${(mem_total / 1000000).toFixed(2)} MB\x1b[0m heap and \x1b[36m\x1b[1m${response.cpu.usage.toFixed(4)}%\x1b[0m CPU.` : ''}
+Currently using \x1b[36m\x1b[1m${(mem_used / 1000000).toFixed(2)} MB\x1b[0m RAM out of a \x1b[36m\x1b[1m${(mem_total / 1000000).toFixed(2)} MB\x1b[0m heap and \x1b[36m\x1b[1m${response.cpu.usage.toFixed(4)}%\x1b[0m CPU.
 ---${response.modules.count > 0?`
 \x1b[36m\x1b[1m${response.modules.count}\x1b[0m module${response.modules.count > 1? "s": ""} loaded: ${response.modules.sample.join(", ")}
 ---`: ''}
@@ -453,14 +459,14 @@ Some examples:
 
             log(`${signature} Hot-reloading web ${(singular? `application "${argv._[1]}"`: "server")}...`);
 
-            client.request(["web.reload", (singular && argv._[1]) || null], (error, success) => {
+            client.request(["akeno.web/reload", (singular && argv._[1]) || null], (error, success) => {
                 client.close()
 
                 if(error || !success){
                     return log_error(`${signature} Could not reload:`, (error && error) || "Invalid application")
                 }
 
-                log(`${signature} Sucessfully reloaded!`);
+                log(`${signature} Successfully reloaded!`);
             })
 
         break;
@@ -471,7 +477,7 @@ Some examples:
             }
 
             exec("pm2 reload akeno")
-            log(`${signature} API Server sucessfully reloaded.`)
+            log(`${signature} API Server successfully reloaded.`)
 
         break;
 
@@ -485,12 +491,6 @@ Some examples:
                         if(error){
                             return log_error(`${signature} Could not list modules:`, error)
                         }
-
-                        if(argv.json){
-                            return log(response)
-                        }
-                        
-                        return log(box(response.map(app => `\x1b[93m\x1b[1m${app.name}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.domains.length > 0? `\n\n\x1b[1mDomains:\x1b[0m\n${app.domains.join("\n")}`: "" }${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`).join("\n---\n")))
                     })
                 break;
 
@@ -502,18 +502,18 @@ Some examples:
         }
 
         case "list": case "ls":
-            client.request(["web.list"], (error, response) => {
-                client.close()
+            client.request(["akeno.web/list"], (error, data) => {
+                client.close();
 
                 if(error){
                     return log_error(`${signature} Could not list applications:`, error)
                 }
 
                 if(argv.json){
-                    return log(response)
+                    return log(data);
                 }
-                
-                return log(box(response.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.domains.length > 0? `\n\n\x1b[1mDomains:\x1b[0m\n${app.domains.join("\n")}`: "" }${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`).join("\n---\n")))
+
+                return log(box(data.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`).join("\n---\n")))
             })
 
         break;
@@ -550,7 +550,7 @@ Some examples:
 
 
         case "enable":
-            client.request(["web.enable", argv._[1]], (error, response) => {
+            client.request(["akeno.web/enable", argv._[1]], (error, response) => {
                 client.close()
 
                 if(response){
@@ -561,7 +561,7 @@ Some examples:
 
 
         case "disable":
-            client.request(["web.disable", argv._[1]], (error, response) => {
+            client.request(["akeno.web/disable", argv._[1]], (error, response) => {
                 client.close()
 
                 if(response){
@@ -572,7 +572,7 @@ Some examples:
 
 
         case "temp-hostname":
-            client.request(["web.tempDomain", argv._[1]], (error, response) => {
+            client.request(["akeno.web/tempDomain", argv._[1]], (error, response) => {
                 client.close()
                 log(response)
             })
@@ -630,7 +630,7 @@ Some examples:
         case "start": {
             log(`${signature} Launching Akeno (without a process manager).`);
             
-            const childProcess = spawn('node ' + (argv.inspect? "--inspect " : "") + __dirname + '/../app', {
+            const childProcess = spawn('node ' + (argv.inspect? "--inspect " : "") + __dirname + '/../app' + process.argv.slice(process.argv.indexOf("start") + 1).join(" "), {
                 shell: true,
                 env: {
                     ...process.env

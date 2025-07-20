@@ -474,7 +474,7 @@ const Manager = {
             module.version = new Version(module.version || 1);
         }
 
-        if(module.Initialize) module.Initialize(backend);
+        if(module.onLoad) module.onLoad(backend);
 
         return module;
     },
