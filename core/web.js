@@ -1,14 +1,16 @@
-
-
 /*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
 
-    Welcome to the Akeno Web App module!
-    This is an Akeno module created for static/dynamic web application handling & routing,
-    optimized for performance, with on-the-fly code compression, smart caching etc.
-
-    It also features a dynamic HTML processor.
-
+    Last modified: 2025
+    License: GPL-3.0
+    Version: 2.0.0
+    Description: A performance optimized web application framework for Akeno.
 */
+
+
+// work in progress
+
 
 let
     // Libraries
@@ -28,7 +30,6 @@ let
     Units = require("./unit"),
 
     applications = new Map,
-    applicationCache = [], // debug purposes
 
     // Backend object
     backend = require("akeno:backend"),
@@ -63,7 +64,10 @@ class WebApp extends Units.App {
 
         this.path = path;
         this.type = "akeno.web.WebApp";
-
+        
+        this.configMtime = null;
+        this.loaded = false;
+        
         this.reloadConfig();
         if(!this.config) throw "Invalid or missing config";
 
@@ -81,29 +85,20 @@ class WebApp extends Units.App {
 
         applications.set(this.path, this);
 
-        // Only for quick retrieval of website information
-        const _this = this;
-        applicationCache.push({
-            basename: _this.basename,
-            path,
-
-            get enabled() {
-                return _this.enabled
-            },
-
-            get ports() {
-                return [..._this.ports]
-            }
-        })
-
-        this.reload();
+        this.reload(false);
     }
 
     reloadConfig(){
-        let configPath = files_try(this.path + "/app.conf", this.path + "/app.manifest");
+        let configPath = this.path + "/app.conf";
 
         if(!configPath){
             return false;
+        }
+
+        try {
+            this.configMtime = fs.statSync(configPath).mtimeMs;
+        } catch {
+            this.configMtime = null;
         }
 
         this.config = configTools(parse(fs.readFileSync(configPath, "utf8"), {
@@ -111,11 +106,25 @@ class WebApp extends Units.App {
             asLookupTable: true
         }))
 
-        this.configUpdated = true;
         return true;
     }
 
-    reload(){
+    reload(checkConfig = true){
+        if(checkConfig){
+            const configPath = this.path + "/app.conf";
+            let currentMtime = null;
+
+            try {
+                currentMtime = fs.statSync(configPath).mtimeMs;
+            } catch {}
+
+            if(currentMtime && this.configMtime !== currentMtime) {
+                this.reloadConfig();
+            } else return;
+        }
+
+        if(this.loaded) this.verbose("Hot-reloading");
+
         const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean)
         this.enabled = (is_enabled === null? true: is_enabled) || false;
 
@@ -140,7 +149,6 @@ class WebApp extends Units.App {
                 this.domains.add(domain);
             }
         }
-
 
         const enabledPorts = this.config.getBlock("server").get("port") || [];
 
@@ -230,10 +238,8 @@ class WebApp extends Units.App {
 
             this.modules.set(name, module)
         }
-    }
 
-    restart(){
-        return this.reload();
+        this.loaded = true;
     }
 }
 
@@ -258,14 +264,13 @@ const server = new class WebServer extends Units.Module {
         initParser(header);
 
         backend.exposeToDebugger("parser", parser);
-
         this.reload(null, true);
     }
 
-    async reload(specific_app, skip_refresh){
-        if(specific_app) return this.load(specific_app);
+    async reload(specific_app, skip_config_refresh){
+        if(specific_app) return this.refreshApp(specific_app);
 
-        if(!skip_refresh) backend.refreshConfig();
+        if(!skip_config_refresh) backend.refreshConfig();
 
         const start = performance.now();
 
@@ -278,72 +283,39 @@ const server = new class WebServer extends Units.Module {
 
             if(!fs.existsSync(location.replace("/*", ""))) {
                 this.warn("Web application (at " + location + ") does not exist - skipped.");
-                continue
+                continue;
             }
 
             // Handle wildcard (multi) locations
             if(location.endsWith("*")){
-                let path = nodePath.normalize(location.slice(0, -1) + "/");
+                let appDirectory = nodePath.normalize(location.slice(0, -1) + "/");
 
-                for(let new_location of fs.readdirSync(path)){
-                    new_location = path + new_location;
-                    if(!fs.statSync(path).isDirectory()) continue;
-                    locations.push(new_location)
+                for(let path of fs.readdirSync(appDirectory)){
+                    path = appDirectory + path;
+
+                    if(!fs.statSync(path).isDirectory() || !fs.existsSync(path + "/app.conf")) continue;
+                    locations.push(path);
                 }
-                continue
+                continue;
             }
 
             if(!fs.statSync(location).isDirectory()) {
-                return this.warn("Web application (at " + location + ") is a file - skipped.")
+                this.warn("Web application (at " + location + ") is a file - skipped.");
+                continue;
             }
 
-            this.load(location)
+            this.refreshApp(location);
         }
 
-        this.log(`Loaded ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
-    }
-
-
-    load(path){
-        // TODO: Hot reloading is almost functional, but needs config validation and re-parsing to be finished
-
-        path = nodePath.normalize(path);
-
-        let app = applications.get(path);
-
-        
-        if(!app) {
-            try {
-                app = new WebApp(path);
-            } catch (error) {
-                this.warn("Web application (at " + path + ") failed to load due to an error: ", error);
-                return false;
-            }
-            if(!app) return false;
-        } else {
-            this.verbose("Hot-reloading web application (at " + path + ")");
-            app.reload();
-        }
-
-        if(!app.config) return false;
-        return true
-    }
-
-    ServeCache(req, res, cache, app, url){
-        // Dynamic content
-        if(Array.isArray(cache.content)){
-            return this.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
-        }
-
-        return backend.helper.send(req, res, cache.content, cache.headers)
+        this.log(`${skip_config_refresh? "Loaded": "Reloaded"} ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
     }
 
     async onRequest(req, res, app){
         // This is the main handler/router for websites/webapps.
 
         if(!app) return res.cork(() => {
-            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error)
-        })
+            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error);
+        });
 
         // HTTPS Redirect
         if(backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))){
@@ -353,7 +325,7 @@ const server = new class WebServer extends Units.Module {
 
         // When the app is disabled
         if(!app.enabled){
-            backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422")
+            backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422");
             return
         }
 
@@ -428,11 +400,9 @@ const server = new class WebServer extends Units.Module {
         try {
 
 
-
             /**
              * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit and the cache system is a bit eh.
             */
-
 
 
             // TODO: Cache this
@@ -569,10 +539,19 @@ const server = new class WebServer extends Units.Module {
         }
     }
 
+    ServeCache(req, res, cache, app, url){
+        // Dynamic content
+        if(Array.isArray(cache.content)){
+            return this.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
+        }
 
-    /*
-        To be replaced with a more advanced dynamic content handler
-    */
+        return backend.helper.send(req, res, cache.content, cache.headers)
+    }
+
+    /**
+     * To be replaced with a more advanced dynamic content handler
+     * @deprecated
+     */
     ServeDynamicContent(req, res, content, headers, app, url){
         res.cork(() => {
             // undefined will delay sending
@@ -610,126 +589,170 @@ const server = new class WebServer extends Units.Module {
     onIPCRequest(segments, req, res){
         switch(segments[0]){
             case "list":
-                res.end(this.list());
-                break
+                res.end([...applications.values()].map(app => ({
+                    name: app.name,
+                    basename: app.basename,
+                    path: app.path,
+                    enabled: app.enabled,
+                    ports: [...app.ports],
+                    domains: [...app.domains],
+                    modules: [...app.modules.keys()],
+                })));
+                break;
 
             case "list.domains":
                 res.end(this.listDomains(req.data[0]));
-                break
+                break;
 
-            case "list.getDomain":
-                res.end(this.getDomain(req.data[0]));
-                break
+            case "list.getDomain": 
+            case "getFirstDomain":
+                res.end(this.getFirstDomain(req.data[0]));
+                break;
 
             case "enable":
                 res.end(this.enableApp(req.data[0]));
-                break
+                break;
 
             case "disable":
                 res.end(this.disableApp(req.data[0]));
-                break
+                break;
 
             case "reload":
-                res.end(this.reloadApp(req.data[0]));
-                break
+                if(!req.data || !req.data[0]) {
+                    this.reload();
+                    res.end(true);
+                } else {
+                    const app = applications.get(this.resolveApplicationPath(req.data[0]));
+                    if(!app) return res.end(false);
+
+                    app.reload();
+                    res.end(true);
+                }
+                break;
 
             case "tempDomain":
-                res.end(this.tempDomain(req.data[0]));
-                break
+                res.end(this.tempDomain(req.data[0], req.data[1] || null));
+                break;
+
+            case "info":
+                if(!req.data || !req.data[0]) return res.error("No application specified").end();
+                const appInfo = this.getApp(req.data[0]);
+                if(!appInfo) return res.error("Application not found").end();
+
+                res.end({
+                    name: appInfo.name,
+                    basename: appInfo.basename,
+                    path: appInfo.path,
+                    enabled: appInfo.enabled,
+                    ports: [...appInfo.ports],
+                    domains: [...appInfo.domains],
+                    modules: [...appInfo.modules.keys()],
+                });
+                break;
+
+            default:
+                res.end("Invalid request");
         }
     }
 
 
     // Utility functions
 
-    getAppPath(path_or_name){
-        if(!path_or_name) return null;
-        if(path_or_name.includes("/") && fs.existsSync(path_or_name)) return path_or_name;
+    /**
+     * Get application from its path or name.
+     * @param {string} path - The path or name of the application.
+     * @returns {WebApp|null} - The application object or null if not found.
+     */
+    getApp(path){
+        path = this.resolveApplicationPath(path);
+        if(!path) return null;
 
-        const found = applicationCache.find(app => app.basename === path_or_name);
-
-        return found && found.path
+        return applications.get(path);
     }
 
-    list(){
-        // To be enhanced
-        // for(let app of applicationCache){
-        //     app.domains = [...assignedDomains.keys()].filter(domain => assignedDomains.get(domain).path === app.path)
-        // }
+    /**
+     * Resolve an application path by its name or path.
+     * @param {string} path - The path or name of the application.
+     * @returns {string|null} - The resolved application path or null if not found.
+     */
+    resolveApplicationPath(path){
+        path = nodePath.normalize(path);
 
-        // return [...applicationCache]
-        return applicationCache
+        if(!path) return null;
+        if(applications.has(path)) return path; // Direct match
+        if(path.includes("/") && fs.existsSync(path)) return path;
+
+        for (const app of applications.values()) {
+            if (app.basename === path) return app.path;
+        }
+
+        return null;
+    }
+
+    refreshApp(path){
+        path = nodePath.normalize(path);
+
+        let app = applications.get(path);
+
+        if(!app) {
+            try {
+                app = new WebApp(path);
+            } catch (error) {
+                this.warn("Web application (at " + path + ") failed to load due to an error: ", error);
+                return false;
+            }
+
+            if(!app) return false;
+        } else {
+            app.reload();
+        }
+
+        if(!app.config) return false;
+        return true;
     }
 
     enableApp(app_path){
-        if(!(app_path = this.util.getAppPath(app_path))) return false;
+        if(!(app_path = this.resolveApplicationPath(app_path))) return false;
         
-        for(let application of applications.values()) {
-            if(application.path === app_path) {
-                application.enabled = true
-                backend.kvdb.apps.commitSet(`${app_path}.enabled`, true)
-                return true
-            }
-        }
-
-        return false
+        const app = applications.get(app_path);
+        app.enabled = true;
+        backend.db.apps.commitSet(`${app_path}.enabled`, true);
+        return true;
     }
 
     disableApp(app_path){
-        if(!(app_path = this.util.getAppPath(app_path))) return false;
-    
-        for(let application of applications.values()) {
-            if(application.path === app_path) {
-                application.enabled = false
-                backend.kvdb.apps.commitSet(`${app_path}.enabled`, false)
-                return true
-            }
-        }
+        if(!(app_path = this.resolveApplicationPath(app_path))) return false;
 
-        return false
+        const app = applications.get(app_path);
+        app.enabled = false;
+        backend.db.apps.commitSet(`${app_path}.enabled`, false);
+        return true;
     }
 
     listDomains(app_path){
-        if(!(app_path = this.util.getAppPath(app_path))) return false;
+        if(!(app_path = this.resolveApplicationPath(app_path))) return false;
 
-        // let list = [];
+        const app = applications.get(app_path);
+        if(!app) return false;
 
-        // for(domain in assignedDomains.keys()){
-        //     if(assignedDomains.get(domain).path === app_path) list.push(domain);
-        // }
-
-        // return list;
-        return ["Temporarily disabled"];
+        return [...app.domains];
     }
 
-    reloadApp(app_path = null){
-        if(app_path && !(app_path = this.util.getAppPath(app_path))) return false;
-        return this.reload(app_path || null)
+    getFirstDomain(app_path){
+        const list = this.listDomains(app_path);
+        return list && list[0];
     }
 
-    getDomain(app_path){
-        if(!(app_path = this.util.getAppPath(app_path))) return false;
+    tempDomain(app_path, domain = null){
+        const app = this.getApp(app_path);
+        if(!app) return false;
 
-        // for(domain in assignedDomains.keys()){
-        //     if(assignedDomains.get(domain).path === req.getQuery(app_path)) return domain;
-        // }
-
-
-        return ["Temporarily disabled"];
-
-        return "";
-    }
-
-    tempDomain(app_path){
-        if(!(app_path = this.util.getAppPath(app_path))) return false;
-
-        let random = backend.uuid();
-        backend.domainRouter.add(random, applications.get(app_path));
+        let random = domain || backend.uuid();
+        backend.domainRouter.add(random, app);
 
         return random;
     }
 }
-
 
 // Section: utils
 function files_try(...files){
@@ -796,7 +819,6 @@ function updateCache(file, group, content, headers){
     cached.headers = headers;
 }
 
-
 function checkSupportedBrowser(userAgent, properties) {
     const ua = userAgent.toLowerCase();
 
@@ -820,40 +842,24 @@ function checkSupportedBrowser(userAgent, properties) {
 }
 
 
-const ls_path = "/www/content/akeno" + "/cdn/ls"; // should be backend.path
+const ls_path = backend.path + "/addons/cdn/ls";
 const latest_ls_version = fs.existsSync(ls_path + "/version")? fs.readFileSync(ls_path + "/version", "utf8").trim(): "5.1.0";
+
 const ls_components = {
-    // JS-only components
-    js: [
-        'reactive',
-        'network',
-        'reactive',
-        'tabs',
-        'toast',
-        'tooltips',
-        'v4compat'
+    "js": [
+        "gl",
+        "network",
+        "node",
+        "reactive",
+        "tabs",
+        "toast",
+        "tooltips",
+        "v4compat"
     ],
-
-    // CSS-only components
-    css: ["flat"]
+    "css": [
+        "flat"
+    ]
 };
-
-// if(fs.existsSync(ls_path)) {
-//     for (const file of fs.readdirSync(ls_path + "/dist/dev/js")) {
-//         if (file.endsWith(".js")) {
-//             ls_components.js.push(nodePath.basename(file, ".js"));
-//         }
-//     }
-
-//     for (const file of fs.readdirSync(ls_path + "/dist/dev/css")) {
-//         if (file.endsWith(".css")) {
-//             ls_components.css.push(nodePath.basename(file, ".css"));
-//         }
-//     }
-
-//     console.log("Found components: ", ls_components);
-// }
-
 
 function initParser(header){
     parser = new WebNative.parser({
@@ -1119,6 +1125,33 @@ function map_resource(link, local_path){
     }
 
     return link
+}
+
+
+
+// Debug: Hot reloading LS components
+// This is a temporary solution to update the ls_components object in this file, do not actually use this
+if(process.argv.includes("--debug-scan-ls-components")) {
+    if(fs.existsSync(ls_path)) {
+        require(ls_path + "/misc/generate.js");
+
+        const newComponents = JSON.parse(fs.readFileSync(ls_path + "/misc/components.json", "utf8"));
+
+        ls_components.js = newComponents.js;
+        ls_components.css = newComponents.css;
+
+        const thisFile = __filename;
+        const fileContent = fs.readFileSync(thisFile, "utf8");
+
+        // Find the ls_components assignment using regex
+        const updatedContent = fileContent.replace(
+            /const ls_components\s*=\s*\{[\s\S]*?\};/,
+            `const ls_components = ${JSON.stringify(ls_components, null, 4)};`
+        );
+
+        fs.writeFileSync(thisFile, updatedContent, "utf8");
+        console.log(`[DEBUG] Updated ${thisFile} with new ls_components.`);
+    }
 }
 
 module.exports = server

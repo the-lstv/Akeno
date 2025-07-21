@@ -3,20 +3,12 @@
   "id": "akeno.backend",
   "description": "Akeno Backend",
   "main": "app.js",
-  "version": "1.6.2-beta",
+  "version": "1.6.3-beta",
   "author": "TheLSTV",
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/the-lstv/Akeno"
-  },
-  "_moduleAliases": {
-    "akeno:backend": "app.js",
-    "akeno:kvdb": "./core/kvdb.js",
-    "akeno:units": "./core/unit.js",
-    "akeno:mime": "./core/mime.js",
-    "akeno:ipc": "./core/ipc.js",
-    "akeno:router": "./core/router.js"
   },
   "scripts": {
     "start": "node app.js"
@@ -31,8 +23,9 @@
     "minimist": "^1.2.8",
     "module-alias": "^2.2.3",
     "picomatch": "^4.0.2",
+    "pm2": "^6.0.8",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",
     "uglify-js": "^3.19.3",
-    "uuid": "^11.1.0",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0"
+    "uuid": "^11.1.0"
   }
 }

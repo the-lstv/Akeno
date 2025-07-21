@@ -8,15 +8,23 @@
 */
 
 // Module aliases
-const package = require("./package.json");
-require('module-alias/register');
+const moduleAlias = require('module-alias');
+
+moduleAlias.addAliases({
+    "akeno:backend": __dirname + "/app.js",
+    "akeno:kvdb": __dirname + "/core/kvdb.js",
+    "akeno:units": __dirname + "/core/unit.js",
+    "akeno:mime": __dirname + "/core/mime.js",
+    "akeno:ipc": __dirname + "/core/ipc.js",
+    "akeno:router": __dirname + "/core/router.js"
+});
 
 const Units = require("akeno:units");
 
 
 // Global variables
 let
-    version = new Units.Version(package.version)
+    version = new Units.Version("1.6.3-beta")
 ;
 
 
@@ -326,8 +334,6 @@ const backend = {
                         const segments = target.split("/");
                         target = segments.shift();
 
-                        // return res.write("???").end();
-
                         switch(target){
                             case "ping":
                                 res.end({
@@ -386,7 +392,15 @@ const backend = {
                 }
 
                 this.server.listen(this.socketPath, () => {
-                    this.log(`Listening on ${this.socketPath}`)
+                    this.log(`Listening on ${this.socketPath}`);
+
+                    if (backend.config.getBlock("protocols").getBlock("ipc").get("openPermissions", Boolean, false)) {
+                        try {
+                            fs.chmodSync(this.socketPath, 0o777);
+                        } catch (err) {
+                            this.log(`Failed to set permissions for ${this.socketPath}: ${err.message}`);
+                        }
+                    }
                 })
             }
 
@@ -765,7 +779,9 @@ const backend = {
 
     resolve,
 
-    domainRouter
+    domainRouter,
+
+    uuid
 }
 
 // We do this here to make code completions work in VSCode
