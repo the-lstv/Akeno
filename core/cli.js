@@ -19,12 +19,14 @@ const
     execAsync = require("child_process").exec,
     spawn = require("child_process").spawn,
 
+    pm2 = require("pm2"),
+
     nodePath = require("path"),
 
     fs = require("fs-extra"),
 
     // Local libraries
-    { parse, stringify } = require("./parser"),
+    { parse, stringify, v } = require("./parser"),
     { Client } = require("./ipc"),
 
     socketPath = '/tmp/akeno.backend.sock'
@@ -43,7 +45,9 @@ let logo = argv.ascii === false? "" : (gradient(`\x1b[1m
   / ___ \\|   <  __/ | | | (_) |
  /_/   \\_\\_|\\_\\___|_| |_|\\___/
 `) + "\x1b[0m\n"),
-    signature = "\x1b[95m[akeno]\x1b[0m"
+    signature = "\x1b[95m[akeno]\x1b[0m",
+    signatureLength = "[akeno]".length,
+    nestedSignature = " ".repeat(signatureLength - 2) + "\x1b[90m⤷\x1b[0m "
 ;
 
 
@@ -94,7 +98,14 @@ const ROOT_COMMANDS = [
             {
                 name: ["info", "status", "--info", "-i"],
                 type: "command",
-                description: "Display some information about the server and its status"
+                description: "Display some information about the server and its status",
+                json: true
+            },
+            {
+                name: ["version", "-v"],
+                type: "command",
+                description: "Display the current version of Akeno",
+                json: true
             },
             {
                 name: "start",
@@ -110,13 +121,13 @@ const ROOT_COMMANDS = [
             {
                 name: "reload",
                 type: "command",
-                description: "Hot-reload the server configuration",
+                description: "Hot-reload the server or a specific application",
                 args: ["app"]
             },
             {
                 name: "restart",
                 type: "command",
-                description: "Restart the server (requires PM2)",
+                description: "Restart the server",
                 options: [
                     {
                         name: "--logs",
@@ -136,13 +147,23 @@ const ROOT_COMMANDS = [
                 ]
             },
             {
+                name: "pm2-setup",
+                type: "command",
+                description: "Setup Akeno to run under PM2 (process manager)"
+            },
+            {
+                name: "pm2-delete",
+                type: "command",
+                description: "Delete Akeno from PM2 (process manager)"
+            },
+            {
                 name: "logs",
                 type: "command",
                 description: "View server logs (requires PM2)",
                 args: ["filter"]
             },
             {
-                name: "parse-config",
+                name: ["parse", "parse-config", "get-config"],
                 type: "command",
                 description: "Parse a config file and return it as JSON. Defaults to the main config",
                 json: true,
@@ -197,6 +218,19 @@ const ROOT_COMMANDS = [
                 ]
             },
             {
+                name: "info",
+                type: "command",
+                description: "Get information about a web application",
+                args: ["app"],
+                json: true
+            },
+            {
+                name: "list-domains",
+                type: "command",
+                description: "List all domains for a web application",
+                args: ["app"]
+            },
+            {
                 name: "enable",
                 type: "command",
                 description: "Enable a web application",
@@ -211,14 +245,14 @@ const ROOT_COMMANDS = [
             {
                 name: "temp-hostname",
                 type: "command",
-                description: "Generate a temporary hostname for an app",
-                args: ["app"]
+                description: "Generate a temporary hostname for an app (or specify a domain)",
+                args: ["app", "[domain]"],
             },
             {
                 name: "bundle",
                 type: "command",
-                description: "Create a bundle for external/offline use",
-                args: ["source", "target path"]
+                description: "Export a bundle for external/offline use",
+                args: ["app", "target path"]
             }
         ]
     },
@@ -396,7 +430,6 @@ function generateHelp(items) {
  */
 
 if(process.argv.length < 3 || argv.h || argv.help || argv._[0] === "help" || argv._[0] === "h" || argv._[0] === "?" || argv._[0] === "/?"){
-
     if(argv.json) {
         return log(JSON.stringify(ROOT_COMMANDS.map(item => {
             if(item.type === "group"){
@@ -413,26 +446,42 @@ if(process.argv.length < 3 || argv.h || argv.help || argv._[0] === "help" || arg
     process.exit()
 }
 
+if(argv._[0] === "version" || (argv.v && !argv._[0])) {
+    const packageJson = require("../package.json");
+
+    if(argv.json) {
+        return log(packageJson.version);
+    }
+
+    return log(logo + box(`\x1b[1mAkeno CLI version: ${packageJson.version}\x1b[0m\n\x1b[90mCreated with <3 by TheLSTV (https://lstv.space)\x1b[0m`));
+}
+
 async function resolve(argv){
 
     // FIXME: Temporary
-    if(["status", "info", "reload", "list", "ls", "enable", "disable", "create", "init",].includes(argv._[0])) {
+    if(["status", "info", "reload", "list", "ls", "enable", "disable", "create", "init", "web.info", "temp-hostname"].includes(argv._[0])) {
         client = new Client(socketPath)
     }
 
     switch(argv._[0]) {
         case "status": case "info":
             client.request(["usage/cpu"], (error, response) => {
+                client.close();
+
                 if(error){
                     if(error.code === "ECONNREFUSED") {
-                        return client.close() && log_error(`${signature} Can't get status: Akeno is not running! Make sure you have started it either with a process manager, or the "akeno start" command.`)
+                        return log_error(`${signature} Can't get status: Akeno is not running! Make sure you have started it either with a process manager, or the "akeno start" command.`)
                     }
         
-                    return client.close() && log_error(`${signature} Couldn't get information, the server may not be running!\nError:`, error)
+                    return log_error(`${signature} Couldn't get information, the server may not be running!\nError:`, error)
                 }
 
                 const mem_total = response.mem.heapTotal;
                 const mem_used = response.mem.heapUsed;
+
+                if(argv.json) {
+                    return log(JSON.stringify(response));
+                }
             
                 log(logo + box(`You are running the Akeno backend - an open source, fast, modern and fully automated
 web application, API and content delivery management system / server!
@@ -468,10 +517,10 @@ Some examples:
                 client.close()
 
                 if(error || !success){
-                    return log_error(`${signature} Could not reload:`, (error && error) || "Invalid application")
+                    return log_error(`${nestedSignature} Could not reload:`, error || "Application not found or failed to reload.")
                 }
 
-                log(`${signature} Successfully reloaded!`);
+                log(`${nestedSignature} Successfully reloaded!`);
             })
 
         break;
@@ -481,10 +530,91 @@ Some examples:
                 await resolve({_: ["logs"]}) // This is a bit of a hack, but it works
             }
 
-            exec("pm2 reload akeno")
-            log(`${signature} API Server successfully reloaded.`)
+            log(`${signature} Restarting Akeno...`);
 
-        break;
+            pm2.connect(function (err) {
+                if (err) {
+                    console.error(err)
+                    process.exit(2)
+                }
+
+                pm2.restart('akeno', (err, apps) => {
+                    pm2.disconnect();
+                    if (err) {
+                        log_error(`${signature} ⚠️  Could not restart Akeno:`, err.message || err, argv.updating? "- Updates will not be applied until restart!": "");
+                        log_error(`${nestedSignature} Make sure that you have PM2 installed and setup for Akeno (\x1b[1msudo akeno pm2-setup\x1b[0m)!`);
+
+                        if (process.getuid && process.getuid() !== 0) {
+                            log_error(`${nestedSignature} You may need to run this command as root - try \x1b[1msudo akeno restart\x1b[0m.`);
+                        } else {
+                            log_error(`${nestedSignature} Make sure you are running this command as the same user that has the PM2 process.`);
+                        }
+                        return process.exit(2);
+                    }
+
+                    if (argv.updating) {
+                        const version = require("../package.json").version;
+                        log(`${nestedSignature} Akeno has been updated to version ${version}!`);
+                    } else {
+                        log(`${nestedSignature} Akeno has been successfully restarted.`);
+                    }
+                });
+            });
+            break;
+        
+        case "pm2-setup":
+            pm2.connect(function (err) {
+                if (err) {
+                    console.error(err)
+                    process.exit(2)
+                }
+
+                pm2.describe('akeno', (err, apps) => {
+                    if (err) {
+                        pm2.disconnect();
+                        return log_error(`${signature} Could not check Akeno status:`, err);
+                    }
+                    
+                    if(apps.length === 0){
+                        pm2.start({
+                            script: nodePath.resolve(__dirname, "../app.js"),
+                            name: "akeno",
+                            autorestart: true
+                        }, (err, apps) => {
+                            pm2.disconnect();
+                            
+                            if (err) {
+                                return log_error(`${signature} Could not start Akeno:`, err);
+                            }
+                            
+                            log(`${signature} Akeno successfully started under PM2!`);
+                        });
+                    } else {
+                        log(`${signature} Akeno is already running under PM2!`);
+                        pm2.disconnect();
+                    }
+
+                });
+            });
+            break;
+        
+        case "pm2-delete":
+            pm2.connect(function (err) {
+                if (err) {
+                    console.error(err);
+                    process.exit(2);
+                }
+
+                pm2.delete('akeno', (err) => {
+                    pm2.disconnect();
+                    if (err) {
+                        return log_error(`${signature} Could not delete Akeno:`, err);
+                    }
+
+                    log(`${signature} Akeno successfully deleted from PM2!`);
+                });
+            });
+            break;
 
         case "module": {
 
@@ -520,35 +650,53 @@ Some examples:
 
                 return log(box(data.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`).join("\n---\n")))
             })
+        break;
 
+        case "web.info":
+            client.request(["akeno.web/info", argv._[1]], (error, app) => {
+                client.close();
+
+                if(error){
+                    return log_error(`${signature} Could not retrieve application info:`, error)
+                }
+
+                if(argv.json){
+                    return log(app);
+                }
+
+                return log(box(`\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`));
+            });
         break;
 
         case "update":
             try {
+                // Determine the project root directory (assume this file is in /www/content/akeno/core/)
+                const projectRoot = nodePath.resolve(__dirname, "..");
+                
                 log("Pulling updates from the repository...");
-                exec("git pull", { stdio: "inherit" });
-                log("Reloading server...");
-                exec("pm2 reload akeno");
-                log("Update complete.");
+                exec("git pull", { cwd: projectRoot, stdio: "inherit" });
+
+                resolve({_: ["restart"], updating: true});
             } catch (err) {
                 log_error("Failed to update:", err);
             }
-        break;
+            break;
 
-        case "parse-config": case "parse":
+        case "parse-config": case "parse": case "get-config":
             let input = argv.t || argv.text;
 
             if(typeof input !== "string"){
-                if(!fs.existsSync(argv._[1])) return log_error(`${signature} Could not find file "${argv._[1]}"`);
-                input = fs.readFileSync(argv._[1], "utf8")
+                let path = argv._[1] || nodePath.resolve(__dirname, "../config");
+
+                if(!fs.existsSync(path)) return log_error(`${signature} Could not find file "${path}"`);
+                input = fs.readFileSync(path, "utf8")
             }
 
-            if(typeof input !== "string") return log_error(`${signature} No input provided"`);
+            if(typeof input !== "string") return log_error(`${signature} No input provided! Use the -t option to provide text input, or specify a file path as the first argument.`);
 
-            data = parse(input, !argv.d);
+            data = parse(input, argv.stringify? { asLookupTable: true }: { asArray: true });
 
             if(argv.stringify) data = stringify(data); else if(argv.p) data = JSON.stringify(data, null, 4); else data = JSON.stringify(data);
-
             return log(data)
 
         case "enable":
@@ -572,10 +720,15 @@ Some examples:
             break;
 
         case "temp-hostname":
-            client.request(["akeno.web/tempDomain", argv._[1]], (error, response) => {
-                client.close()
-                log(response)
-            })
+            client.request(["akeno.web/tempDomain", argv._[1], argv._[2] || null], (error, response) => {
+                client.close();
+
+                if (error) {
+                    return log_error(`${signature} Could not retrieve temporary domain:`, error);
+                }
+
+                log(response);
+            });
             break;
 
         case "create": case "init":

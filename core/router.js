@@ -73,7 +73,7 @@ class DomainRouter extends Units.Module {
             }
 
 
-            if (this.routes.has(expandedPattern)) {
+            if (this.routes.has(expandedPattern) && this.routes.get(expandedPattern) !== handler) {
                 this.warn(`Warning: Route already exists for domain: ${expandedPattern}, it is being overwritten.`);
             }
 

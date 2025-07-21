@@ -19,12 +19,29 @@ module.exports = {
      */
     web: {
         /**
-         * Load or reload an application by its path.
+         * Load or reload an application by its path or name.
          * @param {string} path - The path to the application.
          * @returns {Promise<any>} - A promise that resolves with the response from the server.
          */
         async load(path){
             return client.request(["akeno.web/reload", path]);
+        },
+
+        /**
+         * Reload an application by its path or name.
+         * @param {string} path - The path to the application.
+         * @returns {Promise<any>} - A promise that resolves with the response from the server.
+         */
+        async reload(path){
+            return client.request(["akeno.web/reload", path]);
+        },
+
+        /**
+         * Reload all web applications.
+         * @returns {Promise<any>} - A promise that resolves with the response from the server.
+         */
+        async reloadAll(){
+            return client.request(["akeno.web/reload"]);
         },
     
         /**

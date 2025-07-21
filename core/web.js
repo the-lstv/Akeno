@@ -9,6 +9,9 @@
 */
 
 
+// work in progress
+
+
 let
     // Libraries
     fs = require("fs"),
@@ -61,7 +64,10 @@ class WebApp extends Units.App {
 
         this.path = path;
         this.type = "akeno.web.WebApp";
-
+        
+        this.configMtime = null;
+        this.loaded = false;
+        
         this.reloadConfig();
         if(!this.config) throw "Invalid or missing config";
 
@@ -79,7 +85,7 @@ class WebApp extends Units.App {
 
         applications.set(this.path, this);
 
-        this.reload();
+        this.reload(false);
     }
 
     reloadConfig(){
@@ -89,16 +95,36 @@ class WebApp extends Units.App {
             return false;
         }
 
+        try {
+            this.configMtime = fs.statSync(configPath).mtimeMs;
+        } catch {
+            this.configMtime = null;
+        }
+
         this.config = configTools(parse(fs.readFileSync(configPath, "utf8"), {
             strict: true,
             asLookupTable: true
         }))
 
-        this.configUpdated = true;
         return true;
     }
 
-    reload(){
+    reload(checkConfig = true){
+        if(checkConfig){
+            const configPath = this.path + "/app.conf";
+            let currentMtime = null;
+
+            try {
+                currentMtime = fs.statSync(configPath).mtimeMs;
+            } catch {}
+
+            if(currentMtime && this.configMtime !== currentMtime) {
+                this.reloadConfig();
+            } else return;
+        }
+
+        if(this.loaded) this.verbose("Hot-reloading");
+
         const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean)
         this.enabled = (is_enabled === null? true: is_enabled) || false;
 
@@ -123,7 +149,6 @@ class WebApp extends Units.App {
                 this.domains.add(domain);
             }
         }
-
 
         const enabledPorts = this.config.getBlock("server").get("port") || [];
 
@@ -213,10 +238,8 @@ class WebApp extends Units.App {
 
             this.modules.set(name, module)
         }
-    }
 
-    restart(){
-        return this.reload();
+        this.loaded = true;
     }
 }
 
@@ -244,10 +267,10 @@ const server = new class WebServer extends Units.Module {
         this.reload(null, true);
     }
 
-    async reload(specific_app, skip_refresh){
-        if(specific_app) return this.load(specific_app);
+    async reload(specific_app, skip_config_refresh){
+        if(specific_app) return this.refreshApp(specific_app);
 
-        if(!skip_refresh) backend.refreshConfig();
+        if(!skip_config_refresh) backend.refreshConfig();
 
         const start = performance.now();
 
@@ -281,40 +304,18 @@ const server = new class WebServer extends Units.Module {
                 continue;
             }
 
-            this.load(location)
+            this.refreshApp(location);
         }
 
-        this.log(`Loaded ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
-    }
-
-    load(path){
-        path = nodePath.normalize(path);
-
-        let app = applications.get(path);
-        
-        if(!app) {
-            try {
-                app = new WebApp(path);
-            } catch (error) {
-                this.warn("Web application (at " + path + ") failed to load due to an error: ", error);
-                return false;
-            }
-            if(!app) return false;
-        } else {
-            this.verbose("Hot-reloading web application (at " + path + ")");
-            app.reload();
-        }
-
-        if(!app.config) return false;
-        return true
+        this.log(`${skip_config_refresh? "Loaded": "Reloaded"} ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
     }
 
     async onRequest(req, res, app){
         // This is the main handler/router for websites/webapps.
 
         if(!app) return res.cork(() => {
-            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error)
-        })
+            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error);
+        });
 
         // HTTPS Redirect
         if(backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))){
@@ -399,11 +400,9 @@ const server = new class WebServer extends Units.Module {
         try {
 
 
-
             /**
              * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit and the cache system is a bit eh.
             */
-
 
 
             // TODO: Cache this
@@ -549,9 +548,10 @@ const server = new class WebServer extends Units.Module {
         return backend.helper.send(req, res, cache.content, cache.headers)
     }
 
-    /*
-        To be replaced with a more advanced dynamic content handler
-    */
+    /**
+     * To be replaced with a more advanced dynamic content handler
+     * @deprecated
+     */
     ServeDynamicContent(req, res, content, headers, app, url){
         res.cork(() => {
             // undefined will delay sending
@@ -602,41 +602,113 @@ const server = new class WebServer extends Units.Module {
 
             case "list.domains":
                 res.end(this.listDomains(req.data[0]));
-                break
+                break;
 
-            case "list.getDomain": case "getFirstDomain":
+            case "list.getDomain": 
+            case "getFirstDomain":
                 res.end(this.getFirstDomain(req.data[0]));
-                break
+                break;
 
             case "enable":
                 res.end(this.enableApp(req.data[0]));
-                break
+                break;
 
             case "disable":
                 res.end(this.disableApp(req.data[0]));
-                break
+                break;
 
             case "reload":
-                res.end(this.reloadApp(req.data[0]));
-                break
+                if(!req.data || !req.data[0]) {
+                    this.reload();
+                    res.end(true);
+                } else {
+                    const app = applications.get(this.resolveApplicationPath(req.data[0]));
+                    if(!app) return res.end(false);
+
+                    app.reload();
+                    res.end(true);
+                }
+                break;
 
             case "tempDomain":
-                res.end(this.tempDomain(req.data[0]));
-                break
+                res.end(this.tempDomain(req.data[0], req.data[1] || null));
+                break;
+
+            case "info":
+                if(!req.data || !req.data[0]) return res.error("No application specified").end();
+                const appInfo = this.getApp(req.data[0]);
+                if(!appInfo) return res.error("Application not found").end();
+
+                res.end({
+                    name: appInfo.name,
+                    basename: appInfo.basename,
+                    path: appInfo.path,
+                    enabled: appInfo.enabled,
+                    ports: [...appInfo.ports],
+                    domains: [...appInfo.domains],
+                    modules: [...appInfo.modules.keys()],
+                });
+                break;
+
+            default:
+                res.end("Invalid request");
         }
     }
 
 
     // Utility functions
-    resolveApplicationPath(path_or_name){
-        path_or_name = nodePath.normalize(path_or_name);
 
-        if(!path_or_name) return null;
-        if(path_or_name.includes("/") && fs.existsSync(path_or_name)) return path_or_name;
+    /**
+     * Get application from its path or name.
+     * @param {string} path - The path or name of the application.
+     * @returns {WebApp|null} - The application object or null if not found.
+     */
+    getApp(path){
+        path = this.resolveApplicationPath(path);
+        if(!path) return null;
 
-        const found = [...applications.values()].find(app => app.basename === path_or_name || app.path === path_or_name);
+        return applications.get(path);
+    }
 
-        return found && found.path;
+    /**
+     * Resolve an application path by its name or path.
+     * @param {string} path - The path or name of the application.
+     * @returns {string|null} - The resolved application path or null if not found.
+     */
+    resolveApplicationPath(path){
+        path = nodePath.normalize(path);
+
+        if(!path) return null;
+        if(applications.has(path)) return path; // Direct match
+        if(path.includes("/") && fs.existsSync(path)) return path;
+
+        for (const app of applications.values()) {
+            if (app.basename === path) return app.path;
+        }
+
+        return null;
+    }
+
+    refreshApp(path){
+        path = nodePath.normalize(path);
+
+        let app = applications.get(path);
+
+        if(!app) {
+            try {
+                app = new WebApp(path);
+            } catch (error) {
+                this.warn("Web application (at " + path + ") failed to load due to an error: ", error);
+                return false;
+            }
+
+            if(!app) return false;
+        } else {
+            app.reload();
+        }
+
+        if(!app.config) return false;
+        return true;
     }
 
     enableApp(app_path){
@@ -671,16 +743,12 @@ const server = new class WebServer extends Units.Module {
         return list && list[0];
     }
 
-    reloadApp(app_path = null){
-        if(app_path && !(app_path = this.resolveApplicationPath(app_path))) return false;
-        return this.reload(app_path || null)
-    }
+    tempDomain(app_path, domain = null){
+        const app = this.getApp(app_path);
+        if(!app) return false;
 
-    tempDomain(app_path){
-        if(!(app_path = this.resolveApplicationPath(app_path))) return false;
-
-        let random = backend.uuid();
-        backend.domainRouter.add(random, applications.get(app_path));
+        let random = domain || backend.uuid();
+        backend.domainRouter.add(random, app);
 
         return random;
     }

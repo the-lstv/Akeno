@@ -21,6 +21,7 @@ core/native/build
 node_modules
 # package.json
 package-lock.json
+pnpm-lock.yaml
 
 core/native/build
 core/native/node
