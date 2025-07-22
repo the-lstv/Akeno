@@ -11,26 +11,51 @@ function load(){
     try {
         const data = JSON.parse(fs.readFileSync(__dirname + "/../etc/mimetypes.json", "utf8"));
 
-        loaded = true;
+        for (const [mimetype, extensions_] of Object.entries(data)) {
+            if (!Array.isArray(extensions_)) {
+                continue;
+            }
 
-        for(let extension in data){
-            types.set(extension, data[extension]);
-            extensions.set(data[extension], extension);
+            extensions.set(mimetype, extensions_);
+
+            for (const ext of extensions_) {
+                types.set(ext, mimetype);
+            }
         }
+
+        loaded = true;
     } catch (error) {
         throw new Error("Failed to load mime types: " + error.message);
     }
 }
 
-const mime = module.exports = {
+module.exports = {
     types,
     extensions,
 
+    /**
+     * Get the MIME type associated with a given file extension.
+     * 
+     * @param {*} extension - The file extension to look up.
+     * @returns {string|null} - The corresponding MIME type or null if not found.
+     * 
+     * @example
+     * const type = mime.getType('html'); // Returns 'text/html'
+     */
     getType(extension){
         if(!loaded) load();
         return types.get(extension) || null;
     },
 
+    /**
+     * Get the file extension(s) associated with a given MIME type.
+     * 
+     * @param {*} mimetype - The MIME type to look up.
+     * @returns {Array|null} - An array of file extensions or null if not found.
+     * 
+     * @example
+     * const extensions = mime.getExtension('text/html'); // Returns ['html', 'htm', 'shtml']
+     */
     getExtension(mimetype){
         if(!loaded) load();
         return extensions.get(mimetype) || null;

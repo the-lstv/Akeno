@@ -490,7 +490,7 @@ const Manager = {
  */
 
 class Unit {
-    constructor(options) {
+    constructor(options = null) {
         if(options) this._initialize(options);
     }
 
@@ -551,7 +551,7 @@ class Unit {
  */
 
 class Module extends Unit {
-    constructor(options = {}) {
+    constructor(options = null) {
         super(options);
     }
 

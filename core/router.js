@@ -2,25 +2,16 @@
 
 const Units = require('akeno:units');
 
+/**
+ * Simple routing class to match groups and wildcards. Much faster than picomatch (sometimes up to 50x in some cases).
+ */
+class Matcher extends Units.Module {
+    constructor(options = {}, info = null) {
+        super(info);
 
-// To be implemented
-// class DomainRouterScope {
-//     constructor(router) {
-//         this.router = router;
-//     }
-// }
-
-class DomainRouter extends Units.Module {
-    constructor() {
-        super({
-            name: 'DomainRouter',
-            description: 'A simple domain routing system for Akeno.',
-            version: '1.0.0',
-            id: 'akeno.domain-router',
-        });
-
-        this.routes = new Map();
-        this.wildcardRoutes = [];
+        this.exactMatches = new Map();
+        this.wildcards = options.simpleMatcher? new SimpleWildcardMatcher(): new WildcardMatcher(options.segmentChar || "/", []);
+        this.fallback = null;
     }
 
     *expandPattern(pattern) {
@@ -58,6 +49,11 @@ class DomainRouter extends Units.Module {
             pattern = pattern.slice(0, -1);
         }
 
+        if (pattern === '*' || pattern === '**') {
+            this.fallback = handler;
+            return;
+        }
+
         if (!pattern) {
             return;
         }
@@ -67,17 +63,16 @@ class DomainRouter extends Units.Module {
             // TODO: Handle domain level patterns (something.*.com) and infinite subdomain matching (**.example.com)
 
             if (expandedPattern.indexOf('*') !== -1) {
-                const segments = expandedPattern.split('*');
-                this.wildcardRoutes.push({ parts: segments, handler, pattern: expandedPattern });
-                return;
+                this.wildcards.add(expandedPattern, handler);
+                continue;
             }
 
 
-            if (this.routes.has(expandedPattern) && this.routes.get(expandedPattern) !== handler) {
+            if (this.exactMatches.has(expandedPattern) && this.exactMatches.get(expandedPattern) !== handler) {
                 this.warn(`Warning: Route already exists for domain: ${expandedPattern}, it is being overwritten.`);
             }
 
-            this.routes.set(expandedPattern, handler);
+            this.exactMatches.set(expandedPattern, handler);
         }
     }
 
@@ -87,29 +82,154 @@ class DomainRouter extends Units.Module {
         }
 
         for (const expandedPattern of this.expandPattern(pattern)) {
-            this.routes.delete(expandedPattern);
-            this.wildcardRoutes = this.wildcardRoutes.filter(route => route.pattern !== expandedPattern);
+            this.exactMatches.delete(expandedPattern);
+            this.wildcards.filter(route => route.pattern !== expandedPattern);
         }
     }
 
     route(domain) {
-        const handler = this.routes.get(domain);
+        // Check exact matches first
+        const handler = this.exactMatches.get(domain);
         if (handler) {
             return handler;
         }
 
-        // Check for wildcard routes
-        for (const { parts, handler } of this.wildcardRoutes) {
-            let pos = 0;
+        // Check wildcard matches
+        const wildcardHandler = this.wildcards.match(domain);
+        if (wildcardHandler) {
+            return wildcardHandler;
+        }
+
+        // If no specific route found, return the fallback route
+        if (this.fallback) {
+            return this.fallback;
+        }
+
+        return false;
+    }
+}
+
+
+class WildcardMatcher {
+    constructor(segmentChar = "/", patterns = []) {
+        this.segmentChar = segmentChar || "/";
+        this.patterns = patterns || [];
+    }
+
+    add(pattern, handler = pattern) {
+        this.patterns.push({ parts: this.split(pattern), handler, pattern });
+    }
+
+    filter(callback) {
+        this.patterns = this.patterns.filter(callback);
+        return this;
+    }
+
+    split(path) {
+        if (path === "") return [""];
+        if (path[0] !== this.segmentChar) path = this.segmentChar + path;
+        return path.split(this.segmentChar);
+    }
+
+    /**
+     * Fast wildcard matching with segment support.
+     * @param {string} input - The input string to match against.
+     */
+    match(input) {
+        const path = this.split(input);
+
+        for (const { parts, handler } of this.patterns) {
+            // Exact match
+            if (parts.length === 1) {
+                if (parts[0] === "**" || (path.length === 1 && ((parts[0] === "*" && path[0] !== "") || parts[0] === path[0]))) {
+                    return handler;
+                }
+
+                continue;
+            }
+
+            let pi = 0, si = 0;
+            let starPi = -1, starSi = -1;
+
+            while (si < path.length) {
+                if (pi < parts.length && parts[pi] === "**") {
+                    starPi = pi;
+                    starSi = si;
+                    pi++;
+                } else if (pi < parts.length && parts[pi] === "*") {
+                    if (path[si] === "") break;
+                    pi++;
+                    si++;
+                } else if (pi < parts.length && parts[pi] === path[si]) {
+                    pi++;
+                    si++;
+                } else if (starPi !== -1) {
+                    pi = starPi + 1;
+                    starSi++;
+                    si = starSi;
+                } else {
+                    break;
+                }
+            }
+
+            while (pi < parts.length && parts[pi] === "**") pi++;
+            if (pi === parts.length && si === path.length) {
+                return handler;
+            }
+        }
+        return null;
+    }
+}
+
+
+class SimpleWildcardMatcher {
+    constructor(patterns = []) {
+        this.patterns = patterns || [];
+    }
+
+    add(pattern, handler) {
+        const parts = pattern.split('*');
+        const compiled = {
+            parts,
+            handler,
+            pattern,
+            hasPrefix: parts[0] !== '',
+            hasSuffix: parts[parts.length - 1] !== '',
+            nonEmptyParts: parts.filter(p => p !== '')
+        };
+
+        this.patterns.push(compiled);
+    }
+
+    filter(callback) {
+        this.patterns = this.patterns.filter(callback);
+        return this;
+    }
+
+    /**
+     * Simple wildcard matching without segment support.
+     * @param {string} input - The input string to match against.
+     */
+    match(input) {
+        for (const compiled of this._compiledPatterns) {
+            const { parts, handler, hasPrefix, hasSuffix, nonEmptyParts } = compiled;
+            
+            // Quick prefix/suffix checks
+            if (hasPrefix && !input.startsWith(parts[0])) continue;
+            if (hasSuffix && !input.endsWith(parts[parts.length - 1])) continue;
+            
+            // If only prefix/suffix, we're done
+            if (nonEmptyParts.length <= 2) {
+                return handler;
+            }
+            
+            // Full matching for complex patterns
+            let pos = hasPrefix ? parts[0].length : 0;
             let failed = false;
 
-            // If first part is non-empty, must match start of string
-            if (parts[0] && !domain.startsWith(parts[0])) continue;
-            if (parts[0]) pos += parts[0].length;
-
-            for (let i = 1; i < parts.length; ++i) {
+            for (let i = 1; i < parts.length - 1; ++i) {
                 if (!parts[i]) continue;
-                let nextIdx = domain.indexOf(parts[i], pos);
+                let nextIdx = input.indexOf(parts[i], pos);
                 if (nextIdx === -1) {
                     failed = true;
                     break;
@@ -117,16 +237,56 @@ class DomainRouter extends Units.Module {
                 pos = nextIdx + parts[i].length;
             }
 
-            // If last part is non-empty, must match end of string
-            if (parts[parts.length - 1] && !domain.endsWith(parts[parts.length - 1])) continue;
-
             if (!failed) {
                 return handler;
             }
         }
-
-        return false;
+        return null;
     }
 }
 
-module.exports = { DomainRouter };
+
+class DomainRouter extends Matcher {
+    constructor() {
+        super({ segmentChar: "." }, {
+            name: 'DomainRouter',
+            description: 'A simple domain routing system for Akeno.',
+            version: '1.0.0',
+            id: 'akeno.domain-router',
+        });
+    }
+
+    dump() {
+        const handlerMap = new Map();
+
+        for (const [pattern, handler] of this.exactMatches.entries()) {
+            if (!handlerMap.has(handler)) handlerMap.set(handler, []);
+            handlerMap.get(handler).push(pattern);
+        }
+
+        for (const route of this.wildcards.patterns) {
+            const handler = route.handler;
+            const pattern = route.pattern;
+            if (!handlerMap.has(handler)) handlerMap.set(handler, []);
+            handlerMap.get(handler).push(pattern);
+        }
+
+        return Array.from(handlerMap.entries()).map(([handler, patterns]) => ({
+            handler,
+            patterns
+        }));
+    }
+}
+
+class PathMatcher extends Matcher {
+    constructor() {
+        super({ segmentChar: "/" }, {
+            name: 'PathMatcher',
+            description: 'A simple path matching system for Akeno.',
+            version: '1.0.0',
+            id: 'akeno.path-matcher',
+        });
+    }
+}
+
+module.exports = { Matcher, WildcardMatcher, SimpleWildcardMatcher, DomainRouter, PathMatcher };

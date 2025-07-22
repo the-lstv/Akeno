@@ -145,7 +145,6 @@ function resolve(res, req) {
         res.aborted = true; // Possibly deprecated
     })
 
-    // TODO: FIXME: Temporary hostname router, later move this to C++
     let handler = domainRouter.route(req.domain) || backend.webServerHandler;
 
     if(typeof handler === "function"){
@@ -190,62 +189,6 @@ const backend = {
         }
     },
 
-    refreshConfig(){
-        if(backend.config) backend.log("Refreshing configuration");
-
-        if(!fs.existsSync(PATH + "/config")){
-            backend.log("No main config file found in /config, creating a default config file.")
-            fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
-        }
-
-        let path = PATH + "/config";
-
-        backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
-            strict: true,
-            asLookupTable: true
-        });
-
-        backend.config = configTools(backend.configRaw);
-
-        backend.mode = backend.modes[backend.config.getBlock("system").get("mode", String, "production").toUpperCase()] || backend.modes.PRODUCTION;
-        backend.logLevel = backend.config.getBlock("system").get("logLevel", Number) || (backend.mode === backend.modes.DEVELOPMENT? 5 : 3);
-
-        // Enable/disable protocols
-        const protocols = backend.config.getBlock("protocols");
-
-        backend.protocols.ipc.socketPath = (protocols.getBlock("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
-        if(process.platform === 'win32'){
-            const pipeName = (protocols.getBlock("ipc").get("windowsPipeName", String)) || 'akeno.backend.sock';
-            if (/[/\\]/.test(pipeName)) throw new Error('protocols.ipc.windowsPipeName should not contain slashes - make sure you are not adding a full path.');
-            backend.protocols.ipc.socketPath = `\\\\.\\pipe\\${pipeName}`;
-        }
-        backend.protocols.ipc.enabled = protocols.getBlock("ipc").get("enabled", Boolean, true);
-
-        // TODO: Better handling of ports (due to apps being able to request custom ports)
-
-        // Note: setting "enabled" has to be last, as it calls the init() method. Also, ws has to be enabled before HTTP.
-
-        const http_ws_enabled = protocols.getBlock("http").get("websockets", String, "false");
-        backend.protocols.http.ports = protocols.getBlock("http").get(["port", "ports"], Array, [80]);
-        backend.protocols.http.enableWebSockets = http_ws_enabled === "true"? true: http_ws_enabled === "dev-only"? backend.mode === backend.modes.DEVELOPMENT: false;
-
-        backend.protocols.https.ports = protocols.getBlock("https").get(["port", "ports"], Array, [443]);
-        backend.protocols.https.enableWebSockets = protocols.getBlock("https").get("websockets", Boolean, true);
-
-        backend.protocols.h3.ports = protocols.getBlock("h3").get(["port", "ports"], Array, [443]);
-
-        backend.protocols.ws.enabled = backend.protocols.http.enableWebSockets || backend.protocols.https.enableWebSockets;
-        backend.protocols.http.enabled = protocols.getBlock("http").get("enabled", Boolean, true);
-        backend.protocols.https.enabled = protocols.getBlock("https").get("enabled", Boolean, false);
-        backend.protocols.h3.enabled = protocols.getBlock("h3").get("enabled", Boolean, false);
-
-        if(backend.protocols.http.onReload) backend.protocols.http.onReload();
-        if(backend.protocols.https.onReload) backend.protocols.https.onReload();
-
-        // TODO: Add something like "in production only".
-        backend.compression.enabled = backend.config.getBlock("web").get("compress", Boolean, true);
-    },
-
     exposeToDebugger(key, item){
         if(!IS_NODE_INSPECTOR_ENABLED) return;
 
@@ -262,6 +205,13 @@ const backend = {
         if(backend.config.getBlock("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
     },
 
+    _console: {
+        log: console.log,
+        warn: console.warn,
+        error: console.error,
+        debug: console.debug
+    },
+
     /**
      * Logs messages to the console with different log levels, colors, and sources.
      *
@@ -276,16 +226,26 @@ const backend = {
         if(level < (5 - backend.logLevel)) return;
 
         const color = level >= 4 ? "1;31" : level === 3 ? "1;33" : "36";
-        const consoleFunction = console[level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log"];
+        const consoleFunction = backend._console[level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log"];
         const sourceName = typeof source === "string" ? source : source?.name || "unknown";
+
+        if(!backend._fancyLogEnabled) {
+            consoleFunction(`[${sourceName}]`, ...data);
+            return;
+        }
 
         const tag = `${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`;
 
         if(!Array.isArray(data)){
-            consoleFunction(tag, data);
-        } else {
-            consoleFunction(tag, ...data);
+            data = [data];
         }
+
+        consoleFunction(tag, ...data.map(item => {
+            if (typeof item === "string") {
+                return item.replaceAll("\n", "\n" + " ".repeat(sourceName.length - 1) + "\x1b[90m⤷\x1b[0m   ");
+            }
+            return item;
+        }));
     },
 
     constants: {
@@ -339,8 +299,13 @@ const backend = {
                                 res.end({
                                     backend_path: PATH,
                                     version,
+                                    versionString: String(version),
                                     mode: backend.modes.get(backend.mode),
                                 })
+                                break
+
+                            case "dump-router":
+                                res.end(domainRouter.dump());
                                 break
 
                             case "usage":
@@ -775,6 +740,63 @@ const backend = {
         502: "Bad gateway.",
     },
 
+    refreshConfig(){
+        if(backend.config) backend.log("Refreshing configuration");
+
+        if(!fs.existsSync(PATH + "/config")){
+            backend.log("No main config file found in /config, creating a default config file.")
+            fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
+        }
+
+        let path = PATH + "/config";
+
+        backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
+            strict: true,
+            asLookupTable: true
+        });
+
+        backend.config = configTools(backend.configRaw);
+
+        backend.mode = backend.modes[backend.config.getBlock("system").get("mode", String, "production").toUpperCase()] || backend.modes.PRODUCTION;
+        backend.logLevel = backend.config.getBlock("system").get("logLevel", Number) || (backend.mode === backend.modes.DEVELOPMENT? 5 : 3);
+        backend._fancyLogEnabled = backend.config.getBlock("system").get("fancyLog", Boolean, true);
+
+        // Enable/disable protocols
+        const protocols = backend.config.getBlock("protocols");
+
+        backend.protocols.ipc.socketPath = (protocols.getBlock("ipc").get("socket_path", String)) || '/tmp/akeno.backend.sock';
+        if(process.platform === 'win32'){
+            const pipeName = (protocols.getBlock("ipc").get("windowsPipeName", String)) || 'akeno.backend.sock';
+            if (/[/\\]/.test(pipeName)) throw new Error('protocols.ipc.windowsPipeName should not contain slashes - make sure you are not adding a full path.');
+            backend.protocols.ipc.socketPath = `\\\\.\\pipe\\${pipeName}`;
+        }
+        backend.protocols.ipc.enabled = protocols.getBlock("ipc").get("enabled", Boolean, true);
+
+        // TODO: Better handling of ports (due to apps being able to request custom ports)
+
+        // Note: setting "enabled" has to be last, as it calls the init() method. Also, ws has to be enabled before HTTP.
+
+        const http_ws_enabled = protocols.getBlock("http").get("websockets", String, "false");
+        backend.protocols.http.ports = protocols.getBlock("http").get(["port", "ports"], Array, [80]);
+        backend.protocols.http.enableWebSockets = http_ws_enabled === "true"? true: http_ws_enabled === "dev-only"? backend.mode === backend.modes.DEVELOPMENT: false;
+
+        backend.protocols.https.ports = protocols.getBlock("https").get(["port", "ports"], Array, [443]);
+        backend.protocols.https.enableWebSockets = protocols.getBlock("https").get("websockets", Boolean, true);
+
+        backend.protocols.h3.ports = protocols.getBlock("h3").get(["port", "ports"], Array, [443]);
+
+        backend.protocols.ws.enabled = backend.protocols.http.enableWebSockets || backend.protocols.https.enableWebSockets;
+        backend.protocols.http.enabled = protocols.getBlock("http").get("enabled", Boolean, true);
+        backend.protocols.https.enabled = protocols.getBlock("https").get("enabled", Boolean, false);
+        backend.protocols.h3.enabled = protocols.getBlock("h3").get("enabled", Boolean, false);
+
+        if(backend.protocols.http.onReload) backend.protocols.http.onReload();
+        if(backend.protocols.https.onReload) backend.protocols.https.onReload();
+
+        // TODO: Add something like "in production only".
+        backend.compression.enabled = backend.config.getBlock("web").get("compress", Boolean, true);
+    },
+
     trustedOrigins: new Set,
 
     resolve,
@@ -784,71 +806,67 @@ const backend = {
     uuid
 }
 
-// We do this here to make code completions work in VSCode
-Units.Manager.initCore(backend);
 
-// Do not rely on this
-global.backend = backend;
+// To be updated for multithreading
+if(true) {
+    // We do this here to make intellisense work at least somewhere
+    Units.Manager.initCore(backend);
+    
+    // Do not rely on this
+    global.backend = backend;
+    module.exports = backend;
 
-module.exports = backend;
-
-backend.helper = require("./core/helpers");
-
-
-
-
-// First initialization
-
-// Load configuration file
-backend.refreshConfig();
-
-db.storages.cache.open();
-db.storages.data.open();
-
-db.compressionCache = db.storages.cache.openDbi("compression", { keyIsUint32: true }, true);
-db.generalCache = db.storages.cache.openDbi("general", {}, true);
-db.apps = db.storages.main.openDbi("app.metadata", {}, true);
-
-
-
-Units.Manager.loadModule("./core/web");
-
-backend.webServerHandler = Units.Manager.module("akeno.web").onRequest;
-
-process.on('uncaughtException', (error) => {
-    backend.fatal("[uncaught error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
-})
-
-process.on('exit', () => {
-    console.log(`[system] API is stopping.`);
-})
-
-backend.log(`Starting \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${(performance.now() - SINCE_STARTUP).toFixed(2)}ms\x1b[0m.`);
-
-
-if (!JWT_KEY) {
-    JWT_KEY = crypto.randomBytes(32).toString("hex");
-    try {
-        fs.appendFileSync(PATH + ".env", `\nAKENO_KEY=${JWT_KEY}\n`);
-    } catch (err) {
-        console.warn("Warning: Failed to export generated JWT key to .env file.", err);
+    backend.helper = require("./core/helpers");
+    
+    // Load configuration file
+    backend.refreshConfig();
+    
+    db.storages.cache.open();
+    db.storages.data.open();
+    
+    db.compressionCache = db.storages.cache.openDbi("compression", { keyIsUint32: true }, true);
+    db.generalCache = db.storages.cache.openDbi("general", {}, true);
+    db.apps = db.storages.main.openDbi("app.metadata", {}, true);
+    
+    Units.Manager.loadModule("./core/web");
+    
+    backend.webServerHandler = Units.Manager.module("akeno.web").onRequest;
+    
+    process.on('uncaughtException', (error) => {
+        backend.fatal("[uncaught error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
+    })
+    
+    process.on('exit', () => {
+        backend.log(`[system] Exiting Akeno`);
+    })
+    
+    if (!JWT_KEY) {
+        JWT_KEY = crypto.randomBytes(32).toString("hex");
+    
+        try {
+            fs.appendFileSync(PATH + ".env", `\nAKENO_KEY=${JWT_KEY}\n`);
+        } catch (err) {
+            backend.warn("Warning: Failed to export generated JWT key to .env file.", err);
+        }
     }
-}
-
-try {
-    // Disable uWebSockets version header, remove to re-enable
-    uws._cfg('999999990007');
-} catch (error) {}
-
-Units.Manager.refreshAddons();
-
-if(backend.mode === backend.modes.DEVELOPMENT && IS_NODE_INSPECTOR_ENABLED) {
-    console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
-    console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
-
-    backend.exposeToDebugger("backend", backend);
-}
-
-if (process.platform !== 'linux') {
-    backend.warn(`Warning: Your platform (${process.platform}) has experimental support. Akeno is currently only officially supported on Linux, so you may run into unexpected issues.${process.platform === 'win32' ? ' You can try using WSL or other types of Linux VM to run this software.' : ''}`);
+    
+    try {
+        // Disable uWebSockets version header, remove to re-enable
+        uws._cfg('999999990007');
+    } catch (error) {}
+    
+    Units.Manager.refreshAddons();
+    
+    if(backend.mode === backend.modes.DEVELOPMENT && IS_NODE_INSPECTOR_ENABLED) {
+        console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
+        console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
+    
+        backend.exposeToDebugger("backend", backend);
+    }
+    
+    if (process.platform !== 'linux') {
+        backend.warn(`Warning: Your platform (${process.platform}) has experimental support. Akeno is currently only officially supported on Linux, so you may run into unexpected issues.${process.platform === 'win32' ? ' You can try using WSL or other types of Linux VM to run this software.' : ''}`);
+    }
+    
+    backend.log(`Starting \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${(performance.now() - SINCE_STARTUP).toFixed(2)}ms\x1b[0m.`);
 }

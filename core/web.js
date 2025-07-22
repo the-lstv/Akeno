@@ -75,7 +75,6 @@ class WebApp extends Units.App {
         this.name = this.config.getBlock("app").get("name", String, this.basename);
         this.enabled = null;
         this.ports = new Set;
-        this.quickRoutes = new Map;
 
         /**
          * @warning Do not use this set for routing - it is only a copy to allow for easy removal of domains.
@@ -123,9 +122,11 @@ class WebApp extends Units.App {
             } else return;
         }
 
+
         if(this.loaded) this.verbose("Hot-reloading");
 
-        const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean)
+
+        const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean);
         this.enabled = (is_enabled === null? true: is_enabled) || false;
 
         const enabledDomains = this.config.getBlock("server").get("domains", Array, []);
@@ -136,7 +137,7 @@ class WebApp extends Units.App {
             for(let domain of domains){
                 if(!domain || typeof domain !== "string") {
                     server.warn("Invalid domain name \"" + domain + "\" for web application \"" + this.basename + "\".");
-                    continue
+                    continue;
                 }
 
                 if(!enabledDomains.includes(domain)){
@@ -240,6 +241,11 @@ class WebApp extends Units.App {
         }
 
         this.loaded = true;
+
+        this._hasRedirects = this.config.data.has("redirect");
+        this._hasHandles = this.config.data.has("handle");
+        this._hasRoutes = this.config.data.has("route");
+        this._hasBrowserRequirements = this.config.data.has("browserSupport");
     }
 }
 
@@ -330,7 +336,7 @@ const server = new class WebServer extends Units.Module {
         }
 
         // Check if the client version is supported
-        if(app.config.data.has("browserSupport")){
+        if(app._hasBrowserRequirements) {
             let browserRequirements = app.config.getBlock("browserSupport");
 
             if(!checkSupportedBrowser(req.getHeader('user-agent'), browserRequirements.properties)){
@@ -358,7 +364,7 @@ const server = new class WebServer extends Units.Module {
 
 
         // Redirects (simple URL redirects)
-        if(app.config.data.has("redirect")) for(const handle of app.config.getBlocks("redirect")){
+        if(app._hasRedirects) for(const handle of app.config.getBlocks("redirect")){
             const target = handle.get("to", String);
 
             if(target && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
@@ -369,7 +375,7 @@ const server = new class WebServer extends Units.Module {
 
 
         // Redirect handles (when an URL points to a whole another point in the server)
-        if(app.config.data.has("handle")) for(const handle of app.config.getBlocks("handle")){
+        if(app._hasHandles) for(const handle of app.config.getBlocks("handle")){
             const target = handle.get("path", String);
             const domain = handle.get("as", String);
 
@@ -384,7 +390,7 @@ const server = new class WebServer extends Units.Module {
 
 
         // Redirect routes
-        if(app.config.data.has("route")) for(const route of app.config.getBlocks("route")){
+        if(app._hasRoutes) for(const route of app.config.getBlocks("route")){
             if((route.picomatchCache || (route.picomatchCache = picomatch(route.attributes)))(url)){
                 const negate = route.get("not");
 
