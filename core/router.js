@@ -1,3 +1,13 @@
+/*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
+
+    Last modified: 2025
+    License: GPL-3.0
+    Version: 1.1.0
+    Description: A routing/matching module for Akeno, allowing to match domains and paths with wildcards and groups.
+*/
+
 // TODO: FIXME: This is a temporary "fast" router implementation, later it will be replaced with a proper, faster modular C++ router
 
 const Units = require('akeno:units');

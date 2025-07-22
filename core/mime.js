@@ -1,7 +1,17 @@
+/*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
+
+    Last modified: 2025
+    License: GPL-3.0
+    Version: 1.1.0
+    Description: A very simple MIME type module for Akeno.
+*/
+
 const fs = require("fs");
 
-const types = new Map;
-const extensions = new Map;
+const types = new Map();
+const extensions = new Map();
 
 let loaded = false;
 
