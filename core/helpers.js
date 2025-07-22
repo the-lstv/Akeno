@@ -64,7 +64,7 @@ module.exports = {
             });
         }
 
-        return backend.helper
+        return backend.helper;
     },
 
     /**
@@ -81,7 +81,7 @@ module.exports = {
         
         res.cork(() => {
             res.writeHeader('X-Powered-By', 'Akeno Server/' + backend.version);
-            
+
             if(credentials){
                 res.writeHeader("Access-Control-Allow-Credentials", "true");
                 res.writeHeader("Access-Control-Allow-Origin", req.origin);

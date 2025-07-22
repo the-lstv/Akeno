@@ -22,6 +22,7 @@
     "jsonwebtoken": "^9.0.2",
     "minimist": "^1.2.8",
     "module-alias": "^2.2.3",
+    "node-lmdb": "^0.10.1",
     "picomatch": "^4.0.2",
     "pm2": "^6.0.8",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",

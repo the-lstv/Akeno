@@ -13,7 +13,8 @@ const fs = require("node:fs");
 let lmdb;
 
 try {
-    lmdb = require('node-lmdb');
+    // lmdb = require('node-lmdb');
+    throw "";
 } catch (e) {
     console.warn('Warning: node-lmdb module is not installed. Since we are stepping away from this module for countless issues, it is not required, but the database will be switched to memory-only mode.\n* Data will not be stored to disk! *');
     lmdb = null;

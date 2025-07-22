@@ -157,6 +157,12 @@ const ROOT_COMMANDS = [
                 description: "Delete Akeno from PM2 (process manager)"
             },
             {
+                name: "ipc-exec",
+                type: "command",
+                description: "Execute a command directly via the IPC server",
+                args: ["command", "[args...]"]
+            },
+            {
                 name: "logs",
                 type: "command",
                 description: "View server logs (requires PM2)",
@@ -459,7 +465,7 @@ if(argv._[0] === "version" || (argv.v && !argv._[0])) {
 async function resolve(argv){
 
     // FIXME: Temporary
-    if(["status", "info", "reload", "list", "ls", "enable", "disable", "create", "init", "web.info", "temp-hostname"].includes(argv._[0])) {
+    if(new Set(["status", "info", "reload", "list", "ls", "enable", "disable", "create", "init", "web.info", "temp-hostname", "ipc-exec"]).has(argv._[0])) {
         client = new Client(socketPath)
     }
 
@@ -667,6 +673,25 @@ Some examples:
                 return log(box(`\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`));
             });
         break;
+
+        case "ipc-exec":
+            if(!argv._[1]){
+                return log_error(`${signature} No command provided! Usage: \x1b[1makeno ipc-exec <command> [args...]`);
+            }
+
+            const command = argv._[1];
+            const args = argv._.slice(2);
+
+            client.request([command, ...args], (error, response) => {
+                client.close();
+
+                if (error) {
+                    return log_error(`${signature} IPC execution failed:`, error);
+                }
+
+                console.log(JSON.stringify(response));
+            });
+            break;
 
         case "update":
             try {
