@@ -1,4 +1,7 @@
-<img src="https://github.com/user-attachments/assets/4fdca083-82db-4682-97b6-40e915194134" alt="Akeno icon"> <br>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/a742cb99-7423-4be7-8e2c-f12b8324fae7" width="900"/>
+
+</p>
 
 Akeno is a really fast, modular server and web application runtime/framework written in C++ and JavaScript, primarily intended for:<br>
 - Static and dynamic web sites/apps
@@ -39,7 +42,7 @@ This makes Akeno run automatically on startup and enables commands like `akeno r
 ---
 <br><br>
 
-<img src="https://github.com/user-attachments/assets/99f5da80-56ab-471b-8203-3cebbc98f659" width="650"><br>
+<img src="https://github.com/user-attachments/assets/8cbdac91-1e57-43a3-9fff-86b22c1b99b7" width="650"><br>
 
 Akeno is heavily focused on speed, and not only benchmark magic, but true optimization on every step, to ensure efficiency and low latency, making it very scalable and responsive, so you and your clients no longer have to deal with slow or unstable web apps.
 
@@ -70,7 +73,7 @@ Simply write your code and let Akeno optimize it in real time, without any extra
 
 <br><br>
 
-<img src="https://github.com/user-attachments/assets/33f241f6-ffca-4ab2-844b-cd60dbc8c782" width="650"><br>
+<img src="https://github.com/user-attachments/assets/458ecc3a-c9ad-4dfb-9bbe-159a7805a889" width="650"><br>
 
 Akeno uses a universal Unit system where all components are treated as Units, which provides a unified and easy to extend API.<br>
 Modules, addons, applications, protocols, components and the backend itself are all an instance of a Unit.<br>
@@ -79,7 +82,7 @@ Units are loaded as needed on demand, avoiding initial overhead.
 
 <br><br>
 
-<img src="https://github.com/user-attachments/assets/18f7f7e4-cc63-4da5-a740-4b5bcb2b7719" width="650"><br>
+<img src="https://github.com/user-attachments/assets/2893babc-5738-4906-8562-01e5a9154e96" width="650"><br>
 
 Akeno offers a full-featured command line interface that you can use to control the server at runtime, see stats, and manage apps.<br>
 It also offers modules and libraries you can use to control and manage the server externally with ease!
