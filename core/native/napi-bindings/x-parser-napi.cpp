@@ -330,14 +330,35 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
     }
 
     Napi::Object ctxObj = info[1].As<Napi::Object>();
+
+    std::string appPath;
+    bool nested = false;
+
+    Napi::Value dataValue = ctxObj.Get("data");
+    if (dataValue.IsObject()) {
+        Napi::Object dataObj = dataValue.As<Napi::Object>();
+        Napi::Value pathValue = dataObj.Get("path");
+        if (pathValue.IsString()) {
+            appPath = pathValue.As<Napi::String>().Utf8Value();
+        }
+
+        Napi::Value nestedValue = dataObj.Get("nested");
+        if (nestedValue.IsBoolean()) {
+            nested = nestedValue.As<Napi::Boolean>().Value();
+        }
+    }
+
     ParserContext* run = Napi::ObjectWrap<ParserContext>::Unwrap(ctxObj);
 
+    bool templateEnabled = info.Length() > 2 && info[2].IsBoolean() ? info[2].As<Napi::Boolean>().Value() : false;
+    
     auto storage = std::make_shared<std::string>();
 
     // std::string result;
     run->result = storage.get();
 
-    ctx.write(std::string_view(buffer.data(), buffer.size()), storage.get(), &ctxObj);
+    ctx.nested = nested;
+    ctx.write(std::string_view(buffer.data(), buffer.size()), storage.get(), &ctxObj, templateEnabled, appPath);
     ctx.end(storage.get());
 
     auto* storagePtr = new std::shared_ptr<std::string>(std::move(storage));

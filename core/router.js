@@ -86,6 +86,12 @@ class Matcher extends Units.Module {
         }
     }
 
+    clear() {
+        this.exactMatches.clear();
+        this.wildcards.patterns = [];
+        this.fallback = null;
+    }
+
     remove(pattern) {
         if (typeof pattern !== 'string') {
             throw new Error('Invalid route pattern');
@@ -97,15 +103,15 @@ class Matcher extends Units.Module {
         }
     }
 
-    route(domain) {
+    match(input) {
         // Check exact matches first
-        const handler = this.exactMatches.get(domain);
+        const handler = this.exactMatches.get(input);
         if (handler) {
             return handler;
         }
 
         // Check wildcard matches
-        const wildcardHandler = this.wildcards.match(domain);
+        const wildcardHandler = this.wildcards.match(input);
         if (wildcardHandler) {
             return wildcardHandler;
         }
