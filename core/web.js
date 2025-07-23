@@ -18,8 +18,6 @@ let
     nodePath = require("path"),
     uws = require('uWebSockets.js'),
 
-    picomatch = require('picomatch'),
-
     WebNative = require("./native/dist/akeno-web"),
 
     parser, // Will be defined later
@@ -27,6 +25,7 @@ let
 
     // Local libraries
     { parse, configTools } = require("./parser"),
+    { PathMatcher } = require("./router"),
     Units = require("./unit"),
 
     applications = new Map,
@@ -62,7 +61,7 @@ class WebApp extends Units.App {
     constructor(path){
         super();
 
-        this.path = path;
+        this.path = nodePath.normalize(path);
         this.type = "akeno.web.WebApp";
         
         this.configMtime = null;
@@ -129,7 +128,16 @@ class WebApp extends Units.App {
         const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean);
         this.enabled = (is_enabled === null? true: is_enabled) || false;
 
-        const enabledDomains = this.config.getBlock("server").get("domains", Array, []);
+        const serverBlock = this.config.getBlock("server");
+
+        const enabledDomains = serverBlock.get("domains", Array, []);
+
+        const custom_root = serverBlock.get("root", String, null);
+        if (custom_root && custom_root.length > 0) {
+            this.root = nodePath.join(this.path, custom_root);
+        } else {
+            this.root = this.path;
+        }
 
         if(enabledDomains.length > 0 || this.domains.size > 0){
             const domains = new Set([...enabledDomains, ...this.domains]);
@@ -243,9 +251,46 @@ class WebApp extends Units.App {
         this.loaded = true;
 
         this._hasRedirects = this.config.data.has("redirect");
+        if(this._hasRedirects) {
+            if(!this.redirectMatcher) this.redirectMatcher = new PathMatcher();
+            this.redirectMatcher.clear();
+
+            for(const redirect of this.config.getBlocks("redirect")){
+                const to = redirect.get("to", String);
+                if(!to) continue;
+
+                this.redirectMatcher.add(redirect.attributes[0], to);
+            }
+        }
+
         this._hasHandles = this.config.data.has("handle");
+        if(this._hasHandles) {
+            if(!this.handleMatcher) this.handleMatcher = new PathMatcher();
+            this.handleMatcher.clear();
+
+            for(const handle of this.config.getBlocks("handle")){
+                const target = handle.get("path", String);
+                const domain = handle.get("as", String);
+                if(!target || !domain) continue;
+
+                this.handleMatcher.add(handle.attributes[0], { target, domain, appendPath: handle.get("appendPath", Boolean) });
+            }
+        }
+
         this._hasRoutes = this.config.data.has("route");
-        this._hasBrowserRequirements = this.config.data.has("browserSupport");
+        if(this._hasRoutes) {
+            if(!this.routeMatcher) this.routeMatcher = new PathMatcher();
+            this.routeMatcher.clear();
+
+            for(const route of this.config.getBlocks("route")){
+                const to = route.get("to", String);
+                if(!to) continue;
+
+                this.routeMatcher.add(route.attributes[0], { to, negate: route.get("not") });
+            }
+        }
+
+        this._browserRequirements = this.config.getBlock("browserSupport");
     }
 }
 
@@ -336,12 +381,10 @@ const server = new class WebServer extends Units.Module {
         }
 
         // Check if the client version is supported
-        if(app._hasBrowserRequirements) {
-            let browserRequirements = app.config.getBlock("browserSupport");
-
-            if(!checkSupportedBrowser(req.getHeader('user-agent'), browserRequirements.properties)){
+        if(this._browserRequirements) {
+            if(!checkSupportedBrowser(req.getHeader('user-agent'), this._browserRequirements.properties)){
                 res.cork(() => {
-                    res.writeHeader('Content-Type', browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${browserRequirements.chrome && browserRequirements.chrome} and up, Firefox ${browserRequirements.firefox && browserRequirements.firefox} and up.`))
+                    res.writeHeader('Content-Type', this._browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(this._browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${this._browserRequirements.chrome && this._browserRequirements.chrome} and up, Firefox ${this._browserRequirements.firefox && this._browserRequirements.firefox} and up.`))
                 })
                 return
             }
@@ -362,42 +405,32 @@ const server = new class WebServer extends Units.Module {
 
         let url = req.path;
 
-
         // Redirects (simple URL redirects)
-        if(app._hasRedirects) for(const handle of app.config.getBlocks("redirect")){
-            const target = handle.get("to", String);
-
-            if(target && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
-                res.writeStatus('302 Found').writeHeader('Location', target).end();
+        if(app._hasRedirects) {
+            const redirect = app.redirectMatcher.match(url);
+            if(redirect) {
+                res.writeStatus('302 Found').writeHeader('Location', redirect).end();
                 return;
             }
         }
 
-
         // Redirect handles (when an URL points to a whole another point in the server)
-        if(app._hasHandles) for(const handle of app.config.getBlocks("handle")){
-            const target = handle.get("path", String);
-            const domain = handle.get("as", String);
-
-            if(target && domain && (handle.picomatchCache || (handle.picomatchCache = picomatch(handle.attributes)))(url)){
+        if(app._hasHandles) {
+            const handle = app.handleMatcher.match(url);
+            if(handle) {
                 return backend.resolve(res, req, { secure: req.secure }, {
-                    domain,
-                    path: `/${target}${handle.get("appendPath", Boolean)? req.path: ""}`,
+                    domain: handle.domain,
+                    path: `/${handle.target}${handle.appendPath ? req.path : ""}`,
                     virtual: true
-                })
+                });
             }
         }
 
-
         // Redirect routes
-        if(app._hasRoutes) for(const route of app.config.getBlocks("route")){
-            if((route.picomatchCache || (route.picomatchCache = picomatch(route.attributes)))(url)){
-                const negate = route.get("not");
-
-                if(!negate || !negate.length || !(route.negate_picomatchCache || (route.negate_picomatchCache = picomatch(negate)))(url)){
-                    url = `/${route.get("to", String)}`;
-                    break;
-                }
+        if(app._hasRoutes) {
+            const route = app.routeMatcher.match(url);
+            if(route) {
+                url = `/${route}`;
             }
         }
 
@@ -412,7 +445,7 @@ const server = new class WebServer extends Units.Module {
 
 
             // TODO: Cache this
-            let file = files_try(app.path + url + ".html", app.path + url + "/index.html", app.path + url);
+            let file = files_try(app.root + url + ".html", app.root + url + "/index.html", app.root + url);
 
             if(!file){
                 // Check if there is a 404 page defined
@@ -421,11 +454,19 @@ const server = new class WebServer extends Units.Module {
                 if(!file){
                     // If not, return a generic 404 error
                     return backend.helper.send(req, res, url + " not found", null, "404 Not Found");
-                } else file = app.path + file
+                } else file = app.root + file;
             }
 
             // Normalize the file path
             file = nodePath.normalize(file);
+
+            // FIXME: Temporary solution
+            const contentOnly = !!req.getHeader("akeno-content-only");
+            if(contentOnly) {
+                // This is quite a hack (the slash acts as a cache breaker), need to find a better solution later
+                file = "/" + file;
+            }
+
 
             // Handle directories
             if(fs.statSync(file).isDirectory()){
@@ -457,7 +498,8 @@ const server = new class WebServer extends Units.Module {
                 "Cache-Control": `public, max-age=${cacheByFile[extension] || cacheByFile.default}`,
                 "X-Content-Type-Options": "nosniff",
                 "ETag": `"${cache.lastModifyTime.toString(36)}"`,
-                "Connection": "keep-alive"
+                "Connection": "keep-alive",
+                "Vary": "Accept-Encoding, Akeno-Content-Only"
             }
 
             // In case we previously didn't have cached headers but the cache was valid, serve them now
@@ -476,15 +518,15 @@ const server = new class WebServer extends Units.Module {
                     content = uncompressedCache.content;
                 }
             }
-
+            
             if(!content) {
                 // Generate and serve fresh content
                 app.verbose(`Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
 
                 switch(extension){
                     case "html":
-                        parserContext.data = { url, file, app, secure: req.secure };
-                        content = parser.fromFile(file, parserContext);
+                        parserContext.data = { url, nested: contentOnly, path: app.path, root: app.root, file, app, secure: req.secure };
+                        content = parser.fromFile(file, parserContext, !contentOnly);
                         // content = await fs.promises.readFile(file);
                         break;
 
@@ -901,7 +943,7 @@ function initParser(header){
         switch(block.name) {
             case "use":
                 // if(parent !== "head") {
-                //     server.warn("Error in app " + this.data.app.path + ": @use can only be used in <head>.");
+                //     server.warn("Error in app " + this.data.path + ": @use can only be used in <head>.");
                 //     break
                 // }
 
@@ -941,7 +983,7 @@ function initParser(header){
                             if(this.data.ls_version) {
                                 version = this.data.ls_version;
                             } else {
-                                console.error(`Error in app "${this.data.app.path}": No version was specified for LS in your app. This is no longer supported - you must specify a version, for example ${attrib}:${latest_ls_version}. To enforce the latest version, use ${attrib}:latest`);
+                                console.error(`Error in app "${this.data.path}": No version was specified for LS in your app. This is no longer supported - you must specify a version, for example ${attrib}:${latest_ls_version}. To enforce the latest version, use ${attrib}:latest`);
                                 break;
                             }
                         }
@@ -1002,29 +1044,41 @@ function initParser(header){
                         default:
                             if(attrib.includes("/")){
                                 if(attrib.startsWith("http")){
-                                    server.warn("Error in app " + this.data.app.path + ": @use does not allow direct URL imports (\"" + attrib + "\") - please define a custom @source or use a different way to import your content.");
+                                    server.warn("Error in app " + this.data.path + ": @use does not allow direct URL imports (\"" + attrib + "\") - please define a custom @source or use a different way to import your content.");
                                     break;
                                 }
 
-                                const path = this.data.app.path + "/" + attrib;
-                                if(fs.existsSync(path)){
-                                    const link = map_resource(attrib, this.data.app.path);
+                                let useRoot = false;
+                                let isRelative = false;
+                                if(attrib[0] === ".") {
+                                    attrib = attrib.slice(1);
+                                    isRelative = true;
+                                } else if(attrib[0] === "~") {
+                                    attrib = attrib.slice(1);
+                                    useRoot = true;
+                                }
 
-                                    if(link) {
-                                        const extension = attrib.slice(attrib.lastIndexOf('.') + 1);
+                                const link = isRelative ? nodePath.join(this.data.url, attrib) : attrib;
+                                const path = nodePath.join(useRoot || isRelative? this.data.root: this.data.path, link);
 
-                                        switch(extension){
-                                            case "js":
-                                                this.write(`<script src="${link}" ${components.join(" ")}></script>`)
-                                                break;
-                                            case "css":
-                                                this.write(`<link rel=stylesheet href="${link}" ${components.join(" ")}>`)
-                                                break;
-                                            case "json":
-                                                this.write(`<script type="application/json" id="${components || attrib}">${fs.readFileSync(path)}</script>`)
-                                                break;
-                                        }
-                                    }
+                                if(!fs.existsSync(path)) {
+                                    this.data.app.warn("Error: File \"" + path + "\" does not exist.");
+                                    break;
+                                }
+
+                                const mtime = `?mtime=${(fs.statSync(path).mtimeMs).toString(36)}`;
+                                const extension = attrib.slice(attrib.lastIndexOf('.') + 1);
+
+                                switch(extension){
+                                    case "js":
+                                        this.write(`<script src="${link}${mtime}" ${components.join(" ")}></script>`)
+                                        break;
+                                    case "css":
+                                        this.write(`<link rel=stylesheet href="${link}${mtime}" ${components.join(" ")}>`)
+                                        break;
+                                    case "json":
+                                        this.write(`<script type="application/json" id="${components || attrib}">${fs.readFileSync(path)}</script>`)
+                                        break;
                                 }
                             } else {
                                 this.data.app.warn("Error: Unknown module \"" + attrib + "\"");
@@ -1088,11 +1142,11 @@ function initParser(header){
                 break;
 
             case "import":
-                if(!this.data.app.path) break;
+                if(!this.data.path) break;
 
                 for(let item of block.attributes){
                     try {
-                        this.import(this.data.app.path + "/" + item);
+                        this.import(this.data.path + "/" + item);
                     } catch (error) {
                         this.data.app.warn("Failed to import: importing " + item, error);
                     }
@@ -1100,11 +1154,11 @@ function initParser(header){
                 break;
 
             case "importRaw":
-                if(!this.data.app.path) break;
+                if(!this.data.path) break;
 
                 for(let item of block.attributes){
                     try {
-                        let content = fs.readFileSync(this.data.app.path + "/" + item, "utf8");
+                        let content = fs.readFileSync(this.data.path + "/" + item, "utf8");
                         this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
                     } catch (error) {
                         this.data.app.warn("Failed to import (raw): importing " + item, error)
@@ -1123,16 +1177,6 @@ function initParser(header){
         }
     }
 }
-
-function map_resource(link, local_path){
-    if(local_path && !link.startsWith("http")){
-        const assetPath = local_path + "/" + link;
-        link += `${link.includes("?")? "&": "?"}mtime=${(fs.statSync(assetPath).mtimeMs).toString(36)}`
-    }
-
-    return link
-}
-
 
 
 // Debug: Hot reloading LS components

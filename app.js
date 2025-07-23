@@ -145,7 +145,7 @@ function resolve(res, req) {
         res.aborted = true; // Possibly deprecated
     })
 
-    let handler = domainRouter.route(req.domain) || backend.webServerHandler;
+    let handler = domainRouter.match(req.domain) || backend.webServerHandler;
 
     if(typeof handler === "function"){
         handler(req, res);
