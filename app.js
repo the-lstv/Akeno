@@ -24,7 +24,7 @@ const Units = require("akeno:units");
 
 // Global variables
 let
-    version = new Units.Version("1.6.3-beta")
+    version = new Units.Version("1.6.4-beta")
 ;
 
 
@@ -203,49 +203,6 @@ const backend = {
 
     broadcast(topic, data, isBinary, compress){
         if(backend.config.getBlock("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
-    },
-
-    _console: {
-        log: console.log,
-        warn: console.warn,
-        error: console.error,
-        debug: console.debug
-    },
-
-    /**
-     * Logs messages to the console with different log levels, colors, and sources.
-     *
-     * @param {string|any[]} data - The log message(s) as a string or an array of values to output.
-     * @param {number} [level=2] - The log level (0: Debug, 1: Info (Verbose), 2: Info, 3: Warning, 4: Error, 5: Fatal).
-     * @param {string} [source="api"] - The source of the log message.
-     *
-     * @example
-     * writeLog(['User created successfully'], 1, 'user-service');
-     */
-    writeLog(data, level = 2, source = "api"){
-        if(level < (5 - backend.logLevel)) return;
-
-        const color = level >= 4 ? "1;31" : level === 3 ? "1;33" : "36";
-        const consoleFunction = backend._console[level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log"];
-        const sourceName = typeof source === "string" ? source : source?.name || "unknown";
-
-        if(!backend._fancyLogEnabled) {
-            consoleFunction(`[${sourceName}]`, ...data);
-            return;
-        }
-
-        const tag = `${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`;
-
-        if(!Array.isArray(data)){
-            data = [data];
-        }
-
-        consoleFunction(tag, ...data.map(item => {
-            if (typeof item === "string") {
-                return item.replaceAll("\n", "\n" + " ".repeat(sourceName.length - 1) + "\x1b[90m⤷\x1b[0m   ");
-            }
-            return item;
-        }));
     },
 
     constants: {
@@ -740,6 +697,49 @@ const backend = {
         502: "Bad gateway.",
     },
 
+    _console: {
+        log: console.log,
+        warn: console.warn,
+        error: console.error,
+        debug: console.debug
+    },
+
+    /**
+     * Logs messages to the console with different log levels, colors, and sources.
+     *
+     * @param {string|any[]} data - The log message(s) as a string or an array of values to output.
+     * @param {number} [level=2] - The log level (0: Debug, 1: Info (Verbose), 2: Info, 3: Warning, 4: Error, 5: Fatal).
+     * @param {string} [source="api"] - The source of the log message.
+     *
+     * @example
+     * writeLog(['User created successfully'], 1, 'user-service');
+     */
+    writeLog(data, level = 2, source = "api"){
+        if(level < (5 - backend.logLevel)) return;
+
+        const color = level >= 4 ? "1;31" : level === 3 ? "1;33" : "36";
+        const consoleFunction = backend._console[level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log"];
+        const sourceName = typeof source === "string" ? source : source?.name || "unknown";
+
+        if(!backend._fancyLogEnabled) {
+            consoleFunction(`[${sourceName}]`, ...data);
+            return;
+        }
+
+        const tag = `${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`;
+
+        if(!Array.isArray(data)){
+            data = [data];
+        }
+
+        consoleFunction(tag, ...data.map(item => {
+            if (typeof item === "string") {
+                return item.replaceAll("\n", "\n" + " ".repeat(sourceName.length - 1) + "\x1b[90m⤷\x1b[0m   ");
+            }
+            return item;
+        }));
+    },
+
     refreshConfig(){
         if(backend.config) backend.log("Refreshing configuration");
 
@@ -862,6 +862,7 @@ if(true) {
         console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
     
         backend.exposeToDebugger("backend", backend);
+        backend.exposeToDebugger("web", Units.Manager.module("akeno.web"));
     }
     
     if (process.platform !== 'linux') {
