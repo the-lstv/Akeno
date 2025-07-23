@@ -62,12 +62,13 @@ class WebApp extends Units.App {
         super();
 
         this.path = nodePath.normalize(path);
+        this.root = this.path;
         this.type = "akeno.web.WebApp";
         
         this.configMtime = null;
         this.loaded = false;
         
-        this.reloadConfig();
+        this.readConfig();
         if(!this.config) throw "Invalid or missing config";
 
         this.basename = nodePath.basename(path);
@@ -86,7 +87,38 @@ class WebApp extends Units.App {
         this.reload(false);
     }
 
-    reloadConfig(){
+    /**
+     * Resolve a relative, absolute, or root path to a full path while safely avoiding directory traversal attacks.
+     * @param {string} path 
+     * @param {string} current 
+     * @returns 
+     */
+
+    resolvePath(path, current = null){
+        let useRootPath = false;
+        let isRelative = true;
+
+        if(path.charCodeAt(0) === 47) { // '/'
+            isRelative = false;
+        } else if(path.charCodeAt(0) === 126) { // '~'
+            path = path.slice(1);
+            useRootPath = true;
+        }
+
+        const root = useRootPath? this.path: this.root || this.path;
+        const relative = isRelative ? nodePath.resolve(current || nodePath.sep, path) : path;
+
+        const full = nodePath.join(root, relative);
+
+        // Extra safety check, while it should already be safe, better to be extra safe.
+        if(!full.startsWith(root + nodePath.sep)) {
+            return { full, relative: nodePath.sep, useRootPath: true };
+        }
+
+        return { full, relative, useRootPath };
+    }
+
+    readConfig(){
         let configPath = this.path + "/app.conf";
 
         if(!configPath){
@@ -102,7 +134,7 @@ class WebApp extends Units.App {
         this.config = configTools(parse(fs.readFileSync(configPath, "utf8"), {
             strict: true,
             asLookupTable: true
-        }))
+        }));
 
         return true;
     }
@@ -117,13 +149,11 @@ class WebApp extends Units.App {
             } catch {}
 
             if(currentMtime && this.configMtime !== currentMtime) {
-                this.reloadConfig();
+                this.readConfig();
             } else return;
         }
 
-
         if(this.loaded) this.verbose("Hot-reloading");
-
 
         const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean);
         this.enabled = (is_enabled === null? true: is_enabled) || false;
@@ -134,7 +164,7 @@ class WebApp extends Units.App {
 
         const custom_root = serverBlock.get("root", String, null);
         if (custom_root && custom_root.length > 0) {
-            this.root = nodePath.join(this.path, custom_root);
+            this.root = this.resolvePath(custom_root).full;
         } else {
             this.root = this.path;
         }
@@ -299,23 +329,6 @@ const server = new class WebServer extends Units.Module {
         super({ name: "web", id: "akeno.web", version: "1.4.0-beta" });
 
         this.registerType("WebApp", WebApp)
-    }
-
-    onLoad(){
-        // Constants
-        const header = backend.config.getBlock("web").get("htmlHeader", String, `<!-- Auto-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`) || '';
-
-        this.etc = {
-            notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<h2>No website was found for this URL.</h2>Additionally, nothing was found to handle this error.<br><br><hr>Powered by Akeno/${backend.version}</html>`),
-            default_disabled_message: Buffer.from(backend.config.getBlock("web").get("disabledMessage", String) || "This website is temporarily disabled."),
-
-            EXTRAGON_CDN: backend.config.getBlock("web").get("extragon_cdn_url", String) || backend.mode === backend.modes.DEVELOPMENT? `http://cdn.extragon.test`: `https://cdn.extragon.cloud`
-        };
-
-        initParser(header);
-
-        backend.exposeToDebugger("parser", parser);
-        this.reload(null, true);
     }
 
     async reload(specific_app, skip_config_refresh){
@@ -588,10 +601,10 @@ const server = new class WebServer extends Units.Module {
     }
 
     ServeCache(req, res, cache, app, url){
-        // Dynamic content
-        if(Array.isArray(cache.content)){
-            return this.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
-        }
+        // // Dynamic content
+        // if(Array.isArray(cache.content)){
+        //     return this.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
+        // }
 
         return backend.helper.send(req, res, cache.content, cache.headers)
     }
@@ -701,6 +714,23 @@ const server = new class WebServer extends Units.Module {
             default:
                 res.end("Invalid request");
         }
+    }
+
+    onLoad(){
+        // Constants
+        const header = backend.config.getBlock("web").get("htmlHeader", String, `<!-- Server-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`) || '';
+
+        this.etc = {
+            notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:2rem;box-sizing:border-box;background:#f8f9fa;color:#333;min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#e0e0e0}}h2{margin:0 0 1rem;font-size:1.5rem;font-weight:600}p{margin:0 0 2rem;opacity:0.8}hr{border:none;height:1px;background:currentColor;opacity:0.2;width:100%;max-width:300px;margin:2rem 0 1rem}footer{font-size:0.9rem;opacity:0.6}</style><h2>404 - Page Not Found</h2><p>The requested page could not be found on this server.</p><hr><footer>Powered by Akeno/${backend.version}</footer></html>`),
+            default_disabled_message: Buffer.from(backend.config.getBlock("web").get("disabledMessage", String) || "This website is temporarily disabled."),
+
+            EXTRAGON_CDN: backend.config.getBlock("web").get("extragon_cdn_url", String) || backend.mode === backend.modes.DEVELOPMENT? `https://cdn.extragon.localhost`: `https://cdn.extragon.cloud`
+        };
+
+        initParser(header);
+
+        backend.exposeToDebugger("parser", parser);
+        this.reload(null, true);
     }
 
 

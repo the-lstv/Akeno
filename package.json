@@ -3,7 +3,7 @@
   "id": "akeno.backend",
   "description": "Akeno Backend",
   "main": "app.js",
-  "version": "1.6.3-beta",
+  "version": "1.6.4-beta",
   "author": "TheLSTV",
   "license": "GPL-3.0-only",
   "repository": {
