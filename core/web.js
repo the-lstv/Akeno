@@ -84,6 +84,8 @@ class WebApp extends Units.App {
 
         applications.set(this.path, this);
 
+        this._rootPathAllowed = true;
+
         this.reload(false);
     }
 
@@ -96,17 +98,24 @@ class WebApp extends Units.App {
 
     resolvePath(path, current = null){
         let useRootPath = false;
-        let isRelative = true;
+        let isRelative = false;
 
-        if(path.charCodeAt(0) === 47) { // '/'
-            isRelative = false;
-        } else if(path.charCodeAt(0) === 126) { // '~'
+        if(path.charCodeAt(0) === 126) { // '~'
             path = path.slice(1);
+            useRootPath = true;
+        } else if(path.charCodeAt(0) !== 47) { // '/'
+            isRelative = true;
+        } else if(path.charCodeAt(1) === 126 && path.charCodeAt(2) === 47) { // '/~/', special case :shrug:
+            path = path.slice(2);
             useRootPath = true;
         }
 
+        if(!this._rootPathAllowed) {
+            useRootPath = false;
+        }
+
         const root = useRootPath? this.path: this.root || this.path;
-        const relative = isRelative ? nodePath.resolve(current || nodePath.sep, path) : path;
+        const relative = nodePath.resolve(isRelative? (current || nodePath.sep): "/", path);
 
         const full = nodePath.join(root, relative);
 
@@ -163,6 +172,8 @@ class WebApp extends Units.App {
         const enabledDomains = serverBlock.get("domains", Array, []);
 
         const custom_root = serverBlock.get("root", String, null);
+        this._rootPathAllowed = serverBlock.get("allowRootPath", Boolean, true);
+
         if (custom_root && custom_root.length > 0) {
             this.root = this.resolvePath(custom_root).full;
         } else {
@@ -303,7 +314,11 @@ class WebApp extends Units.App {
                 const domain = handle.get("as", String);
                 if(!target || !domain) continue;
 
-                this.handleMatcher.add(handle.attributes[0], { target, domain, appendPath: handle.get("appendPath", Boolean) });
+                const handleObj = { target, domain, appendPath: handle.get("appendPath", Boolean) };
+
+                for(const pattern of handle.attributes){
+                    this.handleMatcher.add(pattern, handleObj);
+                }
             }
         }
 
@@ -316,7 +331,9 @@ class WebApp extends Units.App {
                 const to = route.get("to", String);
                 if(!to) continue;
 
-                this.routeMatcher.add(route.attributes[0], { to, negate: route.get("not") });
+                for(const pattern of route.attributes){
+                    this.routeMatcher.add(pattern, to);                    
+                }
             }
         }
 
@@ -441,9 +458,17 @@ const server = new class WebServer extends Units.Module {
 
         // Redirect routes
         if(app._hasRoutes) {
-            const route = app.routeMatcher.match(url);
-            if(route) {
-                url = `/${route}`;
+            let route = app.routeMatcher.match(url);
+            if(typeof route === "string") {
+                if(route.indexOf("$url") !== -1) {
+                    route = route.replace("$url", url);
+                }
+
+                if(route.indexOf("$file") !== -1) {
+                    route = route.replace("$file", nodePath.basename(url));
+                }
+
+                url = route.charCodeAt(0) === 47 ? route : "/" + route;
             }
         }
 
@@ -456,18 +481,24 @@ const server = new class WebServer extends Units.Module {
              * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit and the cache system is a bit eh.
             */
 
-
             // TODO: Cache this
-            let file = files_try(app.root + url + ".html", app.root + url + "/index.html", app.root + url);
+            let resolvedPath = app.resolvePath(url);
+            let errorCode = null;
+
+            let file = resolvedPath.full;
+            file = files_try(file + ".html", file + "/index.html", file);
 
             if(!file){
                 // Check if there is a 404 page defined
-                file = app.config.getBlock("errors").get("404", String) || app.config.getBlock("errors").get("default", String)
+                const errorPage = app.config.getBlock("errors").get("404", String) || app.config.getBlock("errors").get("default", String);
 
-                if(!file){
-                    // If not, return a generic 404 error
+                if(errorPage) {
+                    resolvedPath = app.resolvePath(errorPage);
+                    file = resolvedPath.full;
+                    errorCode = "404";
+                } else {
                     return backend.helper.send(req, res, url + " not found", null, "404 Not Found");
-                } else file = app.root + file;
+                }
             }
 
             // Normalize the file path
@@ -480,12 +511,12 @@ const server = new class WebServer extends Units.Module {
                 file = "/" + file;
             }
 
-
             // Handle directories
             if(fs.statSync(file).isDirectory()){
                 return backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
             }
 
+            const directory = nodePath.dirname(resolvedPath.relative);
             const file_name = nodePath.basename(file);
             let extension, lastIndex = file_name.lastIndexOf('.');
 
@@ -503,7 +534,7 @@ const server = new class WebServer extends Units.Module {
 
             // If we have the cached file and headers, serve it
             if(!cache.refresh && cache.headers) {
-                return server.ServeCache(req, res, cache, app, url);
+                return server.ServeCache(req, res, cache, errorCode);
             }
 
             const headers = {
@@ -517,8 +548,8 @@ const server = new class WebServer extends Units.Module {
 
             // In case we previously didn't have cached headers but the cache was valid, serve them now
             if(!cache.refresh) {
-                cache.headers = headers
-                return server.ServeCache(req, res, cache, app, url)
+                cache.headers = headers;
+                return server.ServeCache(req, res, cache, errorCode);
             }
 
             let content;
@@ -538,7 +569,7 @@ const server = new class WebServer extends Units.Module {
 
                 switch(extension){
                     case "html":
-                        parserContext.data = { url, nested: contentOnly, path: app.path, root: app.root, file, app, secure: req.secure };
+                        parserContext.data = { url, directory, nested: contentOnly, path: app.path, root: app.root, file, app, secure: req.secure };
                         content = parser.fromFile(file, parserContext, !contentOnly);
                         // content = await fs.promises.readFile(file);
                         break;
@@ -565,14 +596,14 @@ const server = new class WebServer extends Units.Module {
 
                     if(backend.compression.enabled && suggestedCompressionAlgorithm !== backend.compression.format.NONE && content.length >= backend.constants.MIN_COMPRESSION_SIZE) {
                         try {
-                            [compressionAlgo, compressedContent, compressHeaders] = backend.helper.sendCompressed(req, res, content, mimeType, {...headers}, undefined, suggestedCompressionAlgorithm);
+                            [compressionAlgo, compressedContent, compressHeaders] = backend.helper.sendCompressed(req, res, content, mimeType, {...headers}, errorCode, suggestedCompressionAlgorithm);
                         } catch (error) {
                             app.error("Couldn't perform compression, requesting \"" + req.path + "\": ", error);
                             backend.helper.send(req, res, "<b>Error while compressing content - Incident log was saved.</b>", null, 500);
                             return
                         }
                     } else {
-                        backend.helper.send(req, res, content, headers);
+                        backend.helper.send(req, res, content, headers, errorCode);
                     }
 
                     // Save uncompressed content to cache
@@ -600,52 +631,9 @@ const server = new class WebServer extends Units.Module {
         }
     }
 
-    ServeCache(req, res, cache, app, url){
-        // // Dynamic content
-        // if(Array.isArray(cache.content)){
-        //     return this.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
-        // }
-
-        return backend.helper.send(req, res, cache.content, cache.headers)
+    ServeCache(req, res, cache, errorCode = null){
+        return backend.helper.send(req, res, cache.content, cache.headers, errorCode);
     }
-
-    /**
-     * To be replaced with a more advanced dynamic content handler
-     * @deprecated
-     */
-    ServeDynamicContent(req, res, content, headers, app, url){
-        res.cork(() => {
-            // undefined will delay sending
-            backend.helper.send(req, res, undefined, headers);
-
-            for(let chunk of content){
-                if(!(chunk instanceof Buffer)){
-
-                    switch(chunk.name){
-                        case "dynamicImport":
-                            
-                            if(!app.path) break;
-            
-                            for(let item of chunk.attributes){
-                                try {
-                                    const path = app.path + "/" + item.replace("$original_path", req.path);
-
-                                    parserContext.data = { plain: true, dynamic: false, compress: true, app, url };
-                                    res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, parserContext))
-                                } catch (error) {
-                                    this.warn("Failed to import: importing " + item, error)
-                                }
-                            }
-                            break;
-                    }
-
-                } else res.write(chunk)
-            }
-
-            res.end()
-        })
-    }
-
 
     onIPCRequest(segments, req, res){
         switch(segments[0]){
@@ -925,6 +913,7 @@ const latest_ls_version = fs.existsSync(ls_path + "/version")? fs.readFileSync(l
 
 const ls_components = {
     "js": [
+        "animation",
         "gl",
         "network",
         "node",
@@ -1078,18 +1067,9 @@ function initParser(header){
                                     break;
                                 }
 
-                                let useRoot = false;
-                                let isRelative = false;
-                                if(attrib[0] === ".") {
-                                    attrib = attrib.slice(1);
-                                    isRelative = true;
-                                } else if(attrib[0] === "~") {
-                                    attrib = attrib.slice(1);
-                                    useRoot = true;
-                                }
-
-                                const link = isRelative ? nodePath.join(this.data.url, attrib) : attrib;
-                                const path = nodePath.join(useRoot || isRelative? this.data.root: this.data.path, link);
+                                const resolvedPath = this.data.app.resolvePath(attrib, this.data.directory);
+                                const path = resolvedPath.full;
+                                const link = (resolvedPath.useRootPath? "~": "") + resolvedPath.relative || attrib;
 
                                 if(!fs.existsSync(path)) {
                                     this.data.app.warn("Error: File \"" + path + "\" does not exist.");
@@ -1107,7 +1087,7 @@ function initParser(header){
                                         this.write(`<link rel=stylesheet href="${link}${mtime}" ${components.join(" ")}>`)
                                         break;
                                     case "json":
-                                        this.write(`<script type="application/json" id="${components || attrib}">${fs.readFileSync(path)}</script>`)
+                                        this.write(`<script type="application/json" id="${components.length ? components.join(",") : attrib}">${fs.readFileSync(path)}</script>`)
                                         break;
                                 }
                             } else {
@@ -1175,23 +1155,27 @@ function initParser(header){
                 if(!this.data.path) break;
 
                 for(let item of block.attributes){
+                    const path = this.data.app.resolvePath(item, this.data.directory).full;
+
                     try {
-                        this.import(this.data.path + "/" + item);
+                        this.import(path);
                     } catch (error) {
-                        this.data.app.warn("Failed to import: importing " + item, error);
+                        this.data.app.warn("Failed to import: " + item + " (" + path + ")", error);
                     }
                 }
                 break;
 
-            case "importRaw":
+            case "importRaw": // TODO:
                 if(!this.data.path) break;
 
                 for(let item of block.attributes){
+                    const path = this.data.app.resolvePath(item, this.data.directory).full;
+
                     try {
-                        let content = fs.readFileSync(this.data.path + "/" + item, "utf8");
-                        this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
+                        let content = fs.readFileSync(path, "utf8");
+                        this.write(!!block.properties.escape ? content.replace(/'/g, '&#39;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content);
                     } catch (error) {
-                        this.data.app.warn("Failed to import (raw): importing " + item, error)
+                        this.data.app.warn("Failed to import (raw): " + item + " (" + path + ")", error);
                     }
                 }
                 break;
