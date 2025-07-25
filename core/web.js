@@ -9,9 +9,6 @@
 */
 
 
-// work in progress
-
-
 let
     // Libraries
     fs = require("fs"),
@@ -31,29 +28,7 @@ let
     applications = new Map,
 
     // Backend object
-    backend = require("akeno:backend"),
-
-    // Cache && optimisation helpers
-    RequestCache = [
-        new Map(), // No compression
-        new Map(), // Gzip compression
-        new Map(), // Deflate compression
-        new Map()  // Brotli compression
-    ],
-
-    // FIXME: Temporary solution
-    FilesWithDisabledCompression = new Set(),
-
-    // Maximal cache size for binary files per-file.
-    // If a file is bigger than this, it is not served from RAM.
-    max_cache_size = 367001600,
-
-    cacheByFile = {
-        html: "15",
-        js: "604800",
-        css: "604800",
-        default: "50000"
-    }
+    backend = require("akeno:backend")
 ;
 
 
@@ -338,6 +313,9 @@ class WebApp extends Units.App {
         }
 
         this._browserRequirements = this.config.getBlock("browserSupport");
+
+        const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String)
+        this._404 = _404? this.resolvePath(_404): null;
     }
 }
 
@@ -346,136 +324,89 @@ const server = new class WebServer extends Units.Module {
         super({ name: "web", id: "akeno.web", version: "1.4.0-beta" });
 
         this.registerType("WebApp", WebApp)
+
+        this.fileServer = new backend.helper.FileServer();
     }
 
-    async reload(specific_app, skip_config_refresh){
-        if(specific_app) return this.refreshApp(specific_app);
-
-        if(!skip_config_refresh) backend.refreshConfig();
-
-        const start = performance.now();
-
-        const webConfig = backend.config.getBlock("web");
-        const locations = webConfig.get("locations", Array, []);
-
-        // Looks for valid application locations
-        for(let location of locations){
-            if(location.startsWith("./")) location = backend.path + location.slice(1);
-
-            if(!fs.existsSync(location.replace("/*", ""))) {
-                this.warn("Web application (at " + location + ") does not exist - skipped.");
-                continue;
-            }
-
-            // Handle wildcard (multi) locations
-            if(location.endsWith("*")){
-                let appDirectory = nodePath.normalize(location.slice(0, -1) + "/");
-
-                for(let path of fs.readdirSync(appDirectory)){
-                    path = appDirectory + path;
-
-                    if(!fs.statSync(path).isDirectory() || !fs.existsSync(path + "/app.conf")) continue;
-                    locations.push(path);
-                }
-                continue;
-            }
-
-            if(!fs.statSync(location).isDirectory()) {
-                this.warn("Web application (at " + location + ") is a file - skipped.");
-                continue;
-            }
-
-            this.refreshApp(location);
-        }
-
-        this.log(`${skip_config_refresh? "Loaded": "Reloaded"} ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
-    }
-
+    // This is the main handler/router for websites/webapps.
     async onRequest(req, res, app){
-        // This is the main handler/router for websites/webapps.
-
-        if(!app) return res.cork(() => {
-            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error);
-        });
-
-        // HTTPS Redirect
-        if(backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))){
-            res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
-            return
-        }
-
-        // When the app is disabled
-        if(!app.enabled){
-            backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422");
-            return
-        }
-
-        // Check if the client version is supported
-        if(this._browserRequirements) {
-            if(!checkSupportedBrowser(req.getHeader('user-agent'), this._browserRequirements.properties)){
-                res.cork(() => {
-                    res.writeHeader('Content-Type', this._browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(this._browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${this._browserRequirements.chrome && this._browserRequirements.chrome} and up, Firefox ${this._browserRequirements.firefox && this._browserRequirements.firefox} and up.`))
-                })
-                return
-            }
-        }
-
-        // FIXME: TEMPORARY SOLUTION: Backend hooks
-        if(app.hook && app.hook.onRequest){
-            try {
-                const result = await app.hook.onRequest(req, res);
-                if(result === false) return; // Skip the rest of the request handling
-            } catch (error) {
-                app.error("Error in onRequest hook for app \"" + app.path + "\": ", error);
-                backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
-                return
-            }
-        }
-
-
-        let url = req.path;
-
-        // Redirects (simple URL redirects)
-        if(app._hasRedirects) {
-            const redirect = app.redirectMatcher.match(url);
-            if(redirect) {
-                res.writeStatus('302 Found').writeHeader('Location', redirect).end();
-                return;
-            }
-        }
-
-        // Redirect handles (when an URL points to a whole another point in the server)
-        if(app._hasHandles) {
-            const handle = app.handleMatcher.match(url);
-            if(handle) {
-                return backend.resolve(res, req, { secure: req.secure }, {
-                    domain: handle.domain,
-                    path: `/${handle.target}${handle.appendPath ? req.path : ""}`,
-                    virtual: true
-                });
-            }
-        }
-
-        // Redirect routes
-        if(app._hasRoutes) {
-            let route = app.routeMatcher.match(url);
-            if(typeof route === "string") {
-                if(route.indexOf("$url") !== -1) {
-                    route = route.replace("$url", url);
-                }
-
-                if(route.indexOf("$file") !== -1) {
-                    route = route.replace("$file", nodePath.basename(url));
-                }
-
-                url = route.charCodeAt(0) === 47 ? route : "/" + route;
-            }
-        }
-
-
-        // *Finally*, handle content (don't worry routes will be cached <- someday hopefully)
         try {
+            if(!app) return res.cork(() => {
+                res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error);
+            });
 
+            // HTTPS Redirect
+            if(backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))){
+                res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
+                return
+            }
+
+            // When the app is disabled
+            if(!app.enabled){
+                backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422");
+                return
+            }
+
+            // Check if the client version is supported
+            if(this._browserRequirements) {
+                if(!checkSupportedBrowser(req.getHeader('user-agent'), this._browserRequirements.properties)){
+                    res.cork(() => {
+                        res.writeHeader('Content-Type', this._browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(this._browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${this._browserRequirements.chrome && this._browserRequirements.chrome} and up, Firefox ${this._browserRequirements.firefox && this._browserRequirements.firefox} and up.`))
+                    })
+                    return
+                }
+            }
+
+            // FIXME: TEMPORARY SOLUTION: Backend hooks
+            if(app.hook && app.hook.onRequest){
+                try {
+                    const result = await app.hook.onRequest(req, res);
+                    if(result === false) return; // Skip the rest of the request handling
+                } catch (error) {
+                    app.error("Error in onRequest hook for app \"" + app.path + "\": ", error);
+                    backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
+                    return
+                }
+            }
+
+            let url = req.path;
+
+            // Redirects (simple URL redirects)
+            if(app._hasRedirects) {
+                const redirect = app.redirectMatcher.match(url);
+                if(redirect) {
+                    res.writeStatus('302 Found').writeHeader('Location', redirect).end();
+                    return;
+                }
+            }
+
+            // Redirect handles (when an URL points to a whole another point in the server)
+            if(app._hasHandles) {
+                const handle = app.handleMatcher.match(url);
+                if(handle) {
+                    return backend.resolve(res, req, { secure: req.secure }, {
+                        domain: handle.domain,
+                        path: `/${handle.target}${handle.appendPath ? req.path : ""}`,
+                        virtual: true
+                    });
+                }
+            }
+
+            // Redirect routes
+            if(app._hasRoutes) {
+                let route = app.routeMatcher.match(url);
+                if(typeof route === "string") {
+                    if(route.indexOf("$url") !== -1) {
+                        route = route.replace("$url", url);
+                    }
+
+                    if(route.indexOf("$file") !== -1) {
+                        route = route.replace("$file", nodePath.basename(url));
+                    }
+
+                    url = route.charCodeAt(0) === 47 ? route : "/" + route;
+                }
+            }
 
             /**
              * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit and the cache system is a bit eh.
@@ -486,29 +417,15 @@ const server = new class WebServer extends Units.Module {
             let errorCode = null;
 
             let file = resolvedPath.full;
-            file = files_try(file + ".html", file + "/index.html", file);
-
-            if(!file){
-                // Check if there is a 404 page defined
-                const errorPage = app.config.getBlock("errors").get("404", String) || app.config.getBlock("errors").get("default", String);
-
-                if(errorPage) {
-                    resolvedPath = app.resolvePath(errorPage);
-                    file = resolvedPath.full;
-                    errorCode = "404";
-                } else {
+            if(!(file = files_try(file + ".html", file + "/index.html", file))){
+                if(!app._404 || !app._404.full) {
                     return backend.helper.send(req, res, url + " not found", null, "404 Not Found");
                 }
-            }
 
-            // Normalize the file path
-            file = nodePath.normalize(file);
-
-            // FIXME: Temporary solution
-            const contentOnly = !!req.getHeader("akeno-content-only");
-            if(contentOnly) {
-                // This is quite a hack (the slash acts as a cache breaker), need to find a better solution later
-                file = "/" + file;
+                // Load the defined 404 page
+                resolvedPath = app._404;
+                file = app._404.full;
+                errorCode = "404";
             }
 
             // Handle directories
@@ -516,126 +433,44 @@ const server = new class WebServer extends Units.Module {
                 return backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
             }
 
-            const directory = nodePath.dirname(resolvedPath.relative);
-            const file_name = nodePath.basename(file);
-            let extension, lastIndex = file_name.lastIndexOf('.');
+            file = nodePath.normalize(file);
 
-            if (lastIndex !== -1) {
-                extension = file_name.slice(lastIndex + 1);
-            } else extension = file_name;
+            const cacheEntry = server.fileServer.cache.get(file);
 
-            let mimeType = backend.mime.getType(extension) || "text/plain";
+            // Because we can't read the accept-encoding header after generating async content....
+            const extension = cacheEntry? cacheEntry[0][5]: nodePath.extname(file).slice(1);
+            const suggestedCompressionAlgorithm = backend.helper.getUsedCompression(req, cacheEntry? cacheEntry[0][6]: backend.mime.getType(extension));
 
-            // Get suggested compression algorithm
-            const suggestedCompressionAlgorithm = FilesWithDisabledCompression.has(file)? backend.compression.format.NONE: backend.helper.getUsedCompression(req, mimeType);
+            // Generate and serve fresh content if not cached or modified
+            if(!cacheEntry || server.fileServer.needsUpdate(file, cacheEntry)) {
+                app.verbose(`Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`);
 
-            // TODO:FIXME: The current template/doc cache system is a bit messy and inefficient, will need to be reworked later
-            const cacheOverride = extension === "html"? parser.needsUpdate(file): false;
+                // By default, the server will get its own content
+                let content = null;
 
-            // Check if the file has not been changed since
-            const cache = requestCachedFile(file, suggestedCompressionAlgorithm, cacheOverride);
+                if(extension === "html") {
+                    const directory = nodePath.dirname(resolvedPath.relative);
 
-            // If we have the cached file and headers, serve it
-            if(!cache.refresh && cache.headers) {
-                return server.ServeCache(req, res, cache, errorCode);
-            }
-
-            const headers = {
-                "Content-Type": `${mimeType}; charset=UTF-8`,
-                "Cache-Control": `public, max-age=${cacheByFile[extension] || cacheByFile.default}`,
-                "X-Content-Type-Options": "nosniff",
-                "ETag": `"${cache.lastModifyTime.toString(36)}"`,
-                "Connection": "keep-alive",
-                "Vary": "Accept-Encoding, Akeno-Content-Only"
-            }
-
-            // In case we previously didn't have cached headers but the cache was valid, serve them now
-            if(!cache.refresh) {
-                cache.headers = headers;
-                return server.ServeCache(req, res, cache, errorCode);
-            }
-
-            let content;
-
-            if(suggestedCompressionAlgorithm !== backend.compression.format.NONE) {
-                // If the uncompressed content is up-to-date, update the compression cache instead of generating again
-                const uncompressedCache = requestCachedFile(file, backend.compression.format.NONE, cacheOverride);
-
-                if(!uncompressedCache.refresh && uncompressedCache.content) {
-                    content = uncompressedCache.content;
-                }
-            }
-            
-            if(!content) {
-                // Generate and serve fresh content
-                app.verbose(`Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
-
-                switch(extension){
-                    case "html":
-                        parserContext.data = { url, directory, nested: contentOnly, path: app.path, root: app.root, file, app, secure: req.secure };
-                        content = parser.fromFile(file, parserContext, !contentOnly);
-                        // content = await fs.promises.readFile(file);
-                        break;
-
-                    case "js": case "css":
-                        // Special case for CSS and JS (code minification etc.)
-                        content = await fs.promises.readFile(file, "utf8");
-                        break;
-
-                    default:
-                        content = await fs.promises.readFile(file);
+                    parserContext.data = { url, directory, path: app.path, root: app.root, file, app, secure: req.secure };
+                    content = parser.fromFile(file, parserContext, true);
                 }
 
-            }
-
-            if(content) {
-                if(Array.isArray(content)){
-                    // TODO: Rework dynamic content handling
-                    // Dynamic content
-                    // server.ServeDynamicContent(req, res, content, headers, app, url)
-                    return res.end();
+                if(cacheEntry) {
+                    await server.fileServer.refresh(file, null, null, content);
                 } else {
-                    let compressionAlgo = backend.compression.format.NONE, compressedContent, compressHeaders;
-
-                    if(backend.compression.enabled && suggestedCompressionAlgorithm !== backend.compression.format.NONE && content.length >= backend.constants.MIN_COMPRESSION_SIZE) {
-                        try {
-                            [compressionAlgo, compressedContent, compressHeaders] = backend.helper.sendCompressed(req, res, content, mimeType, {...headers}, errorCode, suggestedCompressionAlgorithm);
-                        } catch (error) {
-                            app.error("Couldn't perform compression, requesting \"" + req.path + "\": ", error);
-                            backend.helper.send(req, res, "<b>Error while compressing content - Incident log was saved.</b>", null, 500);
-                            return
-                        }
-                    } else {
-                        backend.helper.send(req, res, content, headers, errorCode);
-                    }
-
-                    // Save uncompressed content to cache
-                    if(content.length <= max_cache_size) updateCache(file, backend.compression.format.NONE, content, headers);
-
-                    if(suggestedCompressionAlgorithm !== backend.compression.format.NONE && compressionAlgo === backend.compression.format.NONE) {
-                        // Compression for this file was rejected
-                        FilesWithDisabledCompression.add(file);
-                    }
-
-                    // Save compressed content to cache
-                    if(compressionAlgo !== backend.compression.format.NONE && compressedContent) {
-                        if(compressedContent.length <= max_cache_size) updateCache(file, compressionAlgo, compressedContent, compressHeaders);
-                    }
+                    await server.fileServer.refresh(file, { "Vary": "Accept-Encoding, Akeno-Content-Only" }, extension === "html"? (path) => parser.needsUpdate(path): null, content);
                 }
+            }
 
-            } else res.end();
+            server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedCompressionAlgorithm);
 
         } catch(error) {
             app.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ", error);
 
             try {
-                backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
+                backend.helper.send(req, res, "Internal Server Error - Incident log was saved.", null, 500);
             } catch {}
         }
-    }
-
-    ServeCache(req, res, cache, errorCode = null){
-        return backend.helper.send(req, res, cache.content, cache.headers, errorCode);
     }
 
     onIPCRequest(segments, req, res){
@@ -707,6 +542,49 @@ const server = new class WebServer extends Units.Module {
         }
     }
 
+    async reload(specific_app, skip_config_refresh){
+        if(specific_app) return this.refreshApp(specific_app);
+
+        if(!skip_config_refresh) backend.refreshConfig();
+
+        const start = performance.now();
+
+        const webConfig = backend.config.getBlock("web");
+        const locations = webConfig.get("locations", Array, []);
+
+        // Looks for valid application locations
+        for(let location of locations){
+            if(location.startsWith("./")) location = backend.path + location.slice(1);
+
+            if(!fs.existsSync(location.replace("/*", ""))) {
+                this.warn("Web application (at " + location + ") does not exist - skipped.");
+                continue;
+            }
+
+            // Handle wildcard (multi) locations
+            if(location.endsWith("*")){
+                let appDirectory = nodePath.normalize(location.slice(0, -1) + "/");
+
+                for(let path of fs.readdirSync(appDirectory)){
+                    path = appDirectory + path;
+
+                    if(!fs.statSync(path).isDirectory() || !fs.existsSync(path + "/app.conf")) continue;
+                    locations.push(path);
+                }
+                continue;
+            }
+
+            if(!fs.statSync(location).isDirectory()) {
+                this.warn("Web application (at " + location + ") is a file - skipped.");
+                continue;
+            }
+
+            this.refreshApp(location);
+        }
+
+        this.log(`${skip_config_refresh? "Loaded": "Reloaded"} ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
+    }
+
     onLoad(){
         // Constants
         const header = backend.config.getBlock("web").get("htmlHeader", String, `<!-- Server-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`) || '';
@@ -723,7 +601,6 @@ const server = new class WebServer extends Units.Module {
         backend.exposeToDebugger("parser", parser);
         this.reload(null, true);
     }
-
 
     // Utility functions
 
@@ -839,52 +716,6 @@ async function files_try_async(...files){
             return file;
         } catch {}
     }
-}
-
-function requestCachedFile(file, group, override = null) {
-    const cache = RequestCache[group || 0];
-
-    let cachedFile = cache.get(file);
-    let mtime = fs.statSync(file).mtimeMs;
-
-    const now = Date.now();
-
-    if (!override && cachedFile
-        && (
-            ((now - cachedFile.updateTimer) < 1000) ||
-            mtime <= cachedFile.lastModifyTime
-        )
-    ) {
-        cachedFile.updateTimer = now;
-        return cachedFile;
-    }
-
-    if (!cachedFile) {
-        cachedFile = {};
-        cache.set(file, cachedFile);
-    }
-
-    cachedFile.lastModifyTime = mtime;
-    cachedFile.refresh = true;
-    cachedFile.updateTimer = now;
-
-    return cachedFile;
-}
-
-function updateCache(file, group, content, headers){
-    const cache = RequestCache[group || 0];
-
-    let cached = cache.get(file);
-
-
-    if(!cached) {
-        // Update the cache
-        cached = requestCachedFile(file, group);
-    }
-
-    cached.content = content;
-    cached.refresh = false;
-    cached.headers = headers;
 }
 
 function checkSupportedBrowser(userAgent, properties) {

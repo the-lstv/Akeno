@@ -24,7 +24,7 @@ const Units = require("akeno:units");
 
 // Global variables
 let
-    version = new Units.Version("1.6.4-beta")
+    version = new Units.Version("1.6.5-beta")
 ;
 
 
@@ -140,10 +140,9 @@ function resolve(res, req) {
     }
 
     res.onAborted(() => {
-        // clearTimeout(timeout)
         req.abort = true;
         res.aborted = true; // Possibly deprecated
-    })
+    });
 
     let handler = domainRouter.match(req.domain) || backend.webServerHandler;
 

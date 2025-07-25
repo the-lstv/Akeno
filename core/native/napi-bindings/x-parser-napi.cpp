@@ -278,7 +278,6 @@ Napi::Value ParserWrapper::fromString(const Napi::CallbackInfo& info) {
     std::string source = info[0].As<Napi::String>().Utf8Value();
     
     Napi::Object ctxObj = info[1].As<Napi::Object>();
-    ParserContext* run = Napi::ObjectWrap<ParserContext>::Unwrap(ctxObj);
 
     std::string result;
     ctx.write(source, &result, &ctxObj);
@@ -298,7 +297,6 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
     Napi::Object ctxObj = info[1].As<Napi::Object>();
 
     std::string appPath;
-    bool nested = false;
 
     Napi::Value dataValue = ctxObj.Get("data");
     if (dataValue.IsObject()) {
@@ -306,11 +304,6 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
         Napi::Value pathValue = dataObj.Get("path");
         if (pathValue.IsString()) {
             appPath = pathValue.As<Napi::String>().Utf8Value();
-        }
-
-        Napi::Value nestedValue = dataObj.Get("nested");
-        if (nestedValue.IsBoolean()) {
-            nested = nestedValue.As<Napi::Boolean>().Value();
         }
     }
 

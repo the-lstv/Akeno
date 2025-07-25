@@ -255,7 +255,7 @@ public:
     }
 
     FileCache& fromFile(std::string filePath, void* userData = nullptr, std::string rootPath = "", bool checkCache = true) {
-        // filePath = std::filesystem::path(filePath).lexically_normal().string();
+        filePath = std::filesystem::path(filePath).lexically_normal().string();
         auto fileModTime = std::filesystem::last_write_time(filePath);
 
         std::cout << "Getting file: " << filePath << std::endl;
