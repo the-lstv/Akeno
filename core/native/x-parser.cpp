@@ -7,6 +7,8 @@
 #include <unordered_set>
 #include <functional>
 #include <memory>
+#include <filesystem>
+#include <unordered_map>
 
 
 /*
@@ -16,7 +18,7 @@
     All rights reserved.
 
     This is the native HTML-like parser used by Akeno for "blazingly" fast HTML parsing for the server.
-    This parser is built with performance being the only thing in mind and it does NOT fully respect the XML/HTML standard!
+    This parser is built with performance being the only thing in mind and it does NOT fully respect the XML/HTML standard (nor is it particularly safe...)!
 
     Note:
     By default, this is not a pure HTML parser, it uses a custom syntax (the xw file format) for web applications.
@@ -34,16 +36,17 @@
     - Attribute values are not disabled for special shorthand cases (eg. .classes, #ids), causing unexpected behavior
     - Safety and edge cases may not be fully covered
 
-    - Attribute parsing isnt implemented properly in the API yet
+    - Attribute parsing isn't implemented properly in the API yet
 
 */
 
-
+// Elements that do not have a closing tag
 std::unordered_set<std::string> voidElements = {
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
     "source", "track", "command", "frame", "param", "wbr"
 };
 
+// Elements that only contain text content
 std::unordered_set<std::string> rawElements = {
     "script", "style", "xmp", "textarea", "title"
 };
@@ -59,8 +62,8 @@ enum HTMLParserState {
     TEMPLATE_PATH
 };
 
-void* empty = nullptr;
 
+void* empty = nullptr;
 
 const std::streamsize MAX_FILE_SIZE = 10 * 1024 * 1024;
 
@@ -109,19 +112,48 @@ public:
     }
 };
 
+
+struct FileCache {
+    std::filesystem::file_time_type lastModified;
+    size_t templateChunkSplit = 0;
+    std::string path;
+    std::string content;
+
+    // FIXME: Would be safer to use path
+    FileCache* templateCache = nullptr;
+
+    FileCache() = default;
+
+    FileCache(const std::string& path, std::filesystem::file_time_type lastModified)
+        : path(path), lastModified(lastModified), templateCache(nullptr) {}
+
+    FileCache(const std::string& path, const std::string& content, std::filesystem::file_time_type lastModified)
+        : path(path), content(content), lastModified(lastModified), templateCache(nullptr) {}
+
+    bool operator==(const FileCache& other) const {
+        return path == other.path;
+    }
+};
+
+
 struct HTMLParsingPosition {
-    std::shared_ptr<std::vector<char>> buffer = nullptr;
+    // std::shared_ptr<std::vector<char>> buffer = nullptr;
     const char* it;
     const char* chunk_end;
     const char* value_start;
-    
+    std::string* output;
+    FileCache* cacheEntry;
+
     HTMLParsingPosition() 
-        : buffer(nullptr), it(nullptr), chunk_end(nullptr), value_start(nullptr) {}
-    
-    HTMLParsingPosition(const char* it, const char* chunk_end, const char* value_start, 
-                        std::shared_ptr<std::vector<char>> buffer = nullptr) 
-        : buffer(buffer), it(it), chunk_end(chunk_end), value_start(value_start) {}
+        : it(nullptr), chunk_end(nullptr), value_start(nullptr), output(nullptr), cacheEntry(nullptr) {}
+
+    HTMLParsingPosition(const char* it, const char* chunk_end, const char* value_start, std::string* output = nullptr, FileCache* cacheEntry = nullptr) 
+        : it(it), chunk_end(chunk_end), value_start(value_start), output(output), cacheEntry(cacheEntry) {}
 };
+
+
+// Global cache map
+static std::unordered_map<std::string, FileCache> fileCache;
 
 class HTMLParsingContext {
 public:
@@ -131,14 +163,14 @@ public:
     
     explicit HTMLParsingContext(HTMLParserOptions& options)
         : options(options) {}
-    
-    explicit HTMLParsingContext(HTMLParserOptions& options, bool nested)
-        : options(options), nested(nested) {}
 
-
-    void write(std::string_view buf, std::string* output = nullptr, void* userData = nullptr, bool templateEnabled = false, std::string rootPath = "") {
-        if (options.buffer && output == nullptr) {
+    void write(std::string_view buf, std::string* _output = nullptr, void* userData = nullptr, std::string rootPath = "") {
+        if (options.buffer && _output == nullptr) {
             throw std::invalid_argument("Output string cannot be undefined when buffer option is enabled.");
+        }
+
+        if (_output) {
+            output = _output;
         }
 
         buffer = buf;
@@ -146,19 +178,159 @@ public:
         chunk_end = buf.data() + buf.size();
         value_start = it;
 
-        this->templateEnabled = templateEnabled;
         this->rootPath = rootPath;
         if(userData) {
             this->userData = userData;
         }
 
-        resume(*output);
+        cacheEntry = nullptr;
+        resume();
     }
 
-    void end(std::string* buffer = nullptr) {
+    bool needsUpdate(std::string filePath) {
+        auto cacheIt = fileCache.find(filePath);
+        if (cacheIt == fileCache.end()) {
+            return true;
+        }
+
+        auto fileModTime = std::filesystem::last_write_time(filePath);
+        if (cacheIt->second.lastModified != fileModTime) {
+            return true;
+        }
+
+        // Check template file modification time if it exists
+        // NOTE: Make sure it gets handled if the template gets deleted
+        if (cacheIt->second.templateCache != nullptr) {
+            auto templateModTime = std::filesystem::last_write_time(cacheIt->second.templateCache->path);
+            if (cacheIt->second.templateCache->lastModified != templateModTime) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // TODO: This *needs* a better implementation
+    std::string exportCopy(const FileCache* cacheEntry) {
+        if (!cacheEntry) return "";
+    
+        // If there's no template, just return the content.
+        if (!cacheEntry->templateCache) return "<!DOCTYPE html>\n" + options.header + "\n<html>" + cacheEntry->content + "</html>";
+    
+        const auto* tmpl = cacheEntry->templateCache;
+        const bool hasSplit = tmpl->templateChunkSplit > 0;
+        const size_t tmplLen = tmpl->content.size();
+        const size_t split = hasSplit ? tmpl->templateChunkSplit : 0;
+    
+        // Pre-calculate the result size for efficiency.
+        size_t resultSize = cacheEntry->content.size() + options.header.size() + 15;
+        if (hasSplit) {
+            resultSize += split; // before split
+            resultSize += tmplLen - split; // after split
+        } else {
+            resultSize += tmplLen;
+        }
+    
+        std::string result = "<!DOCTYPE html>\n" + options.header + "\n<html>";
+
+        result.reserve(resultSize);
+    
+        if (hasSplit) {
+            // Add template before split
+            result.append(tmpl->content, 0, split);
+        } else {
+            // Add whole template
+            result.append(tmpl->content);
+        }
+    
+        // Add main content
+        result.append(cacheEntry->content);
+    
+        if (hasSplit) {
+            // Add template after split
+            result.append(tmpl->content, split, tmplLen - split);
+        }
+    
+        return result + "</html>";
+    }
+
+    FileCache& fromFile(std::string filePath, void* userData = nullptr, std::string rootPath = "", bool checkCache = true) {
+        // filePath = std::filesystem::path(filePath).lexically_normal().string();
+        auto fileModTime = std::filesystem::last_write_time(filePath);
+
+        std::cout << "Getting file: " << filePath << std::endl;
+
+        bool contentCached = true;
+        bool templateCached = true;
+
+        if (checkCache) {
+            auto cacheIt = fileCache.find(filePath);
+            contentCached = cacheIt != fileCache.end() && cacheIt->second.lastModified == fileModTime;
+    
+            if (contentCached && cacheIt->second.templateCache != nullptr) {
+                auto templateModTime = std::filesystem::last_write_time(cacheIt->second.templateCache->path);
+                if (cacheIt->second.templateCache->lastModified != templateModTime) {
+                    templateCached = false;
+
+                    // Only update the template cache
+                    if(contentCached) {
+                        fromFile(cacheIt->second.templateCache->path, userData, rootPath);
+                        return cacheIt->second;
+                    }
+                }
+            }
+
+            if (contentCached && templateCached) {
+                return cacheIt->second;
+            }
+        }
+
+        FileCache newCacheEntry(filePath, fileModTime);
+        auto [insertIt, inserted] = fileCache.emplace(filePath, std::move(newCacheEntry));
+        cacheEntry = &insertIt->second;
+
+        if (!inserted) {
+            cacheEntry->content.clear();
+            cacheEntry->lastModified = fileModTime;
+        }
+
+        std::ifstream file(filePath, std::ios::in | std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            throw std::runtime_error("Unable to open file: " + filePath);
+        }
+
+        std::streamsize size = file.tellg();
+        if (size > MAX_FILE_SIZE) {
+            throw std::runtime_error("File size exceeds the maximum limit of " + std::to_string(MAX_FILE_SIZE) + " bytes.");
+        }
+
+        file.seekg(0, std::ios::beg);
+        std::vector<char> fileBuffer(size);
+        if (!file.read(fileBuffer.data(), size)) {
+            throw std::runtime_error("Error reading file: " + filePath);
+        }
+
+        std::string_view fileContent(fileBuffer.data(), fileBuffer.size());
+
+        output = &cacheEntry->content;
+        it = fileContent.data();
+        chunk_end = fileContent.data() + fileContent.size();
+        value_start = it;
+
+        this->rootPath = rootPath;
+        if (userData) this->userData = userData;
+
+        resume();
+        end();
+
+        std::cout << "Parsed file: " << filePath << std::endl;
+        return *cacheEntry;
+    }
+
+    void end() {
         if(options.onClosingTag) {
             while (!tagStack.empty()) {
-                options.onClosingTag(*buffer, tagStack, tagStack.top(), userData);
+                options.onClosingTag(*output, tagStack, tagStack.top(), userData);
                 tagStack.pop();
             }
         }
@@ -167,82 +339,33 @@ public:
             options.onEnd(userData);
         }
 
-        if(!nested && options.buffer && buffer) {
-            buffer->append("</html>");
-        }
+        // if(options.buffer) {
+        //     output->append("</html>");
+        // }
 
-        state = TEXT;
-        string_char = 0;
-        space_broken = false;
-        flag_appendToClass = false;
-        end_tag = false;
-        class_buffer.clear();
-        body_attributes.clear();
-        rootPath.clear();
-        tagStack = std::stack<std::string_view>();
-        tree = std::stack<HTMLParsingPosition>();
-        template_scope = std::string_view();
-        inside_head = false;
-        is_template = false;
-        is_raw = false;
-        reset = true;
+        resetState();
     }
 
     std::string parse(std::string_view buf) {
         std::string result;
         write(buf, &result);
-        end(&result);
+        end();
         return result;
     }
 
-    void storePosition() {
-        tree.push({ it, chunk_end, value_start, currentBuffer });
-    }
-
-    void treeUp() {
-        if (tree.empty()) {
-            return;
-        }
-
-        HTMLParsingPosition currentPos(it, chunk_end, value_start, currentBuffer);
-        HTMLParsingPosition pos = tree.top();
-        tree.pop();
-        tree.push(currentPos);
-
-        it = pos.it;
-        chunk_end = pos.chunk_end;
-        value_start = pos.value_start;
-        currentBuffer = pos.buffer;
-
-        it --; // We will increment it in the next iteration
-    }
-
-    void restorePosition() {
-        if (tree.empty()) {
-            return;
-        }
-
-        HTMLParsingPosition pos = tree.top();
-        tree.pop();
-
-        it = pos.it;
-        chunk_end = pos.chunk_end;
-        value_start = pos.value_start;
-        currentBuffer = pos.buffer;
-    }
-
-    void resume(std::string& buffer) {
+    void resume() {
         if(reset) {
-            if(!nested && options.buffer && buffer.size() == 0) {
-                buffer = "<!DOCTYPE html>\n" + options.header + "\n<html>";
-                buffer.reserve(buffer.size() + this->buffer.size() + 64);
-            }
-
             if (*it == '#' && (it + 9) < chunk_end && std::string_view(it, 10) == "#template ") {
                 state = TEMPLATE_PATH;
                 it += 9;
                 value_start = it + 1;
             }
+
+            if(options.buffer && output->size() == 0) {
+                // *output = "<!DOCTYPE html>\n" + options.header + "\n<html>";
+                output->reserve(this->buffer.size() + 64);
+            }
+
             reset = false;
         }
 
@@ -282,7 +405,7 @@ public:
 
                 case TEXT:
                     if (*it == '<') {
-                        pushText(buffer);
+                        pushText(*output);
 
                         if ((it + 3) < chunk_end && it[1] == '!' && it[2] == '-' && it[3] == '-') {
                             state = COMMENT;
@@ -304,8 +427,8 @@ public:
                         continue;
                     }
 
-                    if (*it == '{' && (it + 1) < chunk_end && it[1] == '{' && (it == buffer.data() || it[-1] != '\\')) {
-                        pushText(buffer);
+                    if (*it == '{' && (it + 1) < chunk_end && it[1] == '{' && (it == output->data() || it[-1] != '\\')) {
+                        pushText(*output);
 
                         state = INLINE_VALUE;
 
@@ -325,12 +448,12 @@ public:
 
                             if ((it + tagEnd) < chunk_end && it[tagEnd] == '>' && 
                                 std::string_view(it + 2, topTag.size()) == topTag) {
-                                pushText(buffer);
+                                pushText(*output);
 
                                 tagStack.pop();
 
                                 if (options.onClosingTag) {
-                                    options.onClosingTag(buffer, tagStack, topTag, userData);
+                                    options.onClosingTag(*output, tagStack, topTag, userData);
                                 }
 
                                 state = TEXT;
@@ -359,23 +482,25 @@ public:
                         if(!end_tag) {
                             
                             // Handle opening tags
-                            
+
                             std::string_view tag(value_start, it - value_start);
 
-                            if (options.onOpeningTag && !is_template) {
-                                options.onOpeningTag(buffer, tagStack, tag, userData);
+                            render_element = !is_template && tag != "html" && tag != "!DOCTYPE";
+
+                            if (options.onOpeningTag && render_element) {
+                                options.onOpeningTag(*output, tagStack, tag, userData);
                             }
 
                             value_start = it + 1;
                             space_broken = false;
 
                             if (tag == "body" && !body_attributes.empty()) {
-                                buffer.append(" ").append(body_attributes);
+                                output->append(" ").append(body_attributes);
                             }
 
                             if(*it == '>' || *it == '/'){
                                 bool was_template = is_template;
-                                _endTag(buffer);
+                                _endTag();
 
                                 if(was_template) {
                                     continue;
@@ -383,7 +508,7 @@ public:
 
                                 if(*it == '/' && (it + 1) < chunk_end) {
                                     if (options.onClosingTag) {
-                                        options.onClosingTag(buffer, tagStack, tag, userData);
+                                        options.onClosingTag(*output, tagStack, tag, userData);
                                     }
                                     value_start = it + 2;
                                     ++it;
@@ -394,7 +519,7 @@ public:
                                 state = ATTRIBUTE;
                             }
 
-                            if(!is_template && voidElements.find(std::string(tag)) == voidElements.end()) {
+                            if(render_element && voidElements.find(std::string(tag)) == voidElements.end()) {
                                 tagStack.push(tag);
 
                                 if(tag == "head") {
@@ -434,7 +559,7 @@ public:
                         tagStack.pop();
                         
                         if (options.onClosingTag) {
-                            options.onClosingTag(buffer, tagStack, closingTag, userData);
+                            options.onClosingTag(*output, tagStack, closingTag, userData);
                         }
 
                         if(closingTag == "head") {
@@ -447,12 +572,12 @@ public:
                     break;
 
                 case ATTRIBUTE: {
-                    if(is_template) {
+                    if(!render_element) {
                         if(*it == '>') {
                             if (it < chunk_end) {
                                 value_start = it + 1;
                             }
-                            _endTag(buffer);
+                            _endTag();
                             continue;
                         }
                         continue;
@@ -467,9 +592,9 @@ public:
                             std::string_view attribute_view(value_start, it - value_start);
                             
                             if (attribute_view[0] == '#') {
-                                buffer.append(" id=\"");
-                                buffer.append(attribute_view.substr(1));
-                                buffer.append("\"");
+                                output->append(" id=\"");
+                                output->append(attribute_view.substr(1));
+                                output->append("\"");
                             } else if (attribute_view[0] == '.') {
                                 if(!class_buffer.empty()) {
                                     class_buffer.append(" ");
@@ -481,8 +606,8 @@ public:
                             } else if (attribute_view == "class") {
                                 flag_appendToClass = true;
                             } else {
-                                buffer.append(" ");
-                                buffer.append(attribute_view);
+                                output->append(" ");
+                                output->append(attribute_view);
                             }
                         }
 
@@ -500,9 +625,9 @@ public:
                             while(it < chunk_end && !(*it == '}' && (it + 1) < chunk_end && it[1] == '}')) ++it;
 
                             if(options.buffer && (it > value_start)){
-                                buffer.append(" data-reactive=\"");
-                                buffer.append(trim(std::string_view(value_start, it - value_start)));
-                                buffer.append("\"");
+                                output->append(" data-reactive=\"");
+                                output->append(trim(std::string_view(value_start, it - value_start)));
+                                output->append("\"");
                             }
 
                             it += 2;
@@ -515,7 +640,7 @@ public:
                             if (it < chunk_end) {
                                 value_start = it + 1;
                             }
-                            _endTag(buffer);
+                            _endTag();
                             continue;
                         }
 
@@ -526,9 +651,9 @@ public:
                                 value_start = it + 1;
                             }
 
-                            _endTag(buffer);
+                            _endTag();
                             if (options.onClosingTag && !tagStack.empty()) {
-                                options.onClosingTag(buffer, tagStack, tagStack.top(), userData);
+                                options.onClosingTag(*output, tagStack, tagStack.top(), userData);
                                 tagStack.pop();
                             }
                             continue;
@@ -569,10 +694,10 @@ public:
                             } else {
                                 char quote = value.find('\'') != std::string_view::npos ? '"' : '\'';
 
-                                buffer.append("=");
-                                buffer.append(1, quote);
-                                buffer.append(value);
-                                buffer.append(1, quote);
+                                output->append("=");
+                                output->append(1, quote);
+                                output->append(value);
+                                output->append(1, quote);
                             }
                         }
 
@@ -580,7 +705,7 @@ public:
                             if (it < chunk_end) {
                                 value_start = it + 1;
                             }
-                            _endTag(buffer);
+                            _endTag();
                             continue;
                         }
 
@@ -599,7 +724,7 @@ public:
                             // Handle inline values
 
                             if (options.onInline) {
-                                options.onInline(buffer, tagStack, rtrim(std::string_view(value_start, it - value_start)), userData);
+                                options.onInline(*output, tagStack, rtrim(std::string_view(value_start, it - value_start)), userData);
                             }
 
                         }
@@ -619,36 +744,24 @@ public:
                         value_start = it + 1;
                         state = TEXT;
 
-                        if (templateEnabled) {
+                        if (templateEnabled && !templatePath.empty() && cacheEntry) {
                             std::string templateFile = rootPath + std::string(templatePath);
 
-
-                            std::ifstream file(templateFile, std::ios::in | std::ios::binary | std::ios::ate);
-                            if (file.is_open()) {
-                                std::streamsize size = file.tellg();
-
-                                if (size <= MAX_FILE_SIZE) {
-                                    file.seekg(0, std::ios::beg);
-
-                                    auto templateBuffer = std::make_shared<std::vector<char>>(size);
-
-                                    if (file.read(templateBuffer->data(), size)) {
-                                        storePosition();
-
-                                        // Switch to template buffer
-                                        std::string_view templateView(templateBuffer->data(), templateBuffer->size());
-
-                                        // To make sure the buffer isn't freed
-                                        currentBuffer = templateBuffer;
-                                        it = templateView.data();
-                                        value_start = it;
-                                        chunk_end = templateView.data() + templateView.size();
-
-                                        it --; // We will increment it in the next iteration
-                                        continue;
-                                    }
-                                }
+                            try {
+                                HTMLParsingPosition originalPosition = storePosition();
+                                FileCache& templateCacheEntry = fromFile(templateFile, userData, rootPath);
+                                restorePosition(originalPosition);
+                                cacheEntry->templateCache = &templateCacheEntry;
+                            } catch (const std::filesystem::filesystem_error& e) {
+                                std::cerr << "Error accessing template file: " << e.what() << std::endl;
                             }
+
+                            // if (cacheEntry->templateChunkSplit > 0) {
+                            //     output->append(cacheEntry->content, 0, cacheEntry->templateChunkSplit);
+                            // } else {
+                            //     // Otherwise, append the whole content
+                            //     output->append(cacheEntry->content);
+                            // }
                         }
                     }
                     break;
@@ -656,43 +769,52 @@ public:
         }
 
         if(state == TEXT) {
-            pushText(buffer);
+            pushText(*output);
         }
 
-        if(tree.size() > 0) {
-            restorePosition();
-            resume(buffer);
-        }
+        // if(cacheEntry->templateChunkSplit && !inside_template_file) {
+        //     output->append(cacheEntry->content, cacheEntry->templateChunkSplit, cacheEntry->content.size() - cacheEntry->templateChunkSplit);
+        // }
     }
 
-    void inlineFile(std::string filePath, std::string* output) {
+    /**
+     * Inline a file into the current parsing location, treating it as if it were part of the current context.
+     * Be cautious with this, as the state does not get reset.
+     */
+    void inlineFile(std::string filePath) {
         std::ifstream file(filePath, std::ios::in | std::ios::binary | std::ios::ate);
         if (!file.is_open()) {
-            return;
+            throw std::runtime_error("Failed to open file: " + filePath);
         }
     
         std::streamsize size = file.tellg();
         if (size > MAX_FILE_SIZE) {
-            return;
+            throw std::runtime_error("File size exceeds maximum allowed size: " + filePath);
         }
     
         file.seekg(0, std::ios::beg);
         std::vector<char> buffer(size);
         if (!file.read(buffer.data(), size)) {
-            return;
+            throw std::runtime_error("Failed to read file: " + filePath);
         }
     
-        HTMLParsingContext ctx(options, true);
-        ctx.write(std::string_view(buffer.data(), buffer.size()), output, &userData);
-        ctx.end(output);
+        std::string_view fileContent(buffer.data(), size);
+
+        HTMLParsingPosition pos = storePosition();
+        HTMLParsingPosition newPos(fileContent.data(), fileContent.data() + fileContent.size(), fileContent.data(), output);
+        restorePosition(newPos);
+        resume();
+        restorePosition(pos);
     }
 
     std::stack<std::string_view> tagStack;
-    std::stack<HTMLParsingPosition> tree;
+    // std::stack<HTMLParsingPosition> tree;
 
     std::string body_attributes;
     bool inside_head = false;
-    bool nested = false;
+    bool templateEnabled = false;
+
+    std::string* output;
 
 private:
     void* userData = nullptr;
@@ -703,20 +825,19 @@ private:
 
     bool reset = true;
 
-    std::string_view buffer;
-    std::string rootPath;
-
-    HTMLParserState state = TEXT;
-
-    bool templateEnabled = false;
-
-    std::shared_ptr<std::vector<char>> currentBuffer = nullptr;
-
     bool end_tag = false;
     bool space_broken = false;
     bool flag_appendToClass = false;
     bool is_template = false;
     bool is_raw = false;
+    bool render_element = true;
+
+    HTMLParserState state = TEXT;
+
+    std::string_view buffer;
+    std::string rootPath;
+
+    FileCache* cacheEntry = nullptr;
 
     void pushText(std::string& buffer) {
         if(options.onText && !(it - value_start == 0)){
@@ -736,7 +857,7 @@ private:
 
     HTMLParserOptions& options;
 
-    void _endTag(std::string& buffer) {
+    void _endTag() {
         state = is_raw? RAW_ELEMENT: TEXT;
 
         if(is_template) {
@@ -745,24 +866,24 @@ private:
             template_scope = std::string_view();
             is_template = false;
 
-            if(current_template_scope == "template") {
-                treeUp();
+            if(current_template_scope == "template" && cacheEntry) {
+                cacheEntry->templateChunkSplit = output->size();
                 return;
             } else {
                 // TODO:
-                buffer.append("#template ").append(current_template_scope).append("\n");
+                output->append("#template ").append(current_template_scope).append("\n");
             }
 
             return;
         }
     
-        if(options.buffer) {
+        if(options.buffer && render_element) {
             if(!class_buffer.empty()) {
-                buffer.append(" class=\"").append(class_buffer).append("\"");
+                output->append(" class=\"").append(class_buffer).append("\"");
                 class_buffer.clear();
             }
 
-            buffer.append(">");
+            output->append(">");
         }
     }
 
@@ -787,5 +908,38 @@ private:
         }
 
         return s.substr(start, end - start + 1);
+    }
+
+    void resetState() {
+        end_tag = false;
+        space_broken = false;
+        flag_appendToClass = false;
+        is_template = false;
+        is_raw = false;
+        render_element = true;
+        state = TEXT;
+        string_char = 0;
+        class_buffer.clear();
+        body_attributes.clear();
+        tagStack = std::stack<std::string_view>();
+        template_scope = std::string_view();
+        inside_head = false;
+
+        reset = true;
+    }
+
+    // Just used to keep the current buffer alive
+    // std::shared_ptr<std::vector<char>> currentBuffer = nullptr;
+
+    HTMLParsingPosition storePosition() {
+        return HTMLParsingPosition(it, chunk_end, value_start, output, cacheEntry);
+    }
+
+    void restorePosition(HTMLParsingPosition& pos) {
+        it = pos.it;
+        chunk_end = pos.chunk_end;
+        value_start = pos.value_start;
+        output = pos.output;
+        cacheEntry = pos.cacheEntry;
     }
 };

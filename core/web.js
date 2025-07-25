@@ -120,7 +120,7 @@ class WebApp extends Units.App {
         const full = nodePath.join(root, relative);
 
         // Extra safety check, while it should already be safe, better to be extra safe.
-        if(!full.startsWith(root + nodePath.sep)) {
+        if(!full.startsWith(root)) {
             return { full, relative: nodePath.sep, useRootPath: true };
         }
 
@@ -529,8 +529,11 @@ const server = new class WebServer extends Units.Module {
             // Get suggested compression algorithm
             const suggestedCompressionAlgorithm = FilesWithDisabledCompression.has(file)? backend.compression.format.NONE: backend.helper.getUsedCompression(req, mimeType);
 
+            // TODO:FIXME: The current template/doc cache system is a bit messy and inefficient, will need to be reworked later
+            const cacheOverride = extension === "html"? parser.needsUpdate(file): false;
+
             // Check if the file has not been changed since
-            const cache = requestCachedFile(file, suggestedCompressionAlgorithm);
+            const cache = requestCachedFile(file, suggestedCompressionAlgorithm, cacheOverride);
 
             // If we have the cached file and headers, serve it
             if(!cache.refresh && cache.headers) {
@@ -556,7 +559,7 @@ const server = new class WebServer extends Units.Module {
 
             if(suggestedCompressionAlgorithm !== backend.compression.format.NONE) {
                 // If the uncompressed content is up-to-date, update the compression cache instead of generating again
-                const uncompressedCache = requestCachedFile(file, backend.compression.format.NONE);
+                const uncompressedCache = requestCachedFile(file, backend.compression.format.NONE, cacheOverride);
 
                 if(!uncompressedCache.refresh && uncompressedCache.content) {
                     content = uncompressedCache.content;
@@ -838,16 +841,15 @@ async function files_try_async(...files){
     }
 }
 
-function requestCachedFile(file, group){
+function requestCachedFile(file, group, override = null) {
     const cache = RequestCache[group || 0];
 
     let cachedFile = cache.get(file);
     let mtime = fs.statSync(file).mtimeMs;
 
-    // Use a single Date.now() call for performance
     const now = Date.now();
 
-    if(cachedFile
+    if (!override && cachedFile
         && (
             ((now - cachedFile.updateTimer) < 1000) ||
             mtime <= cachedFile.lastModifyTime
@@ -857,7 +859,7 @@ function requestCachedFile(file, group){
         return cachedFile;
     }
 
-    if(!cachedFile) {
+    if (!cachedFile) {
         cachedFile = {};
         cache.set(file, cachedFile);
     }
@@ -1099,7 +1101,7 @@ function initParser(header){
 
             case "page":
                 if(parent !== "head") {
-                    this.data.app.warn("Error: @page can only be used in <head>.");
+                    this.data.app.warn("Error: @page can only be used in <head>, instead was found in <" + parent + ">.");
                     break
                 }
 

@@ -549,7 +549,7 @@ const backend = {
                 case backend.compression.format.BROTLI:
                     return zlib.brotliCompressSync(buffer, {
                         params: {
-                            [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
+                            [zlib.constants.BROTLI_PARAM_QUALITY]: 5,
                             [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT
                         }
                     });

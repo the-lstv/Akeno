@@ -42,7 +42,7 @@ int main() {
         // ctx.parse(code);
         std::string result;
         ctx.write(code, &result);
-        ctx.end(&result);
+        ctx.end();
         iterations++;
     }
 

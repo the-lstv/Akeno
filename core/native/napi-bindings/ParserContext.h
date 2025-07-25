@@ -13,7 +13,6 @@ public:
     static void Init(Napi::Env env, Napi::Object exports);
     ParserContext(const Napi::CallbackInfo& info);
 
-    std::string* result;
     std::string* head;
 
 private:
