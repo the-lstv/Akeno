@@ -5,6 +5,7 @@
 - Rework many parts, including the CLI, dynamic content, and the router
 - Write a proper documentation
 - Add a proper installation script
+- ! Stop relying on napi and use v8 directly
 
 
 ## New in 1.6.5-beta

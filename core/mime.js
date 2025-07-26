@@ -68,6 +68,6 @@ module.exports = {
      */
     getExtension(mimetype){
         if(!loaded) load();
-        return extensions.get(mimetype) || null;
+        return extensions.get(mimetype) || [];
     }
 }

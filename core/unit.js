@@ -379,6 +379,7 @@ const Manager = {
         return modules.get(name) || addons.get(name) || null;
     },
 
+    // TODO: Enhance
     loadAddon(path){
         if(fs.statSync(path).isDirectory() && fs.existsSync(path + "/addon.json")){
             const addonConfig = JSON.parse(fs.readFileSync(path + "/addon.json", "utf8"));
@@ -519,28 +520,32 @@ class Unit {
 
     send(message){ }
 
-    writeLog(level, data){
-        backend.writeLog(data, level, this);
+    writeLog(level, ...data){
+        backend.writeLog(level, this, ...data);
     }
 
     verbose(...data){
-        backend.writeLog(data, 1, this);
+        backend.writeLog(1, this, ...data);
     }
 
     log(...data){
-        backend.writeLog(data, 2, this);
+        backend.writeLog(2, this, ...data);
     }
 
     warn(...data){
-        backend.writeLog(data, 3, this);
+        backend.writeLog(3, this, ...data);
     }
 
     error(...data){
-        backend.writeLog(data, 4, this);
+        backend.writeLog(4, this, ...data);
     }
 
     fatal(...data){
-        backend.writeLog(data, 5, this);
+        backend.writeLog(5, this, ...data);
+    }
+
+    info(...data){
+        backend.writeLog(0, this, ...data);
     }
 }
 

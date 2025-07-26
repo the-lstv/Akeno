@@ -21,11 +21,13 @@ const doNotCompress = [
 ];
 
 const cacheControl = {
-    html: "15",
+    html: "5",
     js: "604800",
     css: "604800",
     default: "50000"
 };
+
+const decoder = new TextDecoder("utf-8");
 
 // const errorTemplate = backend.stringTemplate `{"success":false,"code":${"code"},"error":${"error"}}`;
 
@@ -81,17 +83,21 @@ module.exports = {
      * @param {object} req - The request object.
      * @param {object} res - The response object.
      * @param {boolean} [credentials=false] - Whether to allow credentials.
+     * 
      * @returns {object} The backend helper object.
      */
     corsHeaders(req, res, credentials = false) {
-        if(backend.trustedOrigins.has(req.origin)){
-            credentials = true
-        }
-        
+        // TODO: Better and more flexible CORS handling.
+        // const trusted = backend.trustedOrigins.has(req.origin);
+
         res.cork(() => {
             res.writeHeader('X-Powered-By', 'Akeno Server/' + backend.version);
 
             if(credentials){
+                if(!backend.trustedOrigins.has(req.origin)) {
+                    throw new Error(`Can't allow credintals for ${req.origin} because it is not on the trusted list`);
+                }
+
                 res.writeHeader("Access-Control-Allow-Credentials", "true");
                 res.writeHeader("Access-Control-Allow-Origin", req.origin);
                 res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
@@ -103,12 +109,11 @@ module.exports = {
             res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,DELETE,OPTIONS");
 
             if(backend.protocols.h3.enabled){
-                // EXPERIMENTAL: add alt-svc header for HTTP3
-                res.writeHeader("alt-svc", `h3=":${H3Port}"`)
+                res.writeHeader("alt-svc", `h3=":${backend.protocols.h3.ports[0]}"; ma=86400`);
             }
         })
-            
-        return backend.helper
+
+        return backend.helper;
     },
 
 
@@ -125,20 +130,19 @@ module.exports = {
         if(req.abort) return;
 
         if(data !== undefined && (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof Buffer)) || Array.isArray(data)) {
-            headers["content-type"] = backend.helper.types["json"];    
+            if(!headers["Content-Type"]) headers["Content-Type"] = "application/json";
             data = JSON.stringify(data);
         }
 
         res.cork(() => {
-            res.writeStatus(status || "200 OK")
+            res.writeStatus(status || "200 OK");
 
             if(req.begin) {
-                res.writeHeader("server-timing", `generation;dur=${performance.now() - req.begin}`)
+                res.writeHeader("server-timing", `generation;dur=${performance.now() - req.begin}`);
             }
 
-            backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers)
-
-            if(data !== undefined) res.end(data)
+            backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers);
+            if(data !== undefined) res.end(data);
         });
     },
 
@@ -184,7 +188,7 @@ module.exports = {
     sendCompressed(req, res, buffer, mimeType, headers = {}, status, compressionAlgorithm){
         if(req.abort) return;
 
-        if(!headers["content-type"]) headers["content-type"] = mimeType;
+        if(!headers["Content-Type"]) headers["Content-Type"] = mimeType;
 
         // Perform code compression
         if(typeof buffer === "string") switch(mimeType){
@@ -218,7 +222,7 @@ module.exports = {
         }
 
         buffer = backend.compression.compress(buffer, algorithm);
-        headers["content-encoding"] = {
+        headers["Content-Encoding"] = {
             [backend.compression.format.BROTLI]: "br",
             [backend.compression.format.GZIP]: "gzip",
             [backend.compression.format.DEFLATE]: "deflate"
@@ -391,7 +395,7 @@ module.exports = {
          * @constructor
          * 
          * File cache structure:
-         * [[content, headers, lastUpdated, lastModified, cacheBreaker, extension, mimeType, path], [compressedContent, compressedHeaders], ...]
+         * [[content, headers, lastChecked, lastModified, cacheBreaker, extension, mimeType, path], [compressedContent, compressedHeaders], ...]
          * 
          * @example
          * // You can use it as a simple static file manager:
@@ -410,8 +414,8 @@ module.exports = {
 
             this.onMissing = typeof onMissing === "function"? onMissing: (req, res, path, status) => {
                 backend.helper.send(req, res, "Not Found", {
-                    "content-type": "text/plain",
-                    "cache-control": "public, max-age=60"
+                    "Content-Type": "text/plain",
+                    "Cache-Control": "public, max-age=60"
                 }, status || "404");
             };
 
@@ -500,7 +504,7 @@ module.exports = {
 
             file[0][1] = headers || {};
             file[0][1]["ETag"] = `"${stats.mtimeMs.toString(36)}"`;
-            file[0][1]["Cache-Control"] = "public, max-age=" + (this.cacheControl[extension] || this.cacheControl.default);
+            if(!file[0][1]["Cache-Control"]) file[0][1]["Cache-Control"] = "public, max-age=" + (this.cacheControl[extension] || this.cacheControl.default);
             file[0][1]["Content-Type"] = mimeType;
             file[0][1]["X-Content-Type-Options"] = "nosniff";
             file[0][1]["Connection"] = "keep-alive";
@@ -532,6 +536,38 @@ module.exports = {
             };
         }
 
+        setMetadata(path, metadata) {
+            path = this.resolvePath(path);
+
+            const file = this.cache.get(path);
+            if (!file) {
+                throw new Error('Cache entry does not exist: ' + path);
+            }
+
+            if (metadata.content) file[0][0] = metadata.content;
+            if (metadata.headers) file[0][1] = { ...file[0][1], ...metadata.headers };
+            if (metadata.lastChecked) file[0][2] = metadata.lastChecked;
+            if (metadata.lastModified) file[0][3] = metadata.lastModified;
+            if (metadata.cacheBreaker) file[0][4] = metadata.cacheBreaker;
+
+            if (metadata.extension) {
+                file[0][5] = metadata.extension;
+                file[0][6] = backend.mime.getType(metadata.extension);
+                file[0][1]["Content-Type"] = file[0][6];
+            } else if (metadata.mimeType) {
+                file[0][5] = backend.mime.getExtension(metadata.mimeType)[0];
+                file[0][6] = metadata.mimeType;
+                file[0][1]["Content-Type"] = metadata.mimeType;
+            }
+        }
+
+        delete(path) {
+            path = this.resolvePath(path);
+            if (this.cache.has(path)) {
+                this.cache.delete(path);
+            }
+        }
+
         /**
          * Serves a cached file or processes it if not cached.
          * @param {object} req - The request object.
@@ -544,7 +580,7 @@ module.exports = {
 
             let cache = this.cache.get(path), suggestedCompressionAlgorithm;
 
-            if (!cache) {
+            if (!cache || this.cacheDisabled) {
                 if (this.automatic) {
                     // sigh.
                     suggestedCompressionAlgorithm = backend.helper.getUsedCompression(req, backend.mime.getType(nodePath.extname(path).slice(1)));
@@ -702,9 +738,9 @@ module.exports = {
             this.requests = new Map();
         }
 
-        check(req) {
+        check(req, res) {
             const now = Date.now();
-            const key = req.connectionID || req.getHeader("x-forwarded-for") || req.getHeader("remote-addr") || "anonymous";
+            const key = backend.helper.getRequestIP(res) || req.getHeader("x-forwarded-for") || "anonymous";
 
             if (!this.requests.has(key)) {
                 this.requests.set(key, []);
@@ -726,7 +762,7 @@ module.exports = {
         }
 
         pass(req, res) {
-            if (this.check(req)) {
+            if (this.check(req, res)) {
                 return true;
             }
 
@@ -739,5 +775,14 @@ module.exports = {
         reset(key) {
             this.requests.delete(key);
         }
+    },
+
+    /**
+     * Returns the request IP address.
+     * @param {object} res - The response (yes, not request) object.
+     * @returns {string} The request IP address.
+     */
+    getRequestIP(res) {
+        return decoder.decode(res.getRemoteAddressAsText());
     }
 }

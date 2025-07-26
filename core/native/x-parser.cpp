@@ -258,8 +258,6 @@ public:
         filePath = std::filesystem::path(filePath).lexically_normal().string();
         auto fileModTime = std::filesystem::last_write_time(filePath);
 
-        std::cout << "Getting file: " << filePath << std::endl;
-
         bool contentCached = true;
         bool templateCached = true;
 
@@ -322,8 +320,6 @@ public:
 
         resume();
         end();
-
-        std::cout << "Parsed file: " << filePath << std::endl;
         return *cacheEntry;
     }
 

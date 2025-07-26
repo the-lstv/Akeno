@@ -34,7 +34,7 @@ const
     fs = require("node:fs"),                              // File system
     uws = require('uWebSockets.js'),                      // uWebSockets
     uuid = (require("uuid")).v4,                          // UUIDv4
-    fastJson = require("fast-json-stringify"),            // Fast JSON serializer
+    // fastJson = require("fast-json-stringify"),            // Fast JSON serializer
     { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),  // XXHash
 
     MimeTypes = require("akeno:mime"),                    // MIME types
@@ -49,15 +49,15 @@ const
 
     // Compression
     zlib = require("node:zlib"),                          // Gzip compression
-    CleanCSS = new (require('clean-css')),                // CSS minifier
-    UglifyJS = require("uglify-js"),                      // JS minifier
 
     // - Database
     KeyStorage = require("./core/kvdb"),                  // Key-value database (WARNING: will soon be deprecated)
 
     // Local modules
     { Server: IPCServer } = require("./core/ipc"),        // IPC server
-    { parse, configTools } = require("./core/parser")     // Parser
+    { parse, configTools } = require("./core/parser"),    // Parser
+
+    native = require("./core/native/dist/akeno-native")   // Native bindings
 ;
 
 
@@ -152,6 +152,20 @@ function resolve(res, req) {
     }
 
     if(typeof handler === "object"){
+        if(handler instanceof Router.PathMatcher){
+            handler = handler.match(req.path);
+
+            if (!handler) {
+                res.writeStatus("404 Not Found").end("404 Not Found");
+                return;
+            }
+
+            if(typeof handler === "function"){
+                handler(req, res);
+                return;
+            }
+        }
+
         if(typeof handler.onRequest === "function"){
             handler.onRequest(req, res);
             return;
@@ -177,15 +191,26 @@ const backend = {
     mime: MimeTypes,
 
     db,
+    native,
 
     jwt: {
         verify(something, options){
-            return jwt.verify(something, JWT_KEY, options)
+            return jwt.verify(something, JWT_KEY, options);
         },
 
         sign(something, options){
-            return jwt.sign(something, JWT_KEY, options)
+            return jwt.sign(something, JWT_KEY, options);
         }
+    },
+
+    bcrypt: {
+        hash(something, saltRounds = 10, callback = null){
+            return bcrypt.hash(something, saltRounds, callback);
+        },
+
+        compare(something, hash, callback = null){
+            return bcrypt.compare(something, hash, callback);
+        },
     },
 
     exposeToDebugger(key, item){
@@ -590,11 +615,17 @@ const backend = {
             if(!db.compressionCache.has(hash)){
                 switch(format){
                     case backend.compression.format.JS:
-                        compressed = UglifyJS.minify(data).code;
+                        if(!backend._UglifyJS) {
+                            backend._UglifyJS = require("uglify-js");
+                        }
+                        compressed = backend._UglifyJS.minify(data).code;
                         break;
 
                     case backend.compression.format.CSS:
-                        compressed = CleanCSS.minify(data).styles;
+                        if(!backend._CleanCSS) {
+                            backend._CleanCSS = new (require('clean-css'))();
+                        }
+                        compressed = backend._CleanCSS.minify(data).styles;
                         break;
 
                     case backend.compression.format.JSON:
@@ -696,46 +727,21 @@ const backend = {
         502: "Bad gateway.",
     },
 
-    _console: {
-        log: console.log,
-        warn: console.warn,
-        error: console.error,
-        debug: console.debug
-    },
-
     /**
-     * Logs messages to the console with different log levels, colors, and sources.
+     * Logs messages to the console with configured formatting and levels, using the native logger.
      *
-     * @param {string|any[]} data - The log message(s) as a string or an array of values to output.
      * @param {number} [level=2] - The log level (0: Debug, 1: Info (Verbose), 2: Info, 3: Warning, 4: Error, 5: Fatal).
      * @param {string} [source="api"] - The source of the log message.
+     * @param {...any} data - The data to log. Can be a string, object, or any other type.
      *
      * @example
      * writeLog(['User created successfully'], 1, 'user-service');
      */
-    writeLog(data, level = 2, source = "api"){
+    writeLog(level = 2, source = "api", ...data) {
         if(level < (5 - backend.logLevel)) return;
-
-        const color = level >= 4 ? "1;31" : level === 3 ? "1;33" : "36";
-        const consoleFunction = backend._console[level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log"];
-        const sourceName = typeof source === "string" ? source : source?.name || "unknown";
-
-        if(!backend._fancyLogEnabled) {
-            consoleFunction(`[${sourceName}]`, ...data);
-            return;
-        }
-
-        const tag = `${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`;
-
-        if(!Array.isArray(data)){
-            data = [data];
-        }
-
-        consoleFunction(tag, ...data.map(item => {
-            if (typeof item === "string") {
-                return item.replaceAll("\n", "\n" + " ".repeat(sourceName.length - 1) + "\x1b[90m⤷\x1b[0m   ");
-            }
-            return item;
+        return backend.native.writeLog(level, typeof source === "string" ? source : source?.name || "unknown", ...data.map(item => {
+            if(typeof item === "string") return item;
+            return String(item);
         }));
     },
 

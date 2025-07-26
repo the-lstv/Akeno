@@ -15,8 +15,6 @@ let
     nodePath = require("path"),
     uws = require('uWebSockets.js'),
 
-    WebNative = require("./native/dist/akeno-web"),
-
     parser, // Will be defined later
     parserContext,
 
@@ -261,7 +259,7 @@ class WebApp extends Units.App {
                 continue
             }
 
-            this.modules.set(name, module)
+            this.modules.set(name, module);
         }
 
         this.loaded = true;
@@ -308,6 +306,20 @@ class WebApp extends Units.App {
 
                 for(const pattern of route.attributes){
                     this.routeMatcher.add(pattern, to);                    
+                }
+            }
+        }
+
+        this._hasAttribs = this.config.data.has("location");
+        if(this._hasAttribs) {
+            if(!this.pathMatcher) this.pathMatcher = new PathMatcher();
+            this.pathMatcher.clear();
+
+            for(const route of this.config.getBlocks("location")){
+                for(const pattern of route.attributes){
+                    console.log(route.properties);
+                    
+                    this.pathMatcher.add(pattern, route.properties);
                 }
             }
         }
@@ -405,6 +417,17 @@ const server = new class WebServer extends Units.Module {
                     }
 
                     url = route.charCodeAt(0) === 47 ? route : "/" + route;
+                }
+            }
+
+            // Path attributes
+            if(app._pathMatcher) {
+                let route = app.pathMatcher.match(url);
+                if(route) {
+                    if(route.deny) {
+                        backend.helper.send(req, res, "Access denied.", null, "403 Forbidden");
+                        return;
+                    }
                 }
             }
 
@@ -762,7 +785,7 @@ const ls_components = {
 };
 
 function initParser(header){
-    parser = new WebNative.parser({
+    parser = new backend.native.parser({
         header,
         buffer: true,
         compact: backend.compression.enabled,
@@ -789,7 +812,7 @@ function initParser(header){
 
     parserContext = parser.createContext();
 
-    WebNative.context.prototype.onBlock = function(block){
+    backend.native.context.prototype.onBlock = function(block){
         const parent = this.getTagName();
 
         switch(block.name) {
