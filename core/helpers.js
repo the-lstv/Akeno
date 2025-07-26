@@ -4,6 +4,8 @@
  */
 
 const backend = require("akeno:backend");
+const nodePath = require("node:path");
+const fs = require("node:fs");
 
 /**
  * List of MIME types that should not be compressed.
@@ -17,6 +19,15 @@ const doNotCompress = [
     'application/octet-stream',
     'application/pdf'
 ];
+
+const cacheControl = {
+    html: "5",
+    js: "604800",
+    css: "604800",
+    default: "50000"
+};
+
+const decoder = new TextDecoder("utf-8");
 
 // const errorTemplate = backend.stringTemplate `{"success":false,"code":${"code"},"error":${"error"}}`;
 
@@ -72,17 +83,21 @@ module.exports = {
      * @param {object} req - The request object.
      * @param {object} res - The response object.
      * @param {boolean} [credentials=false] - Whether to allow credentials.
+     * 
      * @returns {object} The backend helper object.
      */
     corsHeaders(req, res, credentials = false) {
-        if(backend.trustedOrigins.has(req.origin)){
-            credentials = true
-        }
-        
+        // TODO: Better and more flexible CORS handling.
+        // const trusted = backend.trustedOrigins.has(req.origin);
+
         res.cork(() => {
             res.writeHeader('X-Powered-By', 'Akeno Server/' + backend.version);
 
             if(credentials){
+                if(!backend.trustedOrigins.has(req.origin)) {
+                    throw new Error(`Can't allow credintals for ${req.origin} because it is not on the trusted list`);
+                }
+
                 res.writeHeader("Access-Control-Allow-Credentials", "true");
                 res.writeHeader("Access-Control-Allow-Origin", req.origin);
                 res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
@@ -94,12 +109,11 @@ module.exports = {
             res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,DELETE,OPTIONS");
 
             if(backend.protocols.h3.enabled){
-                // EXPERIMENTAL: add alt-svc header for HTTP3
-                res.writeHeader("alt-svc", `h3=":${H3Port}"`)
+                res.writeHeader("alt-svc", `h3=":${backend.protocols.h3.ports[0]}"; ma=86400`);
             }
         })
-            
-        return backend.helper
+
+        return backend.helper;
     },
 
 
@@ -116,32 +130,31 @@ module.exports = {
         if(req.abort) return;
 
         if(data !== undefined && (typeof data !== "string" && !(data instanceof ArrayBuffer) && !(data instanceof Uint8Array) && !(data instanceof Buffer)) || Array.isArray(data)) {
-            headers["content-type"] = backend.helper.types["json"];    
+            if(!headers["Content-Type"]) headers["Content-Type"] = "application/json";
             data = JSON.stringify(data);
         }
 
         res.cork(() => {
-            res.writeStatus(status || "200 OK")
+            res.writeStatus(status || "200 OK");
 
             if(req.begin) {
-                res.writeHeader("server-timing", `generation;dur=${performance.now() - req.begin}`)
+                res.writeHeader("server-timing", `generation;dur=${performance.now() - req.begin}`);
             }
 
-            backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers)
-
-            if(data !== undefined) res.end(data)
+            backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers);
+            if(data !== undefined) res.end(data);
         });
     },
 
 
-    getUsedCompression(req, mimeType){
+    getUsedCompression(acceptEncoding, mimeType){
         if(!backend.compression.enabled) return backend.compression.format.NONE;
 
         if(mimeType && doNotCompress.some(type => mimeType.startsWith(type))) {
             return backend.compression.format.NONE;
         }
 
-        const enc = req.getHeader("accept-encoding");
+        const enc = typeof acceptEncoding === "string"? acceptEncoding: acceptEncoding.getHeader("accept-encoding");
 
         if(!enc) {
             return backend.compression.format.NONE;
@@ -175,7 +188,7 @@ module.exports = {
     sendCompressed(req, res, buffer, mimeType, headers = {}, status, compressionAlgorithm){
         if(req.abort) return;
 
-        headers["content-type"] = mimeType;
+        if(!headers["Content-Type"]) headers["Content-Type"] = mimeType;
 
         // Perform code compression
         if(typeof buffer === "string") switch(mimeType){
@@ -209,7 +222,7 @@ module.exports = {
         }
 
         buffer = backend.compression.compress(buffer, algorithm);
-        headers["content-encoding"] = {
+        headers["Content-Encoding"] = {
             [backend.compression.format.BROTLI]: "br",
             [backend.compression.format.GZIP]: "gzip",
             [backend.compression.format.DEFLATE]: "deflate"
@@ -365,6 +378,267 @@ module.exports = {
         });
     },
 
+    cacheControl,
+
+    FileServer: class {
+        /**
+         * File server with cache and compression support.
+         * Can be used both for manually serving files or as a complete file server.
+         * @param {object} options Options for the cache mapper.
+         * @param {function} [options.fileProcessor] - Function to process files before caching.
+         * @param {function} [options.onMissing] - Function to call when a file is not found.
+         * @param {object} [options.cacheControl] - Cache control settings.
+         * @param {boolean} [options.enableCompression] - If set to true, files will be compressed when served.
+         * @param {boolean} [options.automatic] - If set to true, files will be automatically read and cached based on the request URL, even if they weren't added manually.
+         * @param {string} [options.root] - Root directory for the cache, appended to all paths or for automatic serving.
+         * @memberof backend.helper
+         * @constructor
+         * 
+         * File cache structure:
+         * [[content, headers, lastChecked, lastModified, cacheBreaker, extension, mimeType, path], [compressedContent, compressedHeaders], ...]
+         * 
+         * @example
+         * // You can use it as a simple static file manager:
+         * const static = new backend.helper.FileServer();
+         * static.add('/path/to/file.txt');
+         * ...
+         * static.serve(req, res, '/path/to/file.txt');
+         * @example
+         * // It can also be used as a full standalone file server:
+         * backend.domainRouter.add("mycoolwebsite.com", new backend.helper.FileServer({ root: "/my_cool_website/", automatic: true }));
+         * // mycoolwebsite.com now serves files from /my_cool_website/, with caching and compression.
+         */
+        constructor({ fileProcessor, onMissing, cacheControl: _cacheControl, root, automatic = false, enableCompression = true } = {}) {
+            this.cache = new Map();
+            this.processor = typeof fileProcessor === "function"? fileProcessor: null;
+
+            this.onMissing = typeof onMissing === "function"? onMissing: (req, res, path, status) => {
+                backend.helper.send(req, res, "Not Found", {
+                    "Content-Type": "text/plain",
+                    "Cache-Control": "public, max-age=60"
+                }, status || "404");
+            };
+
+            this.cacheControl = _cacheControl || cacheControl;
+            this.root = root || "";
+
+            this.automatic = !!automatic;
+            this.enableCompression = !!enableCompression;
+        }
+    
+        async add(path, headers, cacheBreaker = null, content = null) {
+            path = this.resolvePath(path);
+
+            if (typeof path !== 'string' || !path) {
+                throw new Error('Invalid cache entry');
+            }
+    
+            if (this.cache.has(path)) {
+                throw new Error('Cache entry already exists');
+            }
+    
+            if (!fs.existsSync(path)) {
+                throw new Error('File does not exist: ' + path);
+            }
+    
+            return await this.refresh(path, headers, cacheBreaker, content, false);
+        }
+    
+        needsUpdate(path, file) {
+            const now = Date.now();
+            if(now - file[0][2] < (backend.mode === backend.modes.DEVELOPMENT ? 1000 : 60000)) {
+                return false;
+            }
+
+            try {
+                const stats = fs.statSync(path);
+
+                if((stats.mtimeMs > file[0][3]) || (typeof file[0][4] === "function" && file[0][4](path) === true)) {
+                    file[0][2] = now;
+                    file[0][3] = stats.mtimeMs;
+                    return true;
+                }
+            } catch (error) {
+                console.error("Error checking file update:", error);
+                return true;
+            }
+
+            return false;
+        }
+
+        resolvePath(path) {
+            if (this.root) {
+                return nodePath.join(this.root, nodePath.resolve(nodePath.sep, path || nodePath.sep));
+            }
+
+            return nodePath.normalize(path);
+        }
+    
+        async refresh(path, headers = null, cacheBreaker = null, content = null, _resolvePath = true) {
+            if(_resolvePath) path = this.resolvePath(path);
+
+            if(!fs.existsSync(path)) {
+                this.cache.delete(path);
+                return false;
+            }
+
+            let file = this.cache.get(path);
+            if (!file) {
+                file = [[]];
+                this.cache.set(path, file);
+            }
+
+            const extension = file[0][5] || nodePath.extname(path).slice(1).toLowerCase();
+            const mimeType  = file[0][6] || backend.mime.getType(extension) || "application/octet-stream";
+
+            content = content || (this.processor? await this.processor(path): await fs.promises.readFile(path, (extension === "js" || extension === "css") ? "utf8" : null));
+
+            if (file.length > 1) {
+                for (let i = 1; i < file.length; i++) {
+                    delete file[i];
+                }
+            }
+
+            const stats = fs.statSync(path);
+            file[0][0] = content;
+
+            file[0][1] = headers || {};
+            file[0][1]["ETag"] = `"${stats.mtimeMs.toString(36)}"`;
+            if(!file[0][1]["Cache-Control"]) file[0][1]["Cache-Control"] = "public, max-age=" + (this.cacheControl[extension] || this.cacheControl.default);
+            file[0][1]["Content-Type"] = mimeType + "; charset=utf-8";
+            file[0][1]["X-Content-Type-Options"] = "nosniff";
+            file[0][1]["Connection"] = "keep-alive";
+
+            file[0][2] = Date.now();
+            file[0][3] = stats.mtimeMs;
+            if (typeof cacheBreaker === "function") file[0][4] = cacheBreaker;
+            if (!file[0][5]) file[0][5] = extension;
+            if (!file[0][6]) file[0][6] = mimeType;
+            file[0][7] = path;
+            return true;
+        }
+
+        getMetadata(path) {
+            const file = this.cache.get(path);
+            if (!file || file.length === 0) {
+                return null;
+            }
+
+            return {
+                content: file[0][0],
+                headers: file[0][1],
+                lastUpdated: file[0][2],
+                lastModified: file[0][3],
+                cacheBreaker: file[0][4],
+                extension: file[0][5],
+                mimeType: file[0][6],
+                path: file[0][7]
+            };
+        }
+
+        setMetadata(path, metadata) {
+            path = this.resolvePath(path);
+
+            const file = this.cache.get(path);
+            if (!file) {
+                throw new Error('Cache entry does not exist: ' + path);
+            }
+
+            if (metadata.content) file[0][0] = metadata.content;
+            if (metadata.headers) file[0][1] = { ...file[0][1], ...metadata.headers };
+            if (metadata.lastChecked) file[0][2] = metadata.lastChecked;
+            if (metadata.lastModified) file[0][3] = metadata.lastModified;
+            if (metadata.cacheBreaker) file[0][4] = metadata.cacheBreaker;
+
+            if (metadata.extension) {
+                file[0][5] = metadata.extension;
+                file[0][6] = backend.mime.getType(metadata.extension);
+                file[0][1]["Content-Type"] = file[0][6];
+            } else if (metadata.mimeType) {
+                file[0][5] = backend.mime.getExtension(metadata.mimeType)[0];
+                file[0][6] = metadata.mimeType;
+                file[0][1]["Content-Type"] = metadata.mimeType;
+            }
+        }
+
+        delete(path) {
+            path = this.resolvePath(path);
+            if (this.cache.has(path)) {
+                this.cache.delete(path);
+            }
+        }
+
+        /**
+         * Serves a cached file or processes it if not cached.
+         * @param {object} req - The request object.
+         * @param {object} res - The response object.
+         * @param {string} path - The file path to serve.
+         * @param {string} [status] - Optional HTTP status code.
+         */
+        async serve(req, res, path = req.path, status = null) {
+            path = this.resolvePath(path);
+
+            let cache = this.cache.get(path), suggestedCompressionAlgorithm;
+
+            if (!cache || this.cacheDisabled) {
+                if (this.automatic) {
+                    // sigh.
+                    suggestedCompressionAlgorithm = backend.helper.getUsedCompression(req, backend.mime.getType(nodePath.extname(path).slice(1)));
+
+                    if(!await this.refresh(path, null, null, null, false)) {
+                        this.onMissing(req, res, path, status);
+                        return;
+                    }
+
+                    cache = this.cache.get(path);
+                } else {
+                    this.onMissing(req, res, path, status);
+                    return;
+                }
+            }
+
+            const needsUpdate = this.needsUpdate(path, cache);
+            return this.serveWithoutChecking(req, res, cache, status, needsUpdate, suggestedCompressionAlgorithm);
+        }
+
+        async serveWithoutChecking(req, res, cache, status = null, needsUpdate = false, suggestedCompressionAlgorithm = null) {
+            if(!cache) {
+                this.onMissing(req, res, null, status);
+                return;
+            }
+
+            const mimeType = cache[0][6];
+            const algorithm = (this.enableCompression = backend.compression.enabled && cache[0][0].length >= backend.constants.MIN_COMPRESSION_SIZE)? (suggestedCompressionAlgorithm || backend.helper.getUsedCompression(req, mimeType)): backend.compression.format.NONE;
+
+            if (!needsUpdate && cache[algorithm]) {
+                backend.helper.send(req, res, cache[algorithm][0], cache[algorithm][1], status);
+                return;
+            }
+
+            if(needsUpdate) {
+                if(!await this.refresh(cache[0][7], null, null, null, false)) {
+                    this.onMissing(req, res, cache[0][7], status);
+                    return;
+                }
+            }
+
+            const [algo, buffer, headers] = backend.helper.sendCompressed(req, res, cache[0][0], mimeType, {...cache[0][1]}, status, algorithm);
+            if (!cache[algo]) {
+                cache[algo] = [buffer, headers];
+            }
+        }
+
+        // This method allows the FileServer to be used as a handler on its own
+        onRequest(req, res) {
+            if (this.automatic) {
+                this.serve(req, res, req.path);
+                return;
+            }
+
+            this.onMissing(req, res, null);
+        }
+    },
+
 
     /**
      * Parses the request body, optionally as a stream.
@@ -452,5 +726,63 @@ module.exports = {
 
             return data
         }
+    },
+
+    /**
+     * Basic rate limiter.
+     */
+    RateLimiter: class {
+        constructor(limit, interval = 60000) {
+            this.limit = limit;
+            this.interval = interval;
+            this.requests = new Map();
+        }
+
+        check(req, res) {
+            const now = Date.now();
+            const key = backend.helper.getRequestIP(res) || req.getHeader("x-forwarded-for") || "anonymous";
+
+            if (!this.requests.has(key)) {
+                this.requests.set(key, []);
+            }
+
+            const timestamps = this.requests.get(key);
+            timestamps.push(now);
+
+            // Remove timestamps older than the interval
+            while (timestamps.length > 0 && timestamps[0] < now - this.interval) {
+                timestamps.shift();
+            }
+
+            if (timestamps.length > this.limit) {               
+                return false;
+            }
+
+            return true;
+        }
+
+        pass(req, res) {
+            if (this.check(req, res)) {
+                return true;
+            }
+
+            res.cork(() => {
+                res.writeStatus("429").end('Rate limit exceeded');
+            });
+            return false;
+        }
+
+        reset(key) {
+            this.requests.delete(key);
+        }
+    },
+
+    /**
+     * Returns the request IP address.
+     * @param {object} res - The response (yes, not request) object.
+     * @returns {string} The request IP address.
+     */
+    getRequestIP(res) {
+        return decoder.decode(res.getRemoteAddressAsText());
     }
 }

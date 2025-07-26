@@ -9,16 +9,11 @@
 */
 
 
-// work in progress
-
-
 let
     // Libraries
     fs = require("fs"),
     nodePath = require("path"),
     uws = require('uWebSockets.js'),
-
-    WebNative = require("./native/dist/akeno-web"),
 
     parser, // Will be defined later
     parserContext,
@@ -31,29 +26,7 @@ let
     applications = new Map,
 
     // Backend object
-    backend = require("akeno:backend"),
-
-    // Cache && optimisation helpers
-    RequestCache = [
-        new Map(), // No compression
-        new Map(), // Gzip compression
-        new Map(), // Deflate compression
-        new Map()  // Brotli compression
-    ],
-
-    // FIXME: Temporary solution
-    FilesWithDisabledCompression = new Set(),
-
-    // Maximal cache size for binary files per-file.
-    // If a file is bigger than this, it is not served from RAM.
-    max_cache_size = 367001600,
-
-    cacheByFile = {
-        html: "15",
-        js: "604800",
-        css: "604800",
-        default: "50000"
-    }
+    backend = require("akeno:backend")
 ;
 
 
@@ -84,6 +57,8 @@ class WebApp extends Units.App {
 
         applications.set(this.path, this);
 
+        this._rootPathAllowed = true;
+
         this.reload(false);
     }
 
@@ -96,22 +71,29 @@ class WebApp extends Units.App {
 
     resolvePath(path, current = null){
         let useRootPath = false;
-        let isRelative = true;
+        let isRelative = false;
 
-        if(path.charCodeAt(0) === 47) { // '/'
-            isRelative = false;
-        } else if(path.charCodeAt(0) === 126) { // '~'
+        if(path.charCodeAt(0) === 126) { // '~'
             path = path.slice(1);
+            useRootPath = true;
+        } else if(path.charCodeAt(0) !== 47) { // '/'
+            isRelative = true;
+        } else if(path.charCodeAt(1) === 126 && path.charCodeAt(2) === 47) { // '/~/', special case :shrug:
+            path = path.slice(2);
             useRootPath = true;
         }
 
+        if(!this._rootPathAllowed) {
+            useRootPath = false;
+        }
+
         const root = useRootPath? this.path: this.root || this.path;
-        const relative = isRelative ? nodePath.resolve(current || nodePath.sep, path) : path;
+        const relative = nodePath.resolve(isRelative? (current || nodePath.sep): "/", path);
 
         const full = nodePath.join(root, relative);
 
         // Extra safety check, while it should already be safe, better to be extra safe.
-        if(!full.startsWith(root + nodePath.sep)) {
+        if(!full.startsWith(root)) {
             return { full, relative: nodePath.sep, useRootPath: true };
         }
 
@@ -163,6 +145,8 @@ class WebApp extends Units.App {
         const enabledDomains = serverBlock.get("domains", Array, []);
 
         const custom_root = serverBlock.get("root", String, null);
+        this._rootPathAllowed = serverBlock.get("allowRootPath", Boolean, true);
+
         if (custom_root && custom_root.length > 0) {
             this.root = this.resolvePath(custom_root).full;
         } else {
@@ -275,7 +259,7 @@ class WebApp extends Units.App {
                 continue
             }
 
-            this.modules.set(name, module)
+            this.modules.set(name, module);
         }
 
         this.loaded = true;
@@ -303,7 +287,11 @@ class WebApp extends Units.App {
                 const domain = handle.get("as", String);
                 if(!target || !domain) continue;
 
-                this.handleMatcher.add(handle.attributes[0], { target, domain, appendPath: handle.get("appendPath", Boolean) });
+                const handleObj = { target, domain, appendPath: handle.get("appendPath", Boolean) };
+
+                for(const pattern of handle.attributes){
+                    this.handleMatcher.add(pattern, handleObj);
+                }
             }
         }
 
@@ -316,11 +304,30 @@ class WebApp extends Units.App {
                 const to = route.get("to", String);
                 if(!to) continue;
 
-                this.routeMatcher.add(route.attributes[0], { to, negate: route.get("not") });
+                for(const pattern of route.attributes){
+                    this.routeMatcher.add(pattern, to);                    
+                }
+            }
+        }
+
+        this._hasAttribs = this.config.data.has("location");
+        if(this._hasAttribs) {
+            if(!this.pathMatcher) this.pathMatcher = new PathMatcher();
+            this.pathMatcher.clear();
+
+            for(const route of this.config.getBlocks("location")){
+                for(const pattern of route.attributes){
+                    console.log(route.properties);
+                    
+                    this.pathMatcher.add(pattern, route.properties);
+                }
             }
         }
 
         this._browserRequirements = this.config.getBlock("browserSupport");
+
+        const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String)
+        this._404 = _404? this.resolvePath(_404): null;
     }
 }
 
@@ -329,323 +336,165 @@ const server = new class WebServer extends Units.Module {
         super({ name: "web", id: "akeno.web", version: "1.4.0-beta" });
 
         this.registerType("WebApp", WebApp)
+
+        this.fileServer = new backend.helper.FileServer();
     }
 
-    async reload(specific_app, skip_config_refresh){
-        if(specific_app) return this.refreshApp(specific_app);
-
-        if(!skip_config_refresh) backend.refreshConfig();
-
-        const start = performance.now();
-
-        const webConfig = backend.config.getBlock("web");
-        const locations = webConfig.get("locations", Array, []);
-
-        // Looks for valid application locations
-        for(let location of locations){
-            if(location.startsWith("./")) location = backend.path + location.slice(1);
-
-            if(!fs.existsSync(location.replace("/*", ""))) {
-                this.warn("Web application (at " + location + ") does not exist - skipped.");
-                continue;
-            }
-
-            // Handle wildcard (multi) locations
-            if(location.endsWith("*")){
-                let appDirectory = nodePath.normalize(location.slice(0, -1) + "/");
-
-                for(let path of fs.readdirSync(appDirectory)){
-                    path = appDirectory + path;
-
-                    if(!fs.statSync(path).isDirectory() || !fs.existsSync(path + "/app.conf")) continue;
-                    locations.push(path);
-                }
-                continue;
-            }
-
-            if(!fs.statSync(location).isDirectory()) {
-                this.warn("Web application (at " + location + ") is a file - skipped.");
-                continue;
-            }
-
-            this.refreshApp(location);
-        }
-
-        this.log(`${skip_config_refresh? "Loaded": "Reloaded"} ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
-    }
-
+    // This is the main handler/router for websites/webapps.
     async onRequest(req, res, app){
-        // This is the main handler/router for websites/webapps.
-
-        if(!app) return res.cork(() => {
-            res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error);
-        });
-
-        // HTTPS Redirect
-        if(backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))){
-            res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
-            return
-        }
-
-        // When the app is disabled
-        if(!app.enabled){
-            backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422");
-            return
-        }
-
-        // Check if the client version is supported
-        if(this._browserRequirements) {
-            if(!checkSupportedBrowser(req.getHeader('user-agent'), this._browserRequirements.properties)){
-                res.cork(() => {
-                    res.writeHeader('Content-Type', this._browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(this._browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${this._browserRequirements.chrome && this._browserRequirements.chrome} and up, Firefox ${this._browserRequirements.firefox && this._browserRequirements.firefox} and up.`))
-                })
-                return
-            }
-        }
-
-        // FIXME: TEMPORARY SOLUTION: Backend hooks
-        if(app.hook && app.hook.onRequest){
-            try {
-                const result = await app.hook.onRequest(req, res);
-                if(result === false) return; // Skip the rest of the request handling
-            } catch (error) {
-                app.error("Error in onRequest hook for app \"" + app.path + "\": ", error);
-                backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
-                return
-            }
-        }
-
-
-        let url = req.path;
-
-        // Redirects (simple URL redirects)
-        if(app._hasRedirects) {
-            const redirect = app.redirectMatcher.match(url);
-            if(redirect) {
-                res.writeStatus('302 Found').writeHeader('Location', redirect).end();
-                return;
-            }
-        }
-
-        // Redirect handles (when an URL points to a whole another point in the server)
-        if(app._hasHandles) {
-            const handle = app.handleMatcher.match(url);
-            if(handle) {
-                return backend.resolve(res, req, { secure: req.secure }, {
-                    domain: handle.domain,
-                    path: `/${handle.target}${handle.appendPath ? req.path : ""}`,
-                    virtual: true
-                });
-            }
-        }
-
-        // Redirect routes
-        if(app._hasRoutes) {
-            const route = app.routeMatcher.match(url);
-            if(route) {
-                url = `/${route}`;
-            }
-        }
-
-
-        // *Finally*, handle content (don't worry routes will be cached <- someday hopefully)
         try {
+            if(!app) return res.cork(() => {
+                res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error);
+            });
 
+            // HTTPS Redirect
+            if(backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))){
+                res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
+                return
+            }
+
+            // When the app is disabled
+            if(!app.enabled){
+                backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422");
+                return
+            }
+
+            // Check if the client version is supported
+            if(this._browserRequirements) {
+                if(!checkSupportedBrowser(req.getHeader('user-agent'), this._browserRequirements.properties)){
+                    res.cork(() => {
+                        res.writeHeader('Content-Type', this._browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(this._browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${this._browserRequirements.chrome && this._browserRequirements.chrome} and up, Firefox ${this._browserRequirements.firefox && this._browserRequirements.firefox} and up.`))
+                    })
+                    return
+                }
+            }
+
+            // FIXME: TEMPORARY SOLUTION: Backend hooks
+            if(app.hook && app.hook.onRequest){
+                try {
+                    const result = await app.hook.onRequest(req, res);
+                    if(result === false) return; // Skip the rest of the request handling
+                } catch (error) {
+                    app.error("Error in onRequest hook for app \"" + app.path + "\": ", error);
+                    backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
+                    return
+                }
+            }
+
+            let url = req.path;
+
+            // Redirects (simple URL redirects)
+            if(app._hasRedirects) {
+                const redirect = app.redirectMatcher.match(url);
+                if(redirect) {
+                    res.writeStatus('302 Found').writeHeader('Location', redirect).end();
+                    return;
+                }
+            }
+
+            // Redirect handles (when an URL points to a whole another point in the server)
+            if(app._hasHandles) {
+                const handle = app.handleMatcher.match(url);
+                if(handle) {
+                    return backend.resolve(res, req, { secure: req.secure }, {
+                        domain: handle.domain,
+                        path: `/${handle.target}${handle.appendPath ? req.path : ""}`,
+                        virtual: true
+                    });
+                }
+            }
+
+            // Redirect routes
+            if(app._hasRoutes) {
+                let route = app.routeMatcher.match(url);
+                if(typeof route === "string") {
+                    if(route.indexOf("$url") !== -1) {
+                        route = route.replace("$url", url);
+                    }
+
+                    if(route.indexOf("$file") !== -1) {
+                        route = route.replace("$file", nodePath.basename(url));
+                    }
+
+                    url = route.charCodeAt(0) === 47 ? route : "/" + route;
+                }
+            }
+
+            // Path attributes
+            if(app._pathMatcher) {
+                let route = app.pathMatcher.match(url);
+                if(route) {
+                    if(route.deny) {
+                        backend.helper.send(req, res, "Access denied.", null, "403 Forbidden");
+                        return;
+                    }
+                }
+            }
 
             /**
              * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit and the cache system is a bit eh.
             */
 
-
             // TODO: Cache this
-            let file = files_try(app.root + url + ".html", app.root + url + "/index.html", app.root + url);
+            let resolvedPath = app.resolvePath(url);
+            let errorCode = null;
 
-            if(!file){
-                // Check if there is a 404 page defined
-                file = app.config.getBlock("errors").get("404", String) || app.config.getBlock("errors").get("default", String)
-
-                if(!file){
-                    // If not, return a generic 404 error
+            let file = resolvedPath.full;
+            if(!(file = files_try(file + ".html", file + "/index.html", file))){
+                if(!app._404 || !app._404.full) {
                     return backend.helper.send(req, res, url + " not found", null, "404 Not Found");
-                } else file = app.root + file;
+                }
+
+                // Load the defined 404 page
+                resolvedPath = app._404;
+                file = app._404.full;
+                errorCode = "404";
             }
-
-            // Normalize the file path
-            file = nodePath.normalize(file);
-
-            // FIXME: Temporary solution
-            const contentOnly = !!req.getHeader("akeno-content-only");
-            if(contentOnly) {
-                // This is quite a hack (the slash acts as a cache breaker), need to find a better solution later
-                file = "/" + file;
-            }
-
 
             // Handle directories
             if(fs.statSync(file).isDirectory()){
                 return backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
             }
 
-            const file_name = nodePath.basename(file);
-            let extension, lastIndex = file_name.lastIndexOf('.');
+            file = nodePath.normalize(file);
 
-            if (lastIndex !== -1) {
-                extension = file_name.slice(lastIndex + 1);
-            } else extension = file_name;
+            const cacheEntry = server.fileServer.cache.get(file);
 
-            let mimeType = backend.mime.getType(extension) || "text/plain";
+            // Because we can't read the accept-encoding header after generating async content....
+            const extension = cacheEntry? cacheEntry[0][5]: nodePath.extname(file).slice(1);
+            const suggestedCompressionAlgorithm = backend.helper.getUsedCompression(req, cacheEntry? cacheEntry[0][6]: backend.mime.getType(extension));
 
-            // Get suggested compression algorithm
-            const suggestedCompressionAlgorithm = FilesWithDisabledCompression.has(file)? backend.compression.format.NONE: backend.helper.getUsedCompression(req, mimeType);
+            // Generate and serve fresh content if not cached or modified
+            if(!cacheEntry || server.fileServer.needsUpdate(file, cacheEntry)) {
+                app.verbose(`Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`);
 
-            // Check if the file has not been changed since
-            const cache = requestCachedFile(file, suggestedCompressionAlgorithm);
+                // By default, the server will get its own content
+                let content = null;
 
-            // If we have the cached file and headers, serve it
-            if(!cache.refresh && cache.headers) {
-                return server.ServeCache(req, res, cache, app, url);
-            }
+                if(extension === "html") {
+                    const directory = nodePath.dirname(resolvedPath.relative);
 
-            const headers = {
-                "Content-Type": `${mimeType}; charset=UTF-8`,
-                "Cache-Control": `public, max-age=${cacheByFile[extension] || cacheByFile.default}`,
-                "X-Content-Type-Options": "nosniff",
-                "ETag": `"${cache.lastModifyTime.toString(36)}"`,
-                "Connection": "keep-alive",
-                "Vary": "Accept-Encoding, Akeno-Content-Only"
-            }
-
-            // In case we previously didn't have cached headers but the cache was valid, serve them now
-            if(!cache.refresh) {
-                cache.headers = headers
-                return server.ServeCache(req, res, cache, app, url)
-            }
-
-            let content;
-
-            if(suggestedCompressionAlgorithm !== backend.compression.format.NONE) {
-                // If the uncompressed content is up-to-date, update the compression cache instead of generating again
-                const uncompressedCache = requestCachedFile(file, backend.compression.format.NONE);
-
-                if(!uncompressedCache.refresh && uncompressedCache.content) {
-                    content = uncompressedCache.content;
-                }
-            }
-            
-            if(!content) {
-                // Generate and serve fresh content
-                app.verbose(`Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`)
-
-                switch(extension){
-                    case "html":
-                        parserContext.data = { url, nested: contentOnly, path: app.path, root: app.root, file, app, secure: req.secure };
-                        content = parser.fromFile(file, parserContext, !contentOnly);
-                        // content = await fs.promises.readFile(file);
-                        break;
-
-                    case "js": case "css":
-                        // Special case for CSS and JS (code minification etc.)
-                        content = await fs.promises.readFile(file, "utf8");
-                        break;
-
-                    default:
-                        content = await fs.promises.readFile(file);
+                    parserContext.data = { url, directory, path: app.path, root: app.root, file, app, secure: req.secure };
+                    content = parser.fromFile(file, parserContext, true);
                 }
 
-            }
-
-            if(content) {
-                if(Array.isArray(content)){
-                    // TODO: Rework dynamic content handling
-                    // Dynamic content
-                    // server.ServeDynamicContent(req, res, content, headers, app, url)
-                    return res.end();
+                if(cacheEntry) {
+                    await server.fileServer.refresh(file, null, null, content);
                 } else {
-                    let compressionAlgo = backend.compression.format.NONE, compressedContent, compressHeaders;
-
-                    if(backend.compression.enabled && suggestedCompressionAlgorithm !== backend.compression.format.NONE && content.length >= backend.constants.MIN_COMPRESSION_SIZE) {
-                        try {
-                            [compressionAlgo, compressedContent, compressHeaders] = backend.helper.sendCompressed(req, res, content, mimeType, {...headers}, undefined, suggestedCompressionAlgorithm);
-                        } catch (error) {
-                            app.error("Couldn't perform compression, requesting \"" + req.path + "\": ", error);
-                            backend.helper.send(req, res, "<b>Error while compressing content - Incident log was saved.</b>", null, 500);
-                            return
-                        }
-                    } else {
-                        backend.helper.send(req, res, content, headers);
-                    }
-
-                    // Save uncompressed content to cache
-                    if(content.length <= max_cache_size) updateCache(file, backend.compression.format.NONE, content, headers);
-
-                    if(suggestedCompressionAlgorithm !== backend.compression.format.NONE && compressionAlgo === backend.compression.format.NONE) {
-                        // Compression for this file was rejected
-                        FilesWithDisabledCompression.add(file);
-                    }
-
-                    // Save compressed content to cache
-                    if(compressionAlgo !== backend.compression.format.NONE && compressedContent) {
-                        if(compressedContent.length <= max_cache_size) updateCache(file, compressionAlgo, compressedContent, compressHeaders);
-                    }
+                    await server.fileServer.refresh(file, { "Vary": "Accept-Encoding, Akeno-Content-Only" }, extension === "html"? (path) => parser.needsUpdate(path): null, content);
                 }
+            }
 
-            } else res.end();
+            server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedCompressionAlgorithm);
 
         } catch(error) {
             app.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ", error);
 
             try {
-                backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
+                backend.helper.send(req, res, "Internal Server Error - Incident log was saved.", null, 500);
             } catch {}
         }
     }
-
-    ServeCache(req, res, cache, app, url){
-        // // Dynamic content
-        // if(Array.isArray(cache.content)){
-        //     return this.ServeDynamicContent(req, res, cache.content, cache.headers, app, url)
-        // }
-
-        return backend.helper.send(req, res, cache.content, cache.headers)
-    }
-
-    /**
-     * To be replaced with a more advanced dynamic content handler
-     * @deprecated
-     */
-    ServeDynamicContent(req, res, content, headers, app, url){
-        res.cork(() => {
-            // undefined will delay sending
-            backend.helper.send(req, res, undefined, headers);
-
-            for(let chunk of content){
-                if(!(chunk instanceof Buffer)){
-
-                    switch(chunk.name){
-                        case "dynamicImport":
-                            
-                            if(!app.path) break;
-            
-                            for(let item of chunk.attributes){
-                                try {
-                                    const path = app.path + "/" + item.replace("$original_path", req.path);
-
-                                    parserContext.data = { plain: true, dynamic: false, compress: true, app, url };
-                                    res.write(parser.fromFile(files_try(path +  + ".html", path + "/index.html", path) || path, parserContext))
-                                } catch (error) {
-                                    this.warn("Failed to import: importing " + item, error)
-                                }
-                            }
-                            break;
-                    }
-
-                } else res.write(chunk)
-            }
-
-            res.end()
-        })
-    }
-
 
     onIPCRequest(segments, req, res){
         switch(segments[0]){
@@ -716,6 +565,49 @@ const server = new class WebServer extends Units.Module {
         }
     }
 
+    async reload(specific_app, skip_config_refresh){
+        if(specific_app) return this.refreshApp(specific_app);
+
+        if(!skip_config_refresh) backend.refreshConfig();
+
+        const start = performance.now();
+
+        const webConfig = backend.config.getBlock("web");
+        const locations = webConfig.get("locations", Array, []);
+
+        // Looks for valid application locations
+        for(let location of locations){
+            if(location.startsWith("./")) location = backend.path + location.slice(1);
+
+            if(!fs.existsSync(location.replace("/*", ""))) {
+                this.warn("Web application (at " + location + ") does not exist - skipped.");
+                continue;
+            }
+
+            // Handle wildcard (multi) locations
+            if(location.endsWith("*")){
+                let appDirectory = nodePath.normalize(location.slice(0, -1) + "/");
+
+                for(let path of fs.readdirSync(appDirectory)){
+                    path = appDirectory + path;
+
+                    if(!fs.statSync(path).isDirectory() || !fs.existsSync(path + "/app.conf")) continue;
+                    locations.push(path);
+                }
+                continue;
+            }
+
+            if(!fs.statSync(location).isDirectory()) {
+                this.warn("Web application (at " + location + ") is a file - skipped.");
+                continue;
+            }
+
+            this.refreshApp(location);
+        }
+
+        this.log(`${skip_config_refresh? "Loaded": "Reloaded"} ${locations.length} web application${locations.length !== 1? "s": ""} in ${(performance.now() - start).toFixed(2)}ms`);
+    }
+
     onLoad(){
         // Constants
         const header = backend.config.getBlock("web").get("htmlHeader", String, `<!-- Server-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`) || '';
@@ -732,7 +624,6 @@ const server = new class WebServer extends Units.Module {
         backend.exposeToDebugger("parser", parser);
         this.reload(null, true);
     }
-
 
     // Utility functions
 
@@ -850,53 +741,6 @@ async function files_try_async(...files){
     }
 }
 
-function requestCachedFile(file, group){
-    const cache = RequestCache[group || 0];
-
-    let cachedFile = cache.get(file);
-    let mtime = fs.statSync(file).mtimeMs;
-
-    // Use a single Date.now() call for performance
-    const now = Date.now();
-
-    if(cachedFile
-        && (
-            ((now - cachedFile.updateTimer) < 1000) ||
-            mtime <= cachedFile.lastModifyTime
-        )
-    ) {
-        cachedFile.updateTimer = now;
-        return cachedFile;
-    }
-
-    if(!cachedFile) {
-        cachedFile = {};
-        cache.set(file, cachedFile);
-    }
-
-    cachedFile.lastModifyTime = mtime;
-    cachedFile.refresh = true;
-    cachedFile.updateTimer = now;
-
-    return cachedFile;
-}
-
-function updateCache(file, group, content, headers){
-    const cache = RequestCache[group || 0];
-
-    let cached = cache.get(file);
-
-
-    if(!cached) {
-        // Update the cache
-        cached = requestCachedFile(file, group);
-    }
-
-    cached.content = content;
-    cached.refresh = false;
-    cached.headers = headers;
-}
-
 function checkSupportedBrowser(userAgent, properties) {
     const ua = userAgent.toLowerCase();
 
@@ -925,6 +769,7 @@ const latest_ls_version = fs.existsSync(ls_path + "/version")? fs.readFileSync(l
 
 const ls_components = {
     "js": [
+        "animation",
         "gl",
         "network",
         "node",
@@ -940,7 +785,7 @@ const ls_components = {
 };
 
 function initParser(header){
-    parser = new WebNative.parser({
+    parser = new backend.native.parser({
         header,
         buffer: true,
         compact: backend.compression.enabled,
@@ -967,7 +812,7 @@ function initParser(header){
 
     parserContext = parser.createContext();
 
-    WebNative.context.prototype.onBlock = function(block){
+    backend.native.context.prototype.onBlock = function(block){
         const parent = this.getTagName();
 
         switch(block.name) {
@@ -1078,18 +923,9 @@ function initParser(header){
                                     break;
                                 }
 
-                                let useRoot = false;
-                                let isRelative = false;
-                                if(attrib[0] === ".") {
-                                    attrib = attrib.slice(1);
-                                    isRelative = true;
-                                } else if(attrib[0] === "~") {
-                                    attrib = attrib.slice(1);
-                                    useRoot = true;
-                                }
-
-                                const link = isRelative ? nodePath.join(this.data.url, attrib) : attrib;
-                                const path = nodePath.join(useRoot || isRelative? this.data.root: this.data.path, link);
+                                const resolvedPath = this.data.app.resolvePath(attrib, this.data.directory);
+                                const path = resolvedPath.full;
+                                const link = (resolvedPath.useRootPath? "~": "") + resolvedPath.relative || attrib;
 
                                 if(!fs.existsSync(path)) {
                                     this.data.app.warn("Error: File \"" + path + "\" does not exist.");
@@ -1107,7 +943,7 @@ function initParser(header){
                                         this.write(`<link rel=stylesheet href="${link}${mtime}" ${components.join(" ")}>`)
                                         break;
                                     case "json":
-                                        this.write(`<script type="application/json" id="${components || attrib}">${fs.readFileSync(path)}</script>`)
+                                        this.write(`<script type="application/json" id="${components.length ? components.join(",") : attrib}">${fs.readFileSync(path)}</script>`)
                                         break;
                                 }
                             } else {
@@ -1119,7 +955,7 @@ function initParser(header){
 
             case "page":
                 if(parent !== "head") {
-                    this.data.app.warn("Error: @page can only be used in <head>.");
+                    this.data.app.warn("Error: @page can only be used in <head>, instead was found in <" + parent + ">.");
                     break
                 }
 
@@ -1175,23 +1011,27 @@ function initParser(header){
                 if(!this.data.path) break;
 
                 for(let item of block.attributes){
+                    const path = this.data.app.resolvePath(item, this.data.directory).full;
+
                     try {
-                        this.import(this.data.path + "/" + item);
+                        this.import(path);
                     } catch (error) {
-                        this.data.app.warn("Failed to import: importing " + item, error);
+                        this.data.app.warn("Failed to import: " + item + " (" + path + ")", error);
                     }
                 }
                 break;
 
-            case "importRaw":
+            case "importRaw": // TODO:
                 if(!this.data.path) break;
 
                 for(let item of block.attributes){
+                    const path = this.data.app.resolvePath(item, this.data.directory).full;
+
                     try {
-                        let content = fs.readFileSync(this.data.path + "/" + item, "utf8");
-                        this.write(!!block.properties.escape? content.replace(/'/g, '&#39;').replace(/\"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content)
+                        let content = fs.readFileSync(path, "utf8");
+                        this.write(!!block.properties.escape ? content.replace(/'/g, '&#39;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content);
                     } catch (error) {
-                        this.data.app.warn("Failed to import (raw): importing " + item, error)
+                        this.data.app.warn("Failed to import (raw): " + item + " (" + path + ")", error);
                     }
                 }
                 break;

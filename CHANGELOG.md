@@ -5,7 +5,17 @@
 - Rework many parts, including the CLI, dynamic content, and the router
 - Write a proper documentation
 - Add a proper installation script
-- A cleaner API for compression and caching
+- ! Stop relying on napi and use v8 directly
+
+
+## New in 1.6.5-beta
+- Reworked webserver routing, optimized web app routing performance
+- Added a flexible webserver class
+- CLI enhancements
+- Reworked IPC module
+- Template system
+- Better caching system, template and compiled content caching
+- Many more major changes
 
 ## New in 1.6.2-beta
 - Better compression cache management
@@ -22,7 +32,7 @@
 - Apps can now register hostnames more easily via a uniform API, with group and wildcard support (eg. `*.example.{com,net}`)
 
 ## New in 1.6.0-beta
-- **MAJOR** changes all around (basically, preparing for a 2.0.0 release)
+- Major changes all around (basically, preparing for a 2.0.0 release)
 - A brand new versioning utility, for consistent versioning and matching for all modules, addons, etc.
 - Added pre-release and build metadata to versioning
 - Complete core redesign around a new modular Unit system

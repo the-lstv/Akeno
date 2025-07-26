@@ -1,6 +1,7 @@
 // #include "x-parser.cpp"
 
 #include <napi.h>
+// #include <v8.h>
 #include <unordered_map>
 #include <fstream>
 #include <sys/stat.h>
@@ -12,28 +13,7 @@
 #include "ParserContext.h"
 #include "ParserWrapper.h"
 
-static time_t getFileLastModifiedTime(const std::string& filePath) {
-    struct stat fileStat;
-    if (stat(filePath.c_str(), &fileStat) == 0) {
-        return fileStat.st_mtime;
-    }
-    return 0;
-}
-
-
-
-
-/*
-    TODO optimizations:
-    - Use a buffer for the input/result string
-    - Use StringView on the JS side to avoid copying strings
-*/
-
-
-
-
-
-
+// !! TODO: Use v8 directly instead of napi, and remove the napi dependency
 
 void ParserContext::Init(Napi::Env env, Napi::Object exports) {
     Napi::Function func = DefineClass(env, "ParserContext", {
@@ -75,7 +55,7 @@ void ParserContext::write(const Napi::CallbackInfo& info) {
         return;
     }
 
-    *result += info[0].As<Napi::String>().Utf8Value();
+    *parser->ctx.output += info[0].As<Napi::String>().Utf8Value();
 }
 
 Napi::Value ParserContext::getTagName(const Napi::CallbackInfo& info) {
@@ -113,30 +93,11 @@ void ParserContext::import(const Napi::CallbackInfo& info) {
 
     std::string filePath = info[0].As<Napi::String>().Utf8Value();
 
-    std::ifstream file(filePath, std::ios::in | std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        Napi::Error::New(info.Env(), "Unable to open file").ThrowAsJavaScriptException();
-        return;
+    try {
+        parser->ctx.inlineFile(filePath);
+    } catch (const std::runtime_error& e) {
+        Napi::Error::New(info.Env(), e.what()).ThrowAsJavaScriptException();
     }
-
-    std::streamsize size = file.tellg();
-    const std::streamsize MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-    if (size > MAX_FILE_SIZE) {
-        Napi::Error::New(info.Env(), "File too large for import").ThrowAsJavaScriptException();
-        return;
-    }
-
-    file.seekg(0, std::ios::beg);
-    std::vector<char> buffer(size);
-    if (!file.read(buffer.data(), size)) {
-        Napi::Error::New(info.Env(), "Error reading file").ThrowAsJavaScriptException();
-        return;
-    }
-
-    HTMLParsingContext ctx(parser->parserOptions, true);
-    Napi::Object thisObj = info.This().As<Napi::Object>();
-    ctx.write(std::string_view(buffer.data(), buffer.size()), result, &thisObj);
-    ctx.end(result);
 }
 
 
@@ -152,7 +113,8 @@ Napi::Object ParserWrapper::Init(Napi::Env env, Napi::Object exports) {
     exports.Set("parser", DefineClass(env, "ParserWrapper", {
         InstanceMethod("fromString", &ParserWrapper::fromString),
         InstanceMethod("fromFile", &ParserWrapper::fromFile),
-        InstanceMethod("createContext", &ParserWrapper::createContext)
+        InstanceMethod("createContext", &ParserWrapper::createContext),
+        InstanceMethod("needsUpdate", &ParserWrapper::needsUpdate)
     }));
     return exports;
 }
@@ -277,7 +239,7 @@ ParserWrapper::ParserWrapper(const Napi::CallbackInfo& info)
                 }
 
                 Napi::Object* obj = static_cast<Napi::Object*>(userData);
-                Napi::Value result = onEndRef_.Call({ *obj });
+                onEndRef_.Call({ *obj });
             };
         }
     }
@@ -296,13 +258,10 @@ Napi::Value ParserWrapper::fromString(const Napi::CallbackInfo& info) {
     std::string source = info[0].As<Napi::String>().Utf8Value();
     
     Napi::Object ctxObj = info[1].As<Napi::Object>();
-    ParserContext* run = Napi::ObjectWrap<ParserContext>::Unwrap(ctxObj);
 
     std::string result;
-    run->result = &result;
-
     ctx.write(source, &result, &ctxObj);
-    ctx.end(&result);
+    ctx.end();
 
     return Napi::Buffer<char>::Copy(info.Env(), result.data(), result.size());
 }
@@ -315,24 +274,9 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
 
     std::string filePath = info[0].As<Napi::String>().Utf8Value();
 
-    std::ifstream file(filePath, std::ios::in | std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        Napi::Error::New(info.Env(), "Unable to open file").ThrowAsJavaScriptException();
-        return info.Env().Undefined();
-    }
-
-    std::streamsize size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    std::vector<char> buffer(size);
-    if (!file.read(buffer.data(), size)) {
-        Napi::Error::New(info.Env(), "Error reading file").ThrowAsJavaScriptException();
-        return info.Env().Undefined();
-    }
-
     Napi::Object ctxObj = info[1].As<Napi::Object>();
 
     std::string appPath;
-    bool nested = false;
 
     Napi::Value dataValue = ctxObj.Get("data");
     if (dataValue.IsObject()) {
@@ -341,27 +285,14 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
         if (pathValue.IsString()) {
             appPath = pathValue.As<Napi::String>().Utf8Value();
         }
-
-        Napi::Value nestedValue = dataObj.Get("nested");
-        if (nestedValue.IsBoolean()) {
-            nested = nestedValue.As<Napi::Boolean>().Value();
-        }
     }
 
-    ParserContext* run = Napi::ObjectWrap<ParserContext>::Unwrap(ctxObj);
+    ctx.templateEnabled = info.Length() > 2 && info[2].IsBoolean() ? info[2].As<Napi::Boolean>().Value() : false;
 
-    bool templateEnabled = info.Length() > 2 && info[2].IsBoolean() ? info[2].As<Napi::Boolean>().Value() : false;
-    
-    auto storage = std::make_shared<std::string>();
+    FileCache& result = ctx.fromFile(filePath, &ctxObj, appPath);
 
-    // std::string result;
-    run->result = storage.get();
-
-    ctx.nested = nested;
-    ctx.write(std::string_view(buffer.data(), buffer.size()), storage.get(), &ctxObj, templateEnabled, appPath);
-    ctx.end(storage.get());
-
-    auto* storagePtr = new std::shared_ptr<std::string>(std::move(storage));
+    // Create a shared_ptr to manage the lifetime of the string data
+    auto* storagePtr = new std::shared_ptr<std::string>(std::make_shared<std::string>(std::move(ctx.exportCopy(&result))));
 
     Napi::Value data = Napi::Buffer<char>::New(
         info.Env(),
@@ -377,8 +308,92 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
     return data;
 }
 
+Napi::Value ParserWrapper::needsUpdate(const Napi::CallbackInfo& info) {
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(info.Env(), "Expected a string").ThrowAsJavaScriptException();
+        return info.Env().Undefined();
+    }
+
+    std::string filePath = info[0].As<Napi::String>().Utf8Value();
+
+    bool needsUpdate = ctx.needsUpdate(filePath);
+    return Napi::Boolean::New(info.Env(), needsUpdate);
+}
 
 
+enum LogLevel {
+    LOG_DEBUG = 0,
+    LOG_INFO = 1,
+    LOG_WARN = 3,
+    LOG_ERROR = 4,
+    LOG_FATAL = 5
+};
+
+
+static int lineCount = 0;
+
+// TODO: Detect whether to use ansi and fancy logs
+// TODO: Performance sucks, need to optimize and refactor this
+
+
+void WriteLog(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+
+    if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsString()) {
+        Napi::TypeError::New(env, "Expected level (number), source (string), and data").ThrowAsJavaScriptException();
+        return;
+    }
+
+    int level = info[0].As<Napi::Number>().Int32Value();
+    std::string source = info[1].As<Napi::String>().Utf8Value();
+    const size_t sourceLen = source.length();
+
+    const char* color = level >= LogLevel::LOG_ERROR ? "1;31" : (level == LogLevel::LOG_WARN ? "1;33" : "36");
+    const char* suffix = level > LogLevel::LOG_ERROR ? "0;1" : "0";
+
+    if (level > LogLevel::LOG_ERROR) {
+        std::cout << "* ";
+    }
+
+    std::cout << "\x1b[" << color << "m[" << source << "]\x1b[" << suffix << "m";
+
+    std::string continuation = "\n";
+    if (sourceLen > 0) {
+        continuation += std::string(sourceLen - 1, ' ');
+    }
+    continuation += "\x1b[90m⤷\x1b[0m   ";
+
+    for (size_t i = 2; i < info.Length(); ++i) {
+        if (!info[i].IsString()) {
+            std::cout << " [object]";
+            continue;
+        }
+
+        std::string arg = info[i].As<Napi::String>().Utf8Value();
+        std::string_view view(arg);
+
+        std::cout << " ";
+        size_t start = 0;
+        size_t newline;
+        while ((newline = view.find('\n', start)) != std::string_view::npos) {
+            std::cout.write(view.data() + start, newline - start);
+            std::cout << continuation;
+            start = newline + 1;
+        }
+
+        if (start < arg.size()) {
+            std::cout.write(arg.data() + start, arg.size() - start);
+        }
+    }
+
+    lineCount++;
+
+    std::cout << '\n';
+    
+    // if (lineCount % 10 == 0 || level >= LOG_ERROR) {
+    //     std::cout << std::flush;
+    // }
+}
 
 
 
@@ -388,7 +403,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     ParserWrapper::Init(env, exports);
     ParserContext::Init(env, exports);
 
-    exports.Set("version", Napi::String::New(env, "1.0.0"));
+    exports.Set("version", Napi::String::New(env, "1.1.0"));
+    exports.Set("writeLog", Napi::Function::New(env, WriteLog));
 
     return exports;
 }

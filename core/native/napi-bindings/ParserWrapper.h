@@ -29,4 +29,5 @@ private:
     Napi::Value createContext(const Napi::CallbackInfo& info);
     Napi::Value fromString(const Napi::CallbackInfo& info);
     Napi::Value fromFile(const Napi::CallbackInfo& info);
+    Napi::Value needsUpdate(const Napi::CallbackInfo& info);
 };
