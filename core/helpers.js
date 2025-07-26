@@ -505,7 +505,7 @@ module.exports = {
             file[0][1] = headers || {};
             file[0][1]["ETag"] = `"${stats.mtimeMs.toString(36)}"`;
             if(!file[0][1]["Cache-Control"]) file[0][1]["Cache-Control"] = "public, max-age=" + (this.cacheControl[extension] || this.cacheControl.default);
-            file[0][1]["Content-Type"] = mimeType;
+            file[0][1]["Content-Type"] = mimeType + "; charset=utf-8";
             file[0][1]["X-Content-Type-Options"] = "nosniff";
             file[0][1]["Connection"] = "keep-alive";
 

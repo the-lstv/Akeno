@@ -121,14 +121,15 @@ struct FileCache {
 
     // FIXME: Would be safer to use path
     FileCache* templateCache = nullptr;
+    std::filesystem::file_time_type templateLastModified;
 
     FileCache() = default;
 
     FileCache(const std::string& path, std::filesystem::file_time_type lastModified)
-        : path(path), lastModified(lastModified), templateCache(nullptr) {}
+        : path(path), lastModified(lastModified), templateCache(nullptr), templateLastModified(lastModified) {}
 
     FileCache(const std::string& path, const std::string& content, std::filesystem::file_time_type lastModified)
-        : path(path), content(content), lastModified(lastModified), templateCache(nullptr) {}
+        : path(path), content(content), lastModified(lastModified), templateCache(nullptr), templateLastModified(lastModified) {}
 
     bool operator==(const FileCache& other) const {
         return path == other.path;
@@ -197,12 +198,13 @@ public:
         if (cacheIt->second.lastModified != fileModTime) {
             return true;
         }
-
+        
+        
         // Check template file modification time if it exists
         // NOTE: Make sure it gets handled if the template gets deleted
         if (cacheIt->second.templateCache != nullptr) {
             auto templateModTime = std::filesystem::last_write_time(cacheIt->second.templateCache->path);
-            if (cacheIt->second.templateCache->lastModified != templateModTime) {
+            if (cacheIt->second.templateLastModified != templateModTime) {
                 return true;
             }
         }
@@ -267,7 +269,8 @@ public:
     
             if (contentCached && cacheIt->second.templateCache != nullptr) {
                 auto templateModTime = std::filesystem::last_write_time(cacheIt->second.templateCache->path);
-                if (cacheIt->second.templateCache->lastModified != templateModTime) {
+                if (cacheIt->second.templateLastModified != templateModTime) {
+                    cacheIt->second.templateLastModified = templateModTime;
                     templateCached = false;
 
                     // Only update the template cache
@@ -282,6 +285,8 @@ public:
                 return cacheIt->second;
             }
         }
+
+        std::cout << "Loading file: " << filePath << std::endl;
 
         FileCache newCacheEntry(filePath, fileModTime);
         auto [insertIt, inserted] = fileCache.emplace(filePath, std::move(newCacheEntry));
@@ -747,6 +752,7 @@ public:
                                 HTMLParsingPosition originalPosition = storePosition();
                                 FileCache& templateCacheEntry = fromFile(templateFile, userData, rootPath);
                                 restorePosition(originalPosition);
+                                cacheEntry->templateLastModified = templateCacheEntry.lastModified;
                                 cacheEntry->templateCache = &templateCacheEntry;
                             } catch (const std::filesystem::filesystem_error& e) {
                                 std::cerr << "Error accessing template file: " << e.what() << std::endl;
