@@ -24,10 +24,11 @@ The most interesting part is its powerful webserver, which is highly optimized a
 Currently requires node, npm, git, gcc, g++, and python (attempts to install automatically if not found). We plan to reduce the amount of dependencies to just two in future updates by packaging prebuilt binaries.<br>
 
 > [!NOTE]
-> At this time Akeno only officially works on Linux x86_64. Official Windows support is not planned yet. Windows support is highly experimental and can blow up at any time. One way to run on Windows is via WSL2, though I didn't test.
+> At this time Akeno only officially works on Linux x86_64. Official Windows support is not planned yet. Windows support is highly experimental and can blow up at any time. If you have any issues on Windows, please open an issue on GitHub and I will try to help you out, but I make no guarantees that Akeno will work as advertised under Windows.
 
 ```sh
 # We are currently revising the installation script! Please be patient, I apologize for the inconvenience
+# Akeno is still in beta as of now, but it is getting really close for a stable release.
 ```
 You can then start Akeno anywhere with
 ```sh
@@ -38,31 +39,41 @@ To run under a process manager, in this case PM2 (recommended), you can run:
 sudo akeno pm2-setup
 ```
 This makes Akeno run automatically on startup and enables commands like `akeno restart` and `akeno update` etc.
+<br><br>
+
+
+### Common usecases for Akeno
+Akeno can serve as a great upgrade or replacement to Nginx/Apache as a proxy or static file server, especially if you already have a setup that utilizes Node.js.<br>
+Akeno is faster than Nginx in almost all cases *(that I've tested)*, and it can do nearly everything Nginx does (including multi-domain HTTPS, which is one of the most common reasons people use Nginx as a reverse proxy), and it does it with similar ease (similar config, most features out of the box). Akeno even has more modern web features to enhance your development experience and handles things like code minification and smart caching.<br>
+With Akeno, you can remove the need to proxy through Nginx, and can build your Node backend directly on top of Akeno, for a more seamless and scalable setup.<br>
+And on top of that you get WebSocket support out of the box, with no extra setup needed.
 
 ---
-<br><br>
 
 <img src="https://github.com/user-attachments/assets/8cbdac91-1e57-43a3-9fff-86b22c1b99b7" width="650"><br>
 
-Akeno is heavily focused on speed, and not only benchmark magic, but true optimization on every step, to ensure efficiency and low latency, making it very scalable and responsive, so you and your clients no longer have to deal with slow or unstable web apps.
+⚡ To ensure minimal latency, fast response times, and high throughput, Akeno is designed to be extremely optimized and lightweight.<br>
 
-The entire server is started and ready in a few milliseconds on average, depending on loaded modules. This is already miles ahead of most full-featured servers.
+The server usually starts up in less than 10ms (depending on modules and loaded applications - but even on complex servers with over 50 web applications, the time is commonly under 300ms), and most requests are handled in <0.5ms, including routing, compression, and (cached) dynamic content. <br>
+We plan to make this even faster in the future by moving all critical parts to C++, and hopefully making most requests handled directly in C++ without hitting JS at all in most requests.
 
 In the core, we use [uWebSockets](https://github.com/uNetworking/uWebSockets) (a low-level, incredibly optimized web server written in C++) - which is one of the fastest standard-compliant servers in the world, **~8.5x** faster than the already fast framework Fastify. <br>
-I later plan to switch to a fork that embeds Akeno directly, though that is still in the works.
 
-Even with a full setup including routing, caching, dynamic content and encryption, Akeno is still multiple times faster than even the most minimal Express.js server, out of the box *(cached)*.
+Even with a full setup including routing, caching, dynamic content and encryption, Akeno is still multiple times faster than even the most minimal Express.js server with just a single response, out of the box.
 
 Akeno's powerful content preprocessor, which handles complex HTML templates and custom syntax, can prepare a full response including parsing without cache in less than a few milliseconds, then caches it.<br>
-This makes Akeno faster than most frameworks out there!<br>
+This makes Akeno faster than most frameworks out there.<br>
+
+(For instance, the homepage of [this site](https://lstv.space) uses templates and dynamic content including automatic code compression, and only takes ~4ms to compile, with subsequent requests taking <0.5ms.)
+
 With memory cache (which is automatic and based on file changes), the response can be prepared in as low as a few microseconds, and that is about to be even less when we add quick cache paths.<br>
 
 Akeno ensures that your clients always get the latest version of your content, while still utilizing caching to the fullest extent.<br>
 
-Other cool features include:
+Other neat features include:
 - Automatic Brotli and Gzip compression support with cache
 - Code minification for HTML, CSS, and JS
-- Cache management and invalidation
+- Cache management and automatic invalidation on changes
 - Cache busting via ?mtime query parameter based on file changes
 - Streaming support for large files
 - Small overhead per application or context, allowing you to scale to thousands of applications without any issues
@@ -78,6 +89,8 @@ Simply write your code and let Akeno optimize it in real time, without any extra
 Akeno uses a universal Unit system where all components are treated as Units, which provides a unified and easy to extend API.<br>
 Modules, addons, applications, protocols, components and the backend itself are all an instance of a Unit.<br>
 Units are loaded as needed on demand, avoiding initial overhead.
+
+Akeno is a very flexible server and can be used for various purposes in various ways.
 
 
 <br><br>
@@ -114,11 +127,30 @@ akeno serve ./ -p 8080
 ```
 
 
+- ### Custom webserver
+And of course, Akeno provides a full JS API to create your own servers.
+```js
+const backend = require('akeno:backend');
+
+// Basic handler
+backend.domainRouter.add("{www,}.example.*", (req, res) => {
+    res.end("Hello world!");
+});
+
+// File server with automatic cache, ETag, and compression support
+// TIP: FileServer can also be used manually (in any other handler, as needed) via the .serve(req, res, ?file) method, and files can be added and pre-cached with .add(), including defining custom headers etc. - the API is very flexible.
+backend.domainRouter.add("localhost", new backend.helper.FileServer({
+    root: "/path/to/files",
+    automatic: true
+}));
+```
+
+
 <br>
 
 
 ### Say hello to the builtin custom HTML syntax
-Tired of the messy, repetetive and long HTML templates? How about doing it the Akeno way instead!<br>
+Tired of the messy, repetitive and long HTML templates? How about doing it the Akeno way instead!<br>
 Let's say that you want to make a simple page with a title, favicon and a font from Google fonts, and want to use Bootstrap icons:
 ```html
 <head>
@@ -162,28 +194,3 @@ There's more:
 <br>
 
 _The only thing left is to pair it with [LS](https://github.com/the-lstv/LS/) ;)_
-
-<br>
-<br>
-<br>
-<br>
-
-I also want to later make it possible to define and extend with custom blocks and behavior, eg.
-```js
-Akeno.web.defineBlock('my-block', (context, block) => {
-    // Any synchronous code can run here, and we can use context.write to place data in place
-    context.write(`<div class="my-block">${block.properties.text}</div>`);
-});
-```
-```html
-@my-block {
-    text: "Hello world!";
-}
-
-And maybe even define backend code inside HTML (though I am really not sure about this yet - I think APIs are better and safer):
-<script type="server/javascript">
-    // Runs on the backend
-    this.write("Hi from Akeno!");
-</script>
-```
-*(This is not yet implemented, concept only)*

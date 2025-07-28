@@ -286,8 +286,6 @@ public:
             }
         }
 
-        std::cout << "Loading file: " << filePath << std::endl;
-
         FileCache newCacheEntry(filePath, fileModTime);
         auto [insertIt, inserted] = fileCache.emplace(filePath, std::move(newCacheEntry));
         cacheEntry = &insertIt->second;

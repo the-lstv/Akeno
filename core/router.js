@@ -142,7 +142,7 @@ class WildcardMatcher {
     }
 
     split(path) {
-        if (path === "") return [""];
+        if (path === "" || !path) return [""];
         if (path[0] !== this.segmentChar) path = this.segmentChar + path;
         return path.split(this.segmentChar);
     }

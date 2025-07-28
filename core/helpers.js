@@ -443,7 +443,7 @@ module.exports = {
     
             return await this.refresh(path, headers, cacheBreaker, content, false);
         }
-    
+
         needsUpdate(path, file) {
             const now = Date.now();
             if(now - file[0][2] < (backend.mode === backend.modes.DEVELOPMENT ? 1000 : 60000)) {
@@ -608,7 +608,7 @@ module.exports = {
             }
 
             const mimeType = cache[0][6];
-            const algorithm = (this.enableCompression = backend.compression.enabled && cache[0][0].length >= backend.constants.MIN_COMPRESSION_SIZE)? (suggestedCompressionAlgorithm || backend.helper.getUsedCompression(req, mimeType)): backend.compression.format.NONE;
+            const algorithm = (this.enableCompression = backend.compression.enabled && cache[0][0].length >= backend.constants.MIN_COMPRESSION_SIZE)? (suggestedCompressionAlgorithm === null? backend.helper.getUsedCompression(req, mimeType): suggestedCompressionAlgorithm): backend.compression.format.NONE;
 
             if (!needsUpdate && cache[algorithm]) {
                 backend.helper.send(req, res, cache[algorithm][0], cache[algorithm][1], status);
