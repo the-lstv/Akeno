@@ -739,12 +739,39 @@ const backend = {
      * @example
      * writeLog(['User created successfully'], 1, 'user-service');
      */
+    // writeLog(level = 2, source = "api", ...data) {
+    //     if(level < (5 - backend.logLevel)) return;
+    //     return backend.native.writeLog(level, typeof source === "string" ? source : source?.name || "unknown", ...data.map(item => {
+    //         if(typeof item === "string") return item;
+    //         if(item instanceof Error) return item.stack || item.message;
+    //         return String(item);
+    //     }));
+    // },
+
+    // Legacy JS logger
     writeLog(level = 2, source = "api", ...data) {
         if(level < (5 - backend.logLevel)) return;
-        return backend.native.writeLog(level, typeof source === "string" ? source : source?.name || "unknown", ...data.map(item => {
-            if(typeof item === "string") return item;
-            if(item instanceof Error) return item.stack || item.message;
-            return String(item);
+
+        const color = level >= 4 ? "1;31" : level === 3 ? "1;33" : "36";
+        const consoleFunction = console[level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log"];
+        const sourceName = typeof source === "string" ? source : source?.name || "unknown";
+
+        if(!backend._fancyLogEnabled) {
+            consoleFunction(`[${sourceName}]`, ...data);
+            return;
+        }
+
+        const tag = `${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`;
+
+        if(!Array.isArray(data)){
+            data = [data];
+        }
+
+        consoleFunction(tag, ...data.map(item => {
+            if (typeof item === "string") {
+                return item.replaceAll("\n", "\n" + " ".repeat(sourceName.length - 1) + "\x1b[90m⤷\x1b[0m   ");
+            }
+            return item;
         }));
     },
 
