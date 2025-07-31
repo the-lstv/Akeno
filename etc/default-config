@@ -28,7 +28,7 @@ protocols {
         enabled: true;
         port: 80;
 
-        # Disable unsecured WebSockets in production.
+        # "dev-only" disables unsecured WebSockets in production.
         websockets: dev-only;
     }
 
@@ -61,12 +61,11 @@ ssl {
     # To specify a certificate override per domain, you can use the following format in the domains list:
     # example.com["key.pem", "cert.pem"]
 
-    # Per-domain key/cert path template:
+    # Key/cert path template (per domain):
     keyBase: "/etc/letsencrypt/live/{domain}/privkey.pem";
     certBase: "/etc/letsencrypt/live/{domain}/fullchain.pem";
 
     # Path to default certificate and key files (can be left empty).
-    # Use this for self-signed certificates for example.
     key: "";
     cert: "";
 }
@@ -75,6 +74,12 @@ ssl {
 # Webserver/Web app configuration
 
 web {
+    # Enable compression (brotli, gzip, etc).
+    compress: true;
+
+    # Enable code compression (.html, .js, .css, inline scripts/styles).
+    compress-code: true;
+
     locations:
         # Web-app locations.
         # A web-app is a folder containing your website files and a config file (app.conf).

@@ -86,27 +86,29 @@ module.exports = {
      * 
      * @returns {object} The backend helper object.
      */
-    corsHeaders(req, res, credentials = false) {
+    corsHeaders(req, res, credentials = false, hasCors = false) {
         // TODO: Better and more flexible CORS handling.
         // const trusted = backend.trustedOrigins.has(req.origin);
 
         res.cork(() => {
             res.writeHeader('X-Powered-By', 'Akeno Server/' + backend.version);
 
-            if(credentials){
-                if(!backend.trustedOrigins.has(req.origin)) {
-                    throw new Error(`Can't allow credintals for ${req.origin} because it is not on the trusted list`);
+            if(!hasCors) {
+                if(credentials){
+                    if(!backend.trustedOrigins.has(req.origin)) {
+                        throw new Error(`Can't allow credentials for ${req.origin} because it is not on the trusted list`);
+                    }
+    
+                    res.writeHeader("Access-Control-Allow-Credentials", "true");
+                    res.writeHeader("Access-Control-Allow-Origin", req.origin);
+                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
+                } else {
+                    res.writeHeader('Access-Control-Allow-Origin', '*');
+                    res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");
                 }
 
-                res.writeHeader("Access-Control-Allow-Credentials", "true");
-                res.writeHeader("Access-Control-Allow-Origin", req.origin);
-                res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
-            } else {
-                res.writeHeader('Access-Control-Allow-Origin', '*');
-                res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");
+                res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,DELETE,OPTIONS");
             }
-
-            res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,DELETE,OPTIONS");
 
             if(backend.protocols.h3.enabled){
                 res.writeHeader("alt-svc", `h3=":${backend.protocols.h3.ports[0]}"; ma=86400`);
@@ -141,7 +143,7 @@ module.exports = {
                 res.writeHeader("server-timing", `generation;dur=${performance.now() - req.begin}`);
             }
 
-            backend.helper.corsHeaders(req, res).writeHeaders(req, res, headers);
+            backend.helper.corsHeaders(req, res, null, headers.hasOwnProperty("Access-Control-Allow-Origin")).writeHeaders(req, res, headers);
             if(data !== undefined) res.end(data);
         });
     },

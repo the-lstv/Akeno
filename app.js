@@ -529,8 +529,9 @@ const backend = {
 
     compression: {
 
-        // If to enable compression, overriden by the config - actual code may not, but should respect this.
+        // If to enable compression/code compression, overriden by the config - actual code may not, but should respect this.
         enabled: true,
+        codeEnabled: true,
 
         format: new Units.IndexedEnum([
             "NONE",
@@ -590,14 +591,12 @@ const backend = {
                 throw new TypeError("A string must be provided for code compression.");
             }
 
-            if(!data || !data.length) return Buffer.from(data);
-
             if(typeof format !== "number") {
                 throw new Error(`Invalid compression format: ${format}`);
             }
 
-            if (format === backend.compression.format.NONE) {
-                return Buffer.from(data);
+            if(!data || !data.length || !backend.compression.codeEnabled || format === backend.compression.format.NONE) {
+                return Buffer.from(data)
             }
 
             // if (backend.mode === backend.modes.DEVELOPMENT) {
@@ -656,6 +655,9 @@ const backend = {
         ).filter(Boolean);
     },
 
+    /**
+     * @deprecated
+     */
     Errors: {
         0: "Unknown API version",
         1: "Invalid API endpoint",
@@ -747,14 +749,26 @@ const backend = {
     },
 
     refreshConfig(){
-        if(backend.config) backend.log("Refreshing configuration");
-
         if(!fs.existsSync(PATH + "/config")){
             backend.log("No main config file found in /config, creating a default config file.")
             fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
         }
 
         let path = PATH + "/config";
+        try {
+            const configStat = fs.statSync(path);
+            if (backend._lastConfigMtime && configStat.mtime.getTime() === backend._lastConfigMtime) {
+                backend.log("Configuration file has not been modified, skipping reload.");
+                return;
+            }
+
+            backend._lastConfigMtime = configStat.mtime.getTime();
+        } catch (err) {
+            backend.warn("Failed to check config modification time:", err.message);
+        }
+
+
+        if(backend.config) backend.log("Refreshing configuration");
 
         backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
             strict: true,
@@ -776,6 +790,7 @@ const backend = {
             if (/[/\\]/.test(pipeName)) throw new Error('protocols.ipc.windowsPipeName should not contain slashes - make sure you are not adding a full path.');
             backend.protocols.ipc.socketPath = `\\\\.\\pipe\\${pipeName}`;
         }
+
         backend.protocols.ipc.enabled = protocols.getBlock("ipc").get("enabled", Boolean, true);
 
         // TODO: Better handling of ports (due to apps being able to request custom ports)
@@ -801,6 +816,7 @@ const backend = {
 
         // TODO: Add something like "in production only".
         backend.compression.enabled = backend.config.getBlock("web").get("compress", Boolean, true);
+        backend.compression.codeEnabled = backend.config.getBlock("web").get("compress-code", Boolean, true);
     },
 
     trustedOrigins: new Set,

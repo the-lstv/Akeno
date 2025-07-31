@@ -777,26 +777,37 @@ function initParser(header) {
     parser = new backend.native.parser({
         header,
         buffer: true,
-        compact: backend.compression.enabled,
+        compact: backend.compression.codeEnabled,
 
         onText(text, parent, context) {
-            // Inline script/style compression
-            switch (parent) {
-                case "script":
-                    // if(script_type && script_type !== "text/javascript") break; # TODO: Add back support for other script types
-                    return text ?? (context.compress ? backend.compression.code(text) : text);
+            if (!text || text.length === 0) return;
+            
+            // Inline script compression
+            // TODO: Handle script type
+            if(parent === "script") {
+                if(!backend.compression.codeEnabled) {
+                    return true;
+                }
 
-                case "style":
-                    return text ?? (context.compress ? backend.compression.code(text, backend.compression.format.CSS) : text);
+                return backend.compression.code(text, backend.compression.format.JS);
+            }
+
+            // Inline style compression
+            if (parent === "style") {
+                if(!backend.compression.codeEnabled) {
+                    return true;
+                }
+
+                return backend.compression.code(text, backend.compression.format.CSS);
             }
 
             // Parse with Atrium, text gets sent back to C++, blocks get handled via onBlock
-            parse(text, context)
+            parse(text, context);
         },
 
-        onEnd(context) {
-            // context.data = null;
-        }
+        // onEnd(context) {
+        //     // context.data = null;
+        // }
     });
 
     parserContext = parser.createContext();
