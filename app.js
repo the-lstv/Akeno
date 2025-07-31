@@ -141,29 +141,20 @@ function resolve(res, req) {
 
     res.onAborted(() => {
         req.abort = true;
-        res.aborted = true; // Possibly deprecated
     });
 
-    let handler = domainRouter.match(req.domain) || backend.webServerHandler;
+    resolveHandler(req, res, domainRouter.match(req.domain));
+}
 
+function resolveHandler(req, res, handler) {
     if(typeof handler === "function"){
         handler(req, res);
         return;
     }
 
-    if(typeof handler === "object"){
-        if(handler instanceof Router.PathMatcher){
-            handler = handler.match(req.path);
-
-            if (!handler) {
-                res.writeStatus("404 Not Found").end("404 Not Found");
-                return;
-            }
-
-            if(typeof handler === "function"){
-                handler(req, res);
-                return;
-            }
+    if (typeof handler === "object") {
+        if (handler instanceof Router.PathMatcher) {
+            return resolveHandler(req, res, handler.match(req.path));
         }
 
         if(typeof handler.onRequest === "function"){
@@ -174,7 +165,7 @@ function resolve(res, req) {
             return;
         }
     }
-    
+
     res.writeStatus("400 Bad Request").end("400 Bad Request");
 }
 
@@ -262,10 +253,10 @@ const backend = {
                         // TODO: This needs rework I guess
                         
                         let target;
-                        if(typeof req.data === "string"){
+                        if (typeof req.data === "string") {
                             target = req.data;
                             req.data = [];
-                        } else if(Array.isArray(req.data) && req.data.length > 0){
+                        } else if(Array.isArray(req.data) && req.data.length > 0) {
                             target = req.data.shift();
                         } else {
                             res.error("Invalid request").end();
@@ -477,8 +468,17 @@ const backend = {
             }
 
             init() {
-                this.server = uws.H3App();
-                this.server.any("/*", this.defaultResolver);
+                this.warn("HTTP/3 support is still experimental and may not work correctly.");
+
+                const key = backend.config.getBlock("ssl").get("key", String, null);
+                const cert = backend.config.getBlock("ssl").get("cert", String, null);
+
+                this.server = uws.H3App({
+                    key_file_name: key,
+                    cert_file_name: cert
+                });
+
+                // this.server.any("/*", this.defaultResolver);
             }
         },
 
@@ -529,8 +529,9 @@ const backend = {
 
     compression: {
 
-        // If to enable compression, overriden by the config - actual code may not, but should respect this.
+        // If to enable compression/code compression, overriden by the config - actual code may not, but should respect this.
         enabled: true,
+        codeEnabled: true,
 
         format: new Units.IndexedEnum([
             "NONE",
@@ -590,14 +591,12 @@ const backend = {
                 throw new TypeError("A string must be provided for code compression.");
             }
 
-            if(!data || !data.length) return Buffer.from(data);
-
             if(typeof format !== "number") {
                 throw new Error(`Invalid compression format: ${format}`);
             }
 
-            if (format === backend.compression.format.NONE) {
-                return Buffer.from(data);
+            if(!data || !data.length || !backend.compression.codeEnabled || format === backend.compression.format.NONE) {
+                return Buffer.from(data)
             }
 
             // if (backend.mode === backend.modes.DEVELOPMENT) {
@@ -656,6 +655,9 @@ const backend = {
         ).filter(Boolean);
     },
 
+    /**
+     * @deprecated
+     */
     Errors: {
         0: "Unknown API version",
         1: "Invalid API endpoint",
@@ -741,19 +743,32 @@ const backend = {
         if(level < (5 - backend.logLevel)) return;
         return backend.native.writeLog(level, typeof source === "string" ? source : source?.name || "unknown", ...data.map(item => {
             if(typeof item === "string") return item;
+            if(item instanceof Error) return item.stack || item.message;
             return String(item);
         }));
     },
 
     refreshConfig(){
-        if(backend.config) backend.log("Refreshing configuration");
-
         if(!fs.existsSync(PATH + "/config")){
             backend.log("No main config file found in /config, creating a default config file.")
             fs.writeFileSync(PATH + "/config", fs.readFileSync(PATH + "/etc/default-config", "utf8"))
         }
 
         let path = PATH + "/config";
+        try {
+            const configStat = fs.statSync(path);
+            if (backend._lastConfigMtime && configStat.mtime.getTime() === backend._lastConfigMtime) {
+                backend.log("Configuration file has not been modified, skipping reload.");
+                return;
+            }
+
+            backend._lastConfigMtime = configStat.mtime.getTime();
+        } catch (err) {
+            backend.warn("Failed to check config modification time:", err.message);
+        }
+
+
+        if(backend.config) backend.log("Refreshing configuration");
 
         backend.configRaw = parse(fs.readFileSync(path, "utf8"), {
             strict: true,
@@ -775,6 +790,7 @@ const backend = {
             if (/[/\\]/.test(pipeName)) throw new Error('protocols.ipc.windowsPipeName should not contain slashes - make sure you are not adding a full path.');
             backend.protocols.ipc.socketPath = `\\\\.\\pipe\\${pipeName}`;
         }
+
         backend.protocols.ipc.enabled = protocols.getBlock("ipc").get("enabled", Boolean, true);
 
         // TODO: Better handling of ports (due to apps being able to request custom ports)
@@ -800,11 +816,14 @@ const backend = {
 
         // TODO: Add something like "in production only".
         backend.compression.enabled = backend.config.getBlock("web").get("compress", Boolean, true);
+        backend.compression.codeEnabled = backend.config.getBlock("web").get("compress-code", Boolean, true);
     },
 
     trustedOrigins: new Set,
 
     resolve,
+
+    resolveHandler,
 
     domainRouter,
 
@@ -834,8 +853,9 @@ if(true) {
     db.apps = db.storages.main.openDbi("app.metadata", {}, true);
     
     Units.Manager.loadModule("./core/web");
-    
+
     backend.webServerHandler = Units.Manager.module("akeno.web").onRequest;
+    domainRouter.fallback = backend.webServerHandler;
     
     process.on('uncaughtException', (error) => {
         backend.fatal("[uncaught error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);

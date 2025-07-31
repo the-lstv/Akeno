@@ -18,7 +18,7 @@
 void ParserContext::Init(Napi::Env env, Napi::Object exports) {
     Napi::Function func = DefineClass(env, "ParserContext", {
         InstanceMethod("write", &ParserContext::write),
-        InstanceMethod("onText", &ParserContext::write),
+        InstanceMethod("onText", &ParserContext::write), // Special case
         InstanceMethod("getTagName", &ParserContext::getTagName),
         InstanceMethod("setBodyAttributes", &ParserContext::setBodyAttributes),
         // InstanceMethod("writeHead", &ParserContext::writeHead),
@@ -50,8 +50,14 @@ ParserContext::ParserContext(const Napi::CallbackInfo& info)
 }
 
 void ParserContext::write(const Napi::CallbackInfo& info) {
-    if (info.Length() < 1 || !info[0].IsString()) {
-        Napi::TypeError::New(info.Env(), "Expected a string").ThrowAsJavaScriptException();
+    if (info.Length() < 1 || (!info[0].IsString() && !info[0].IsBuffer())) {
+        Napi::TypeError::New(info.Env(), "Expected a string or a buffer").ThrowAsJavaScriptException();
+        return;
+    }
+
+    if (info[0].IsBuffer()) {
+        Napi::Buffer<char> buffer = info[0].As<Napi::Buffer<char>>();
+        *parser->ctx.output += std::string(buffer.Data(), buffer.Length());
         return;
     }
 
@@ -146,6 +152,18 @@ ParserWrapper::ParserWrapper(const Napi::CallbackInfo& info)
                     return;
                 }
 
+                bool isScriptOrStyle = false;
+                if (!tagStack.empty()) {
+                    const auto& top = tagStack.top();
+                    isScriptOrStyle = (top == "script" || top == "style");
+                }
+
+                bool hasAtSymbol = value.find('@') != std::string_view::npos;
+                if (!hasAtSymbol && !isScriptOrStyle) {
+                    buffer.append(value);
+                    return;
+                }
+
                 Napi::String valueStr = Napi::String::New(env_, value.data(), value.size());
                 Napi::Value stackTop = env_.Null();
                 if (!tagStack.empty()) {
@@ -154,10 +172,19 @@ ParserWrapper::ParserWrapper(const Napi::CallbackInfo& info)
                 }
 
                 Napi::Object* obj = static_cast<Napi::Object*>(userData);
-
                 Napi::Value result = onTextRef_.Call({ valueStr, stackTop, *obj });
+
                 if (result.IsString()) {
                     buffer.append(result.As<Napi::String>().Utf8Value());
+                }
+
+                if (result.IsBuffer()) {
+                    Napi::Buffer<char> buf = result.As<Napi::Buffer<char>>();
+                    buffer.append(buf.Data(), buf.Length());
+                }
+
+                if (result.IsBoolean() && result.As<Napi::Boolean>().Value()) {
+                    buffer.append(value);
                 }
             };
         }
