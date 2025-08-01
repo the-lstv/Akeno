@@ -395,7 +395,7 @@ const backend = {
             }
 
             onReload(){
-                if(!this.server || this.enabled) return;
+                if(!this.server || !this.enabled) return;
 
                 const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
 
