@@ -400,22 +400,30 @@ const server = new class WebServer extends Units.Module {
 
                     // Handle aliases (an URL points to a different file)
                     if (typeof attributes.alias === "string") {
+                        if(attributes.alias.charCodeAt(0) !== 47) {
+                            attributes.alias = "/" + attributes.alias;
+                        }
+
+                        url = attributes.alias;
+
                         if (attributes.alias.indexOf("$url") !== -1) {
-                            attributes.alias = attributes.alias.replace("$url", url);
+                            url = url.replace("$url", req.path);
                         }
 
                         if (attributes.alias.indexOf("$file") !== -1) {
-                            attributes.alias = attributes.alias.replace("$file", nodePath.basename(url));
+                            url = url.replace("$file", nodePath.basename(req.path));
                         }
 
-                        url = attributes.alias.charCodeAt(0) === 47 ? attributes.alias : "/" + attributes.alias;
+                        if (attributes.alias.indexOf("$path") !== -1) {
+                            url = url.replace("$path", nodePath.dirname(req.path));
+                        }
                     }
                 }
             }
 
             /**
              * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit and the cache system is a bit eh.
-            */
+             */
 
             // TODO: Cache this
             let resolvedPath = app.resolvePath(url);
