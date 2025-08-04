@@ -581,6 +581,13 @@ class Addon extends Unit {}
 
 
 /**
+ * @description Represents a server that handles requests and responses.
+ */
+
+class Server extends Unit {}
+
+
+/**
  * @description App is an user application not altering the core functionality, eg. a website
  */
 
@@ -732,4 +739,4 @@ class External extends Unit {
     }
 }
 
-module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, backend };
+module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, Server, backend };

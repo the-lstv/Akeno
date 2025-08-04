@@ -343,7 +343,7 @@ const server = new class WebServer extends Units.Module {
             }
 
             // When the app is disabled
-            if (!app.enabled) {
+            if (app.enabled) {
                 backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422");
                 return;
             }
@@ -904,11 +904,11 @@ function initParser(header) {
 
                     switch (attrib) {
                         case "bootstrap-icons":
-                            this.write(`<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.13.1"}/font/bootstrap-icons.min.css">`)
+                            this.write(`<link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.13.1"}/font/bootstrap-icons.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.13.1"}/font/bootstrap-icons.min.css"></noscript>`);
                             break;
 
                         case "fa-icons":
-                            this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/all.min.css">`)
+                            this.write(`<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/all.min.css"></noscript>`);
                             break;
 
                         case "fa-brands":
@@ -967,10 +967,50 @@ function initParser(header) {
                     break
                 }
 
-                this.write(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`)
+                if (block.properties.charset) {
+                    this.write(`<meta charset="${block.properties.charset}">`);
+                } else {
+                    if (!this.data._setDefaultCharset) {
+                        this.data._setDefaultCharset = true;
+                        this.write(`<meta charset="utf-8">`);
+                    }
+                }
 
                 if (block.properties.title) {
                     this.write(`<title>${block.properties.title}</title>`)
+                }
+
+                if (block.properties.description) {
+                    this.write(`<meta name="description" content="${block.properties.description}">`);
+                }
+
+                if (block.properties.keywords) {
+                    this.write(`<meta name="keywords" content="${block.properties.keywords}">`);
+                }
+
+                if (block.properties.author) {
+                    this.write(`<meta name="author" content="${block.properties.author}">`);
+                }
+
+                if (block.properties.copyright) {
+                    this.write(`<meta name="copyright" content="${block.properties.copyright}">`);
+                }
+
+                if (block.properties.themeColor) {
+                    this.write(`<meta name="theme-color" content="${block.properties.themeColor}">`);
+                }
+
+                if (block.properties.rating) {
+                    this.write(`<meta name="rating" content="${block.properties.rating}">`);
+                }
+
+                if (block.properties.viewport) {
+                    this.write(`<meta name="viewport" content="${block.properties.viewport}">`);
+                } else {
+                    if (!this.data._setDefaultViewport) {
+                        this.data._setDefaultViewport = true;
+                        this.write(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`);
+                    }
                 }
 
                 let bodyAttributes = this.data.using_ls_css ? "ls" : "";
