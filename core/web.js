@@ -343,7 +343,7 @@ const server = new class WebServer extends Units.Module {
             }
 
             // When the app is disabled
-            if (app.enabled) {
+            if (!app.enabled) {
                 backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422");
                 return;
             }
