@@ -66,11 +66,11 @@ class WebApp extends Units.App {
      * Resolve a relative, absolute, or root path to a full path while safely avoiding directory traversal attacks.
      * @param {string} path 
      * @param {string} current 
+     * @param {boolean} useRootPath - Indicates whether to use the root path.
      * @returns 
      */
 
-    resolvePath(path, current = null) {
-        let useRootPath = false;
+    resolvePath(path, current = null, useRootPath = false) {
         let isRelative = false;
 
         if (path.charCodeAt(0) === 126) { // '~'
@@ -148,7 +148,7 @@ class WebApp extends Units.App {
         this._rootPathAllowed = serverBlock.get("allowRootPath", Boolean, true);
 
         if (custom_root && custom_root.length > 0) {
-            this.root = this.resolvePath(custom_root).full;
+            this.root = this.resolvePath(custom_root, null, true).full;
         } else {
             this.root = this.path;
         }
@@ -272,11 +272,11 @@ class WebApp extends Units.App {
 
             // Routes (aliases)
             for (const route of this.config.getBlocks("route")) { // Since 1.6.5, this is now called alias
-                const to = route.get("to", String);
-                if (!to) continue;
+                const to = route.get("to", Array);
+                if (!to || typeof to[0] !== "string") continue;
 
                 for (const pattern of route.attributes) {
-                    this.pathMatcher.add(pattern, { alias: to });
+                    this.pathMatcher.add(pattern, { alias: to[0] });
                 }
             }
 
@@ -455,7 +455,7 @@ const server = new class WebServer extends Units.Module {
 
             // Because we can't read the accept-encoding header after generating async content....
             const extension = cacheEntry ? cacheEntry[0][5] : nodePath.extname(file).slice(1);
-            const suggestedCompressionAlgorithm = backend.helper.getUsedCompression(ACCEPTS_ENCODING, cacheEntry ? cacheEntry[0][6] : backend.mime.getType(extension));
+            const suggestedAlg = backend.helper.getUsedCompression(ACCEPTS_ENCODING, cacheEntry ? cacheEntry[0][6] : backend.mime.getType(extension));
 
             // Generate and serve fresh content if not cached or modified
             if (!cacheEntry || server.fileServer.needsUpdate(file, cacheEntry)) {
@@ -478,7 +478,7 @@ const server = new class WebServer extends Units.Module {
                 }
             }
 
-            server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedCompressionAlgorithm);
+            server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedAlg);
 
         } catch (error) {
             app.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ", error);
@@ -768,6 +768,8 @@ const ls_components = {
     "js": [
         "animation",
         "gl",
+        "imagecropper",
+        "modal",
         "network",
         "node",
         "reactive",
@@ -836,7 +838,7 @@ function initParser(header) {
 
                     let attrib = has_component_list ? entry.name : entry;
 
-                    const components = has_component_list && entry.values.length > 0 ? [] : backend.constants.EMPTY_ARRAY;
+                    let components = has_component_list && entry.values.length > 0 ? [] : backend.constants.EMPTY_ARRAY;
 
                     // We sort alphabetically and remove duplicates to maximize cache hits
                     // This is the fastest implementation based on my benchmark: https://jsbm.dev/Au74tivWZWKEo
@@ -879,20 +881,34 @@ function initParser(header) {
 
                         let components_string;
 
-                        if (is_merged || attrib === "ls.css") {
-                            components_string = (is_merged ? components.filter(value => !ls_components.js.includes(value)) : components).join();
+                        const singularCSSComponent = attrib.startsWith("ls.css.")? attrib.substring(8).toLowerCase() : null;
+                        if (singularCSSComponent && ls_components.css.includes(singularCSSComponent)) {
+                            components = [singularCSSComponent];
+                        }
 
-                            if (!(components_string.length === 0 && this.data.using_ls_css)) {
-                                this.write(`<link rel=stylesheet href="${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string ? components_string + "/" : ""}${this.data.using_ls_css ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
+                        const singularJSComponent = attrib.startsWith("ls.js.")? attrib.substring(6).toLowerCase() : null;
+                        if (singularJSComponent && ls_components.js.includes(singularJSComponent)) {
+                            components = [singularJSComponent];
+                        }
+
+                        if (is_merged || attrib === "ls.css" || singularCSSComponent) {
+                            const cssComponents = is_merged ? components.filter(value => !ls_components.js.includes(value)) : components;
+                            const useSingular = cssComponents.length === 1 && (this.data.using_ls_css || singularCSSComponent);
+                            components_string = cssComponents.join();
+
+                            if (components_string.length !== 0) {
+                                this.write(`<link rel=stylesheet href="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_css ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
                                 this.data.using_ls_css = true;
                             }
                         }
 
-                        if (is_merged || attrib === "ls.js") {
-                            components_string = (is_merged ? components.filter(value => !ls_components.css.includes(value)) : components).join();
+                        if (is_merged || attrib === "ls.js" || singularJSComponent) {
+                            const jsComponents = is_merged ? components.filter(value => !ls_components.css.includes(value)) : components;
+                            const useSingular = jsComponents.length === 1 && (this.data.using_ls_js || singularJSComponent);
+                            components_string = jsComponents.join();
 
-                            if (!(components_string.length === 0 && this.data.using_ls_js)) {
-                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string ? components_string + "/" : ""}${this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"></script>`);
+                            if (components_string.length !== 0) {
+                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"></script>`);
                                 this.data.using_ls_js = true;
                             }
                         }
@@ -933,7 +949,7 @@ function initParser(header) {
 
                                 const resolvedPath = this.data.app.resolvePath(attrib, this.data.directory);
                                 const path = resolvedPath.full;
-                                const link = (resolvedPath.useRootPath ? "~" : "") + resolvedPath.relative || attrib;
+                                const link = (resolvedPath.useRootPath ? "/~" : "") + resolvedPath.relative || attrib;
 
                                 if (!fs.existsSync(path)) {
                                     this.data.app.warn("Error: File \"" + path + "\" does not exist.");

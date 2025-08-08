@@ -7,6 +7,11 @@
 - Add a proper installation script
 - ! Stop relying on napi and use v8 directly
 
+## New in 1.6.6-beta
+- Added a shorthand syntax for blocks
+- Added missing meta tags
+- Templates now automatically merge <head> tags
+- Bug fixes and other enhancements
 
 ## New in 1.6.5-beta
 - Reworked webserver routing, optimized web app routing performance

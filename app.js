@@ -24,7 +24,7 @@ const Units = require("akeno:units");
 
 // Global variables
 let
-    version = new Units.Version("1.6.5-beta")
+    version = new Units.Version("1.6.6-beta")
 ;
 
 
@@ -115,7 +115,7 @@ function resolve(res, req) {
     const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
     req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
 
-    if(req.domain.startsWith("www.") && backend.config.getBlock("web").get("www-redirect", Boolean, true)) {
+    if(req.domain.startsWith("www.") && backend.config.getBlock("web").get("redirect-www", Boolean, false)) {
         res.writeStatus("301 Moved Permanently");
         res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
         res.end();

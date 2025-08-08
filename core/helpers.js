@@ -8,6 +8,10 @@ const nodePath = require("node:path");
 const fs = require("node:fs");
 const Units = require("./unit");
 
+const uws = require("uWebSockets.js");
+const { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash");
+const sharp = require('sharp');
+
 /**
  * List of MIME types that should not be compressed.
  * @type {string[]}
@@ -870,14 +874,49 @@ module.exports = {
             }
         }
 
-        upload(hash){
+        upload(hash, compressImages = false){
             let parts = uws.getParts(this.req.fullBody, this.req.contentType);
+            
+            if(compressImages) {
+                return this.processFilesAndCompressImages(parts, hash);
+            }
+
             return this.processFiles(parts, hash);
         }
 
         processFiles(files, hash){
             for(let part of files){
-                part.data = Buffer.from(part.data)
+                if (!(part.data instanceof Buffer)) part.data = Buffer.from(part.data);
+
+                if(hash) {
+                    if(hash === "xxh3") part.hash = xxh3.xxh64(part.data).toString(16); else
+                    if(hash === "xxh32") part.hash = xxh32(part.data).toString(16); else
+                    if(hash === "xxh64") part.hash = xxh64(part.data).toString(16); else
+                    if(hash === "xxh128") part.hash = xxh3.xxh128(part.data).toString(16); else
+
+                    part.hash = crypto.createHash('md5').update(part.data).digest('hex');
+                }
+            }
+
+            return files
+        }
+
+        async processFilesAndCompressImages(files, hash){
+            for(let part of files){
+                if (!(part.data instanceof Buffer)) part.data = Buffer.from(part.data);
+
+                if(part.data.length > 0 && part.type && part.type.startsWith("image/")) {
+                    try {
+                        part.data = await sharp(part.data).webp({
+                            quality: 80,
+                            lossless: false
+                        }).toBuffer();
+                        part.type = "image/webp";
+                        part.filename = part.filename.replace(/\.[^.]+$/, '.webp');
+                    } catch (e) {
+                        console.error("Error compressing image:", e);
+                    }
+                }
 
                 if(hash) {
                     if(hash === "xxh3") part.hash = xxh3.xxh64(part.data).toString(16); else
