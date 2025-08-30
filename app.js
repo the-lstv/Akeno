@@ -5,8 +5,6 @@
     Last modified: 2025
     License: GPL-3.0
     See: https://github.com/the-lstv/akeno
-
-    This is a test, please ignore
 */
 
 // Module aliases
@@ -17,8 +15,9 @@ moduleAlias.addAliases({
     "akeno:kvdb": __dirname + "/core/kvdb.js",
     "akeno:units": __dirname + "/core/unit.js",
     "akeno:mime": __dirname + "/core/mime.js",
-    "akeno:ipc": __dirname + "/core/ipc.js",
-    "akeno:router": __dirname + "/core/router.js"
+    "akeno:ipc": __dirname + "/core/ipc",
+    "akeno:router": __dirname + "/core/router.js",
+    "akeno:bucket": __dirname + "/core/bucket"
 });
 
 const Units = require("akeno:units");
@@ -225,6 +224,8 @@ const backend = {
     constants: {
         EMPTY_OBJECT, EMPTY_ARRAY, EMPTY_BUFFER, SINCE_STARTUP,
         IS_NODE_INSPECTOR_ENABLED,
+
+        MAX_BODY_SIZE: 107374182400, // 100 GB
 
         MIN_COMPRESSION_SIZE: 512,
     },

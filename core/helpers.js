@@ -842,16 +842,23 @@ module.exports = {
      * @class
      */
     bodyParser: class {
-        constructor(req, res, callback, stream = false){
+        constructor(req, res, callback, options = {}){
             this.req = req;
             this.res = res;
 
             this.type = req.contentType;
             this.length = req.contentLength || 0;
 
+            // Old behavior
+            if(options === true) {
+                options = { stream: true };
+            }
+
+            this.options = options;
+
             if(!backend.helper.bodyParser.hasBody(req)){
                 req.hasBody = false;
-                if(stream) {
+                if(options.stream) {
                     callback(null, true);
                 } else {
                     callback(this);
@@ -859,24 +866,46 @@ module.exports = {
                 return
             }
 
-            if(!stream){
-                req.fullBody = Buffer.alloc(0);    
+            if (!options.stream) {
+                let chunks = [];
+                let totalLength = 0;
+                let aborted = false;
 
                 res.onData((chunk, isLast) => {
-                    req.fullBody = Buffer.concat([req.fullBody, Buffer.from(chunk)]);
+                    if (aborted) return;
+
+                    const buffer = Buffer.from(chunk.slice(chunk.byteOffset || 0, (chunk.byteOffset || 0) + chunk.byteLength));
+                    chunks.push(buffer);
+                    totalLength += buffer.length || 0;
+
+                    if(totalLength > (options.maxSize || backend.constants.MAX_BODY_SIZE)) {
+                        // Handle max body size exceeded
+                        if(options.waitOnError) {
+                            // Wait until the full body is received before responding (wastes CPU and bandwidth, but sends a proper error)
+                            this.res.writeStatus('413 Payload Too Large').end();
+                        } else {
+                            // Forcefully close the connection to stop uploading (better, but user won't get an error message)
+                            this.res.close();
+                        }
+                        chunks = null;
+                        aborted = true;
+                        return;
+                    }
 
                     if (isLast) {
+                        req.fullBody = Buffer.concat(chunks, totalLength);
+                        chunks = null;
                         callback(this);
                     }
-                })
+                });
             } else {
                 res.onData(callback);
             }
         }
 
-        upload(hash, compressImages = false){
-            let parts = uws.getParts(this.req.fullBody, this.req.contentType);
-            
+        upload(hash = null, compressImages = false){
+            let parts = this.parts();
+
             if(compressImages) {
                 return this.processFilesAndCompressImages(parts, hash);
             }
@@ -884,7 +913,7 @@ module.exports = {
             return this.processFiles(parts, hash);
         }
 
-        processFiles(files, hash){
+        processFiles(files, hash = false){
             for(let part of files){
                 if (!(part.data instanceof Buffer)) part.data = Buffer.from(part.data);
 
@@ -893,7 +922,6 @@ module.exports = {
                     if(hash === "xxh32") part.hash = xxh32(part.data).toString(16); else
                     if(hash === "xxh64") part.hash = xxh64(part.data).toString(16); else
                     if(hash === "xxh128") part.hash = xxh3.xxh128(part.data).toString(16); else
-
                     part.hash = crypto.createHash('md5').update(part.data).digest('hex');
                 }
             }
@@ -901,7 +929,7 @@ module.exports = {
             return files
         }
 
-        async processFilesAndCompressImages(files, hash){
+        async processFilesAndCompressImages(files, hash = false){
             for(let part of files){
                 if (!(part.data instanceof Buffer)) part.data = Buffer.from(part.data);
 
@@ -911,6 +939,7 @@ module.exports = {
                             quality: 80,
                             lossless: false
                         }).toBuffer();
+
                         part.type = "image/webp";
                         part.filename = part.filename.replace(/\.[^.]+$/, '.webp');
                     } catch (e) {
@@ -923,7 +952,6 @@ module.exports = {
                     if(hash === "xxh32") part.hash = xxh32(part.data).toString(16); else
                     if(hash === "xxh64") part.hash = xxh64(part.data).toString(16); else
                     if(hash === "xxh128") part.hash = xxh3.xxh128(part.data).toString(16); else
-
                     part.hash = crypto.createHash('md5').update(part.data).digest('hex');
                 }
             }
@@ -933,6 +961,10 @@ module.exports = {
 
         parts(){
             return uws.getParts(this.req.fullBody, this.req.contentType);
+        }
+
+        free(){
+            this.req.fullBody = null;
         }
 
         static hasBody(req){
