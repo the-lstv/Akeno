@@ -216,6 +216,9 @@ public:
     std::string exportCopy(const FileCache *cacheEntry) {
         if (!cacheEntry) return "";
 
+        // If no template, just wrap the (possibly trimmed) file content
+        if (!cacheEntry->templateCache) return "<!DOCTYPE html>\n" + options.header + "\n<html lang=\"en\">" + cacheEntry->content + "</html>";
+
         // 1. Extract and remove the file's <head>…</head> content
         std::string fileContent = cacheEntry->content;
         std::string fileHeadInner;
@@ -227,10 +230,7 @@ public:
             fileContent.erase(fileHeadOpen, fileHeadClose + 7 - fileHeadOpen); // remove "<head>…</head>"
         }
 
-        // 2. If no template, just wrap the (possibly trimmed) file content
-        if (!cacheEntry->templateCache) return "<!DOCTYPE html>\n" + options.header + "\n<html lang=\"en\">" + fileContent + "</html>";
-
-        // 3. Merge extracted head into the template's <head>
+        // 2. Merge extracted head into the template's <head>
         const auto *tmpl = cacheEntry->templateCache;
         std::string combinedTemplateContent = tmpl->content;
 
@@ -244,7 +244,7 @@ public:
             }
         }
 
-        // 4. Build result, adjusting split if head insert was before it
+        // 3. Build result, adjusting split if head insert was before it
         const bool hasSplit = tmpl->templateChunkSplit > 0;
         const size_t origSplit = tmpl->templateChunkSplit;
         size_t splitPoint = origSplit;

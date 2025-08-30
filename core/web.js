@@ -773,6 +773,7 @@ const ls_components = {
         "network",
         "node",
         "reactive",
+        "resize",
         "tabs",
         "toast",
         "tooltips",
