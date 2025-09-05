@@ -340,7 +340,7 @@ class FileServer extends CacheManager {
      */
     needsUpdate(resolvedPath, fileEntry) {
         const now = Date.now();
-        const minCheckInterval = backend.mode === backend.modes.DEVELOPMENT ? 1000 : 60000;
+        const minCheckInterval = backend.mode === backend.modes.DEVELOPMENT ? 1000 : 30000;
         if (now - fileEntry[0][2] < minCheckInterval) {
             return false;
         }
