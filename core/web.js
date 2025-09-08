@@ -315,6 +315,11 @@ class WebApp extends Units.App {
         const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String);
         this._404 = _404 ? this.resolvePath(_404) : null;
     }
+
+    ws(options){
+        this._websocketEnabled = true;
+        this.websocket = options;
+    }
 }
 
 const server = new class WebServer extends Units.Module {

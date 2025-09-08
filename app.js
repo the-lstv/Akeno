@@ -99,16 +99,16 @@ const db = {
 * myHandler(res, req);
 */
 
-function resolve(res, req) {
+function resolve(res, req, wsContext = null) {
     if(!(this instanceof Units.Protocol)) {
         throw new TypeError("resolve() must be called with Units.Protocol as context");
     }
 
-    if(backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING){
+    if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
         req.begin = performance.now();
     }
 
-    // Uppercased because of the common convention, a lot of people expect methods to be uppercase
+    // Uppercased because of common convention, a lot of people expect methods to be uppercase
     req.method = req.getMethod().toUpperCase();
     req.secure = Boolean(this.requestFlags?.secure);
     req.origin = req.getHeader('origin');
@@ -135,7 +135,7 @@ function resolve(res, req) {
     const url = req.getUrl();
     req.path = url.indexOf("%") === -1? url: decodeURIComponent(url);
 
-    if(req.method !== "GET"){
+    if(req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE") {
         req.contentType = req.getHeader("content-type");
         req.contentLength = req.getHeader("content-length");
     }
@@ -144,18 +144,50 @@ function resolve(res, req) {
         req.abort = true;
     });
 
-    resolveHandler(req, res, domainRouter.match(req.domain));
+    resolveHandler(req, res, domainRouter.match(req.domain), wsContext);
 }
 
-function resolveHandler(req, res, handler) {
+function resolveHandler(req, res, handler, wsContext) {
     if(typeof handler === "function"){
+        if(wsContext) {
+            if(handler.__includeWebSocketUpgrades) {
+                handler(req, res, wsContext);
+            } else {
+                res.writeStatus("400 Bad Request").end("400 Bad Request");
+                return;
+            }
+        }
+
         handler(req, res);
         return;
     }
 
     if (typeof handler === "object") {
         if (handler instanceof Router.PathMatcher) {
-            return resolveHandler(req, res, handler.match(req.path));
+            return resolveHandler(req, res, handler.match(req.path), wsContext);
+        }
+
+        if(wsContext){
+            if(typeof handler.websocket !== "object"){
+                res.writeStatus("400 Bad Request").end("400 Bad Request");
+                return;
+            }
+
+            if(typeof handler.websocket.upgrade === "function") {
+                handler.websocket.upgrade(req, res, wsContext);
+            } else {
+                // TODO: Websocket handlers for Apps
+                if(!req.abort) res.upgrade({
+                    uuid: uuid(),
+                    url: req.path,
+                    query: req.getQuery(),
+                    domain: req.domain,
+                    host: req.host,
+                    ip: backend.helper.getRequestIP(res),
+                    handler: handler.websocket
+                }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
+            }
+            return;
         }
 
         if(typeof handler.onRequest === "function"){
@@ -448,7 +480,7 @@ const backend = {
                 this.server = ssl_config? uws.SSLApp(ssl_config): uws.SSLApp();
                 this.server.any("/*", this.defaultResolver);
 
-                // if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
+                if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
             }
         },
 
@@ -492,10 +524,14 @@ const backend = {
                     protocol: "ws",
                     type: "ws"
                 })
+
+                this.defaultResolver = resolve.bind(this);
             }
 
             init() {
                 // TODO: In the future, this could be moved to the C++ side
+                // TODO: Add an API for dedicated WebSocket/http apps rather than a shared one
+                // Default WS handler
                 this.options = {
                     idleTimeout: backend.config.getBlock("websocket").get("idleTimeout", Number) || 60,
                     maxBackpressure: backend.config.getBlock("websocket").get("maxBackpressure", Number) || 1024 * 1024,
@@ -504,13 +540,14 @@ const backend = {
             
                     sendPingsAutomatically: true,
 
-                    upgrade(res, req, context) {
+                    upgrade: (res, req, context) => {
+                        this.defaultResolver(res, req, context);
                     },
 
                     open(ws) {
                         if(ws.handler.open) ws.handler.open(ws);
                     },
-                    
+
                     message(ws, message, isBinary) {
                         if(ws.handler.message) ws.handler.message(ws, message, isBinary);
                     },
