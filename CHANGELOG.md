@@ -3,14 +3,28 @@
 - Implement a proper database system
 - Complete package manager for addons/modules
 - Rework many parts, including the CLI, dynamic content, and the router
-- Write a proper documentation
-- Add a proper installation script
+- Write a proper documentation (https://lstv.space/docs/akeno is work in progress now)
+- Add a proper installation script (soon)
 - ! Stop relying on napi and use v8 directly
+
+## Known bugs as of 1.6.6-beta
+- [Critical] Empty html files crash the server (parser bug)
+- [Priority] HTML files without a template now have a bug where some @page directives are ignored
+
+## New in 1.6.7-beta
+- Re-added WebSocket support and APIs
+- Globally accessible scripting API (experimental)
+- Units.WebApp can now be created or selected programmatically
+- Fixed some request errors
+- Added a FileBucket API for efficient and deduplicated file storing with lightning-fast reads (using xxHash and LMDB)
+- Fixed high memory and CPU usage while uploading large files
+- Upload processing experiments, including on-the-fly image compression/re-encoding before storage
+- [Documentation is finally in the works!](https://lstv.space/docs/akeno)
 
 ## New in 1.6.6-beta
 - Added a shorthand syntax for blocks
 - Added missing meta tags
-- Templates now automatically merge <head> tags
+- Templates now automatically merge \<head> tags
 - Bug fixes and other enhancements
 
 ## New in 1.6.5-beta
@@ -37,7 +51,7 @@
 - Apps can now register hostnames more easily via a uniform API, with group and wildcard support (eg. `*.example.{com,net}`)
 
 ## New in 1.6.0-beta
-- Major changes all around (basically, preparing for a 2.0.0 release)
+- Major changes all around (basically getting ready for a 2.0.0 release)
 - A brand new versioning utility, for consistent versioning and matching for all modules, addons, etc.
 - Added pre-release and build metadata to versioning
 - Complete core redesign around a new modular Unit system
@@ -81,7 +95,7 @@
 
 
 ## New in 1.5.5
-X URL routing now uses Globs
+-  URL routing now uses Globs
 - Web app URL routers now use Globs
 - All web requests now include ETag
 - Overall code enhancements and small performance & memory efficiency improvements
@@ -138,6 +152,6 @@ X URL routing now uses Globs
 - Refactored API, user management, user cache
 - Officially renamed to Akeno (from "ExtraGon API")
 - Setup script added
-- Removed periodicall hit counting by default for performance
+- Removed periodic hit counting by default for performance
 
-*(Versions prior to 1.4 were a non-open-source server software used exclusively by ExtraGon and LSTV.space's services.)*
+*(Versions prior to 1.4 were non-open-source developed for ExtraGon.cloud and LSTV.space, codenamed "ExtraGon API", which we later rebranded as Akeno, an open-source server software project. This project has been in development as early as late 2020, where the original (v1 and v2) versions were written in PHP (v2 being a hybrid between Node and PHP), and v3 was a complete rewrite in JavaScript, later turned into "ExtraGon API". Since then we have dropped the architecture versioning, and instead turned Akeno into a public full-featured project to continue the evolution, restarting the versioning as well.)*
