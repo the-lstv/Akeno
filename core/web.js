@@ -924,6 +924,11 @@ function initParser(header) {
                     }
 
 
+                    /**
+                     * TODO:FIXME: (High priority)
+                     * Implement a proper source system to allow custom sources, and use a real resource API instead of hard-coded URLs.
+                     */
+
                     switch (attrib) {
                         case "bootstrap-icons":
                             this.write(`<link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.13.1"}/font/bootstrap-icons.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.13.1"}/font/bootstrap-icons.min.css"></noscript>`);
@@ -935,6 +940,24 @@ function initParser(header) {
 
                         case "fa-brands":
                             this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/brands.min.css">`)
+                            break;
+
+                        case "hljs":
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/highlight.min.js"></script>`);
+
+                            for (const component of components) {
+                                if(component.startsWith("lang:")) {
+                                    this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/languages/${component.slice(5)}.min.js"></script>`);
+                                }
+
+                                if(component.startsWith("theme:")) {
+                                    this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/styles/${component.slice(5)}.min.css">`);
+                                }
+                            }
+                            break;
+
+                        case "marked":
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "16.2.1"}/lib/marked.umd.min.js"></script>`);
                             break;
 
                         case "google-fonts":
