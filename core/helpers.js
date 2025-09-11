@@ -595,7 +595,7 @@ module.exports = {
         }
 
         res.cork(() => {
-            res.writeStatus(String(status) || "200 OK");
+            res.writeStatus(String(status || "200 OK"));
 
             if(req.begin) {
                 res.writeHeader("server-timing", `generation;dur=${performance.now() - req.begin}`);
