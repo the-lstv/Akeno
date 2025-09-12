@@ -23,10 +23,11 @@
     "lmdb": "^3.4.2",
     "minimist": "^1.2.8",
     "module-alias": "^2.2.3",
+    "node-addon-api": "^8.5.0",
     "node-lmdb": "^0.10.1",
     "pm2": "^6.0.8",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",
     "uglify-js": "^3.19.3",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0"
   }
 }

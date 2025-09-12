@@ -10,7 +10,13 @@ const Units = require("./unit");
 
 const uws = require("uWebSockets.js");
 const { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash");
-const sharp = require('sharp');
+
+let sharp;
+try {
+    sharp = require('sharp');
+} catch (e) {
+    sharp = null;
+}
 
 /**
  * List of MIME types that should not be compressed.
@@ -933,7 +939,7 @@ module.exports = {
             for(let part of files){
                 if (!(part.data instanceof Buffer)) part.data = Buffer.from(part.data);
 
-                if(part.data.length > 0 && part.type && part.type.startsWith("image/")) {
+                if(part.data.length > 0 && part.type && part.type.startsWith("image/") && sharp) {
                     try {
                         part.data = await sharp(part.data).webp({
                             quality: 80,

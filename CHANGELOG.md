@@ -19,6 +19,7 @@
 - Added a FileBucket API for efficient and deduplicated file storing with lightning-fast reads (using xxHash and LMDB)
 - Fixed high memory and CPU usage while uploading large files
 - Upload processing experiments, including on-the-fly image compression/re-encoding before storage
+- Experimental build for Windows
 - [Documentation is finally in the works!](https://lstv.space/docs/akeno)
 
 ## New in 1.6.6-beta

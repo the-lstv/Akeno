@@ -58,7 +58,7 @@ const
     { Server: IPCServer } = require("./core/ipc"),        // IPC server
     { parse, configTools } = require("./core/parser"),    // Parser
 
-    native = require("./core/native/dist/akeno-native")   // Native bindings
+    native = require(`./core/native/dist/akeno-native-${process.platform}-${process.arch}.node`)   // Native bindings
 ;
 
 
