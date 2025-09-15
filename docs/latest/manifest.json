@@ -1,0 +1,10 @@
+{
+    "sidebar": [
+        {
+            "title": "Getting started",
+            "children": [
+                { "title": "Introduction", "path": "/getting_started/introduction.md" }
+            ]
+        }
+    ]
+}

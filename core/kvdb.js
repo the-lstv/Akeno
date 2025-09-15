@@ -13,10 +13,14 @@ const fs = require("node:fs");
 let lmdb;
 
 try {
-    // lmdb = require('node-lmdb');
-    throw "";
+    lmdb = require('node-lmdb');
 } catch (e) {
-    console.warn('Warning: node-lmdb module is not installed. Since we are stepping away from this module for countless issues, it is not required, but the database will be switched to memory-only mode.\n* Data will not be stored to disk! *');
+    if(e.code === "ERR_DLOPEN_FAILED") {
+        console.warn('Warning: node-lmdb failed to load (ERR_DLOPEN_FAILED). Database has been switched to memory-only mode. Please verify that your environment is set up correctly.');
+    } else {
+        console.warn('Warning: node-lmdb module is not installed. Database will be switched to memory-only mode.\n* Data will not be stored to disk! *');
+    }
+
     lmdb = null;
 }
 
