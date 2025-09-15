@@ -213,46 +213,69 @@ public:
     }
 
     // TODO: This *needs* a better implementation
-    std::string exportCopy(const FileCache* cacheEntry) {
+    std::string exportCopy(const FileCache *cacheEntry) {
         if (!cacheEntry) return "";
-    
-        // If there's no template, just return the content.
-        if (!cacheEntry->templateCache) return "<!DOCTYPE html>\n" + options.header + "\n<html>" + cacheEntry->content + "</html>";
-    
-        const auto* tmpl = cacheEntry->templateCache;
+
+        // If no template, just wrap the (possibly trimmed) file content
+        if (!cacheEntry->templateCache) return "<!DOCTYPE html>\n" + options.header + "\n<html lang=\"en\">" + cacheEntry->content + "</html>";
+
+        // 1. Extract and remove the file's <head>…</head> content
+        std::string fileContent = cacheEntry->content;
+        std::string fileHeadInner;
+        size_t fileHeadOpen = fileContent.find("<head>");
+        size_t fileHeadClose = fileContent.find("</head>");
+        if (fileHeadOpen != std::string::npos && fileHeadClose != std::string::npos && fileHeadClose > fileHeadOpen) {
+            size_t innerStart = fileHeadOpen + 6; // after "<head>"
+            fileHeadInner = fileContent.substr(innerStart, fileHeadClose - innerStart);
+            fileContent.erase(fileHeadOpen, fileHeadClose + 7 - fileHeadOpen); // remove "<head>…</head>"
+        }
+
+        // 2. Merge extracted head into the template's <head>
+        const auto *tmpl = cacheEntry->templateCache;
+        std::string combinedTemplateContent = tmpl->content;
+
+        size_t tmplHeadOpen2 = std::string::npos;
+        size_t tmplHeadClose2 = std::string::npos;
+        if (!fileHeadInner.empty()) {
+            tmplHeadOpen2 = combinedTemplateContent.find("<head>");
+            tmplHeadClose2 = combinedTemplateContent.find("</head>");
+            if (tmplHeadOpen2 != std::string::npos && tmplHeadClose2 != std::string::npos && tmplHeadClose2 > tmplHeadOpen2) {
+                combinedTemplateContent.insert(tmplHeadClose2, fileHeadInner);
+            }
+        }
+
+        // 3. Build result, adjusting split if head insert was before it
         const bool hasSplit = tmpl->templateChunkSplit > 0;
-        const size_t tmplLen = tmpl->content.size();
-        const size_t split = hasSplit ? tmpl->templateChunkSplit : 0;
-    
-        // Pre-calculate the result size for efficiency.
-        size_t resultSize = cacheEntry->content.size() + options.header.size() + 15;
+        const size_t origSplit = tmpl->templateChunkSplit;
+        size_t splitPoint = origSplit;
+        if (tmplHeadClose2 != std::string::npos && tmplHeadClose2 < origSplit) {
+            splitPoint += fileHeadInner.size();
+        }
+
+        const size_t tmplLen = combinedTemplateContent.size();
+        size_t resultSize = fileContent.size() + options.header.size() + 15;
         if (hasSplit) {
-            resultSize += split; // before split
-            resultSize += tmplLen - split; // after split
+            resultSize += splitPoint;
+            resultSize += tmplLen - splitPoint;
         } else {
             resultSize += tmplLen;
         }
-    
-        std::string result = "<!DOCTYPE html>\n" + options.header + "\n<html>";
 
+        std::string result = "<!DOCTYPE html>\n" + options.header + "\n<html lang=\"en\">";
         result.reserve(resultSize);
-    
+
         if (hasSplit) {
-            // Add template before split
-            result.append(tmpl->content, 0, split);
+            result.append(combinedTemplateContent, 0, splitPoint);
         } else {
-            // Add whole template
-            result.append(tmpl->content);
+            result.append(combinedTemplateContent);
         }
-    
-        // Add main content
-        result.append(cacheEntry->content);
-    
+
+        result.append(fileContent);
+
         if (hasSplit) {
-            // Add template after split
-            result.append(tmpl->content, split, tmplLen - split);
+            result.append(combinedTemplateContent, splitPoint, tmplLen - splitPoint);
         }
-    
+
         return result + "</html>";
     }
 

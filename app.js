@@ -15,8 +15,9 @@ moduleAlias.addAliases({
     "akeno:kvdb": __dirname + "/core/kvdb.js",
     "akeno:units": __dirname + "/core/unit.js",
     "akeno:mime": __dirname + "/core/mime.js",
-    "akeno:ipc": __dirname + "/core/ipc.js",
-    "akeno:router": __dirname + "/core/router.js"
+    "akeno:ipc": __dirname + "/core/ipc",
+    "akeno:router": __dirname + "/core/router.js",
+    "akeno:bucket": __dirname + "/core/bucket"
 });
 
 const Units = require("akeno:units");
@@ -24,7 +25,7 @@ const Units = require("akeno:units");
 
 // Global variables
 let
-    version = new Units.Version("1.6.5-beta")
+    version = new Units.Version("1.6.7-beta")
 ;
 
 
@@ -57,7 +58,7 @@ const
     { Server: IPCServer } = require("./core/ipc"),        // IPC server
     { parse, configTools } = require("./core/parser"),    // Parser
 
-    native = require("./core/native/dist/akeno-native")   // Native bindings
+    native = require(`./core/native/dist/akeno-native-${process.platform}-${process.arch}.node`)   // Native bindings
 ;
 
 
@@ -98,16 +99,16 @@ const db = {
 * myHandler(res, req);
 */
 
-function resolve(res, req) {
+function resolve(res, req, wsContext = null) {
     if(!(this instanceof Units.Protocol)) {
         throw new TypeError("resolve() must be called with Units.Protocol as context");
     }
 
-    if(backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING){
+    if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
         req.begin = performance.now();
     }
 
-    // Uppercased because of the common convention, a lot of people expect methods to be uppercase
+    // Uppercased because of common convention, a lot of people expect methods to be uppercase
     req.method = req.getMethod().toUpperCase();
     req.secure = Boolean(this.requestFlags?.secure);
     req.origin = req.getHeader('origin');
@@ -115,7 +116,7 @@ function resolve(res, req) {
     const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
     req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
 
-    if(req.domain.startsWith("www.") && backend.config.getBlock("web").get("www-redirect", Boolean, true)) {
+    if(req.domain.startsWith("www.") && backend.config.getBlock("web").get("redirect-www", Boolean, false)) {
         res.writeStatus("301 Moved Permanently");
         res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
         res.end();
@@ -134,7 +135,7 @@ function resolve(res, req) {
     const url = req.getUrl();
     req.path = url.indexOf("%") === -1? url: decodeURIComponent(url);
 
-    if(req.method !== "GET"){
+    if(req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE") {
         req.contentType = req.getHeader("content-type");
         req.contentLength = req.getHeader("content-length");
     }
@@ -143,18 +144,50 @@ function resolve(res, req) {
         req.abort = true;
     });
 
-    resolveHandler(req, res, domainRouter.match(req.domain));
+    resolveHandler(req, res, domainRouter.match(req.domain), wsContext);
 }
 
-function resolveHandler(req, res, handler) {
+function resolveHandler(req, res, handler, wsContext) {
     if(typeof handler === "function"){
+        if(wsContext) {
+            if(handler.__includeWebSocketUpgrades) {
+                handler(req, res, wsContext);
+            } else {
+                res.writeStatus("400 Bad Request").end("400 Bad Request");
+                return;
+            }
+        }
+
         handler(req, res);
         return;
     }
 
     if (typeof handler === "object") {
         if (handler instanceof Router.PathMatcher) {
-            return resolveHandler(req, res, handler.match(req.path));
+            return resolveHandler(req, res, handler.match(req.path), wsContext);
+        }
+
+        if(wsContext){
+            if(typeof handler.websocket !== "object"){
+                res.writeStatus("400 Bad Request").end("400 Bad Request");
+                return;
+            }
+
+            if(typeof handler.websocket.upgrade === "function") {
+                handler.websocket.upgrade(req, res, wsContext);
+            } else {
+                // TODO: Websocket handlers for Apps
+                if(!req.abort) res.upgrade({
+                    uuid: uuid(),
+                    url: req.path,
+                    query: req.getQuery(),
+                    domain: req.domain,
+                    host: req.host,
+                    ip: backend.helper.getRequestIP(res),
+                    handler: handler.websocket
+                }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
+            }
+            return;
         }
 
         if(typeof handler.onRequest === "function"){
@@ -223,6 +256,8 @@ const backend = {
     constants: {
         EMPTY_OBJECT, EMPTY_ARRAY, EMPTY_BUFFER, SINCE_STARTUP,
         IS_NODE_INSPECTOR_ENABLED,
+
+        MAX_BODY_SIZE: 107374182400, // 100 GB
 
         MIN_COMPRESSION_SIZE: 512,
     },
@@ -395,7 +430,7 @@ const backend = {
             }
 
             onReload(){
-                if(!this.server || this.enabled) return;
+                if(!this.server || !this.enabled) return;
 
                 const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
 
@@ -445,7 +480,7 @@ const backend = {
                 this.server = ssl_config? uws.SSLApp(ssl_config): uws.SSLApp();
                 this.server.any("/*", this.defaultResolver);
 
-                // if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
+                if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
             }
         },
 
@@ -489,10 +524,14 @@ const backend = {
                     protocol: "ws",
                     type: "ws"
                 })
+
+                this.defaultResolver = resolve.bind(this);
             }
 
             init() {
                 // TODO: In the future, this could be moved to the C++ side
+                // TODO: Add an API for dedicated WebSocket/http apps rather than a shared one
+                // Default WS handler
                 this.options = {
                     idleTimeout: backend.config.getBlock("websocket").get("idleTimeout", Number) || 60,
                     maxBackpressure: backend.config.getBlock("websocket").get("maxBackpressure", Number) || 1024 * 1024,
@@ -501,13 +540,14 @@ const backend = {
             
                     sendPingsAutomatically: true,
 
-                    upgrade(res, req, context) {
+                    upgrade: (res, req, context) => {
+                        this.defaultResolver(res, req, context);
                     },
 
                     open(ws) {
                         if(ws.handler.open) ws.handler.open(ws);
                     },
-                    
+
                     message(ws, message, isBinary) {
                         if(ws.handler.message) ws.handler.message(ws, message, isBinary);
                     },
@@ -739,12 +779,39 @@ const backend = {
      * @example
      * writeLog(['User created successfully'], 1, 'user-service');
      */
+    // writeLog(level = 2, source = "api", ...data) {
+    //     if(level < (5 - backend.logLevel)) return;
+    //     return backend.native.writeLog(level, typeof source === "string" ? source : source?.name || "unknown", ...data.map(item => {
+    //         if(typeof item === "string") return item;
+    //         if(item instanceof Error) return item.stack || item.message;
+    //         return String(item);
+    //     }));
+    // },
+
+    // Legacy JS logger
     writeLog(level = 2, source = "api", ...data) {
         if(level < (5 - backend.logLevel)) return;
-        return backend.native.writeLog(level, typeof source === "string" ? source : source?.name || "unknown", ...data.map(item => {
-            if(typeof item === "string") return item;
-            if(item instanceof Error) return item.stack || item.message;
-            return String(item);
+
+        const color = level >= 4 ? "1;31" : level === 3 ? "1;33" : "36";
+        const consoleFunction = console[level === 4 ? "error" : level === 3 ? "warn" : level < 2 ? "debug" : "log"];
+        const sourceName = typeof source === "string" ? source : source?.name || "unknown";
+
+        if(!backend._fancyLogEnabled) {
+            consoleFunction(`[${sourceName}]`, ...data);
+            return;
+        }
+
+        const tag = `${level > 4? "* ": ""}\x1b[${color}m[${sourceName}]\x1b[${level > 4? "0;1": "0"}m`;
+
+        if(!Array.isArray(data)){
+            data = [data];
+        }
+
+        consoleFunction(tag, ...data.map(item => {
+            if (typeof item === "string") {
+                return item.replaceAll("\n", "\n" + " ".repeat(sourceName.length - 1) + "\x1b[90m⤷\x1b[0m   ");
+            }
+            return item;
         }));
     },
 

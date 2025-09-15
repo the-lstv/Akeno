@@ -29,22 +29,30 @@ class Matcher extends Units.Module {
             throw new Error('Pattern must be a string');
         }
 
-        const group = pattern.indexOf('{');
-        if (group !== -1) {
-            const endGroup = pattern.indexOf('}', group);
-            if (endGroup === -1) {
-                throw new Error(`Unmatched group in pattern: ${pattern}`);
-            }
+        // Expand only groups not preceded by '!'. Negated groups are preserved for the matcher.
+        let searchFrom = 0;
+        while (true) {
+            const group = pattern.indexOf('{', searchFrom);
+            if (group === -1) break;
+            const prevChar = group > 0 ? pattern[group - 1] : null;
+            if (prevChar !== '!') {
+                const endGroup = pattern.indexOf('}', group);
+                if (endGroup === -1) {
+                    throw new Error(`Unmatched group in pattern: ${pattern}`);
+                }
 
-            const groupValues = pattern.slice(group + 1, endGroup);
-            const patternStart = pattern.slice(0, group);
-            const patternEnd = pattern.slice(endGroup + 1);
+                const groupValues = pattern.slice(group + 1, endGroup);
+                const patternStart = pattern.slice(0, group);
+                const patternEnd = pattern.slice(endGroup + 1);
 
-            for (let value of groupValues.split(',')) {
-                value = value.trim();
-                yield* this.expandPattern(patternStart + value + (value === "" && patternEnd.startsWith('.') ? patternEnd.slice(1) : patternEnd));
+                for (let value of groupValues.split(',')) {
+                    value = value.trim();
+                    const next = patternStart + value + (value === "" && patternEnd.startsWith('.') ? patternEnd.slice(1) : patternEnd);
+                    yield* this.expandPattern(next);
+                }
+                return;
             }
-            return;
+            searchFrom = group + 1;
         }
 
         yield pattern;
@@ -68,15 +76,13 @@ class Matcher extends Units.Module {
             return;
         }
 
-        // Expand pattern groups
+        // Expand pattern groups (non-negated only)
         for (const expandedPattern of this.expandPattern(pattern)) {
-            // TODO: Handle domain level patterns (something.*.com) and infinite subdomain matching (**.example.com)
-
-            if (expandedPattern.indexOf('*') !== -1) {
+            // Route patterns with wildcards or negated groups to the wildcard matcher
+            if (expandedPattern.indexOf('*') !== -1 || expandedPattern.indexOf('!{') !== -1) {
                 this.wildcards.add(expandedPattern, handler);
                 continue;
             }
-
 
             if (this.exactMatches.has(expandedPattern) && this.exactMatches.get(expandedPattern) !== handler) {
                 this.warn(`Warning: Route already exists for domain: ${expandedPattern}, it is being overwritten.`);
@@ -133,7 +139,15 @@ class WildcardMatcher {
     }
 
     add(pattern, handler = pattern) {
-        this.patterns.push({ parts: this.split(pattern), handler, pattern });
+        const rawParts = this.split(pattern);
+        const parts = rawParts.map(p => {
+            if (p.length > 3 && p.startsWith('!{') && p.endsWith('}')) {
+                const values = p.slice(2, -1).split(',').map(v => v.trim()).filter(v => v !== '');
+                return { type: 'negSet', set: new Set(values) };
+            }
+            return p;
+        });
+        this.patterns.push({ parts, handler, pattern });
     }
 
     filter(callback) {
@@ -157,10 +171,15 @@ class WildcardMatcher {
         for (const { parts, handler } of this.patterns) {
             // Exact match
             if (parts.length === 1) {
-                if (parts[0] === "**" || (path.length === 1 && ((parts[0] === "*" && path[0] !== "") || parts[0] === path[0]))) {
+                const only = parts[0];
+                if (only === "**" || (typeof only === 'string' && path.length === 1 && ((only === "*" && path[0] !== "") || only === path[0]))) {
                     return handler;
                 }
-
+                if (typeof only === 'object' && only && only.type === 'negSet') {
+                    if (path.length === 1 && path[0] !== "" && !only.set.has(path[0])) {
+                        return handler;
+                    }
+                }
                 continue;
             }
 
@@ -168,15 +187,22 @@ class WildcardMatcher {
             let starPi = -1, starSi = -1;
 
             while (si < path.length) {
-                if (pi < parts.length && parts[pi] === "**") {
+                const part = parts[pi];
+                if (pi < parts.length && part === "**") {
                     starPi = pi;
                     starSi = si;
                     pi++;
-                } else if (pi < parts.length && parts[pi] === "*") {
+                } else if (pi < parts.length && part === "*") {
                     if (path[si] === "") break;
                     pi++;
                     si++;
-                } else if (pi < parts.length && parts[pi] === path[si]) {
+                } else if (pi < parts.length && typeof part === 'object' && part && part.type === 'negSet') {
+                    if (path[si] === "" || part.set.has(path[si])) {
+                        break;
+                    }
+                    pi++;
+                    si++;
+                } else if (pi < parts.length && part === path[si]) {
                     pi++;
                     si++;
                 } else if (starPi !== -1) {

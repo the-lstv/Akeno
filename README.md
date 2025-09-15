@@ -1,6 +1,5 @@
 <p align="center">
   <img src="https://github.com/user-attachments/assets/a742cb99-7423-4be7-8e2c-f12b8324fae7" width="900"/>
-
 </p>
 
 Akeno is a really fast, modular server and web application runtime/framework written in C++ and JavaScript, primarily intended for:<br>
@@ -112,6 +111,11 @@ It also offers modules and libraries you can use to control and manage the serve
    }
 
    # ...
+
+   # Example redirect;
+   redirect (/path) to: "https://example.com";
+   # Deny access to a path
+   location (/private) deny;
    ```
 3. Reload Akeno (Either with a hot reload `akeno reload`, or `akeno restart` for a full server restart)<br>
 And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP. No further configuration needed.

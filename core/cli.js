@@ -29,7 +29,7 @@ const
     { parse, stringify, v } = require("./parser"),
     { Client } = require("./ipc"),
 
-    socketPath = '/tmp/akeno.backend.sock'
+    socketPath = process.platform === "win32"? '\\\\.\\pipe\\akeno.backend.sock' : '/tmp/akeno.backend.sock'
 ;
 
 // To be removed
@@ -157,6 +157,16 @@ const ROOT_COMMANDS = [
                 description: "Delete Akeno from PM2 (process manager)"
             },
             {
+                name: "systemd-setup",
+                type: "command",
+                description: "Setup Akeno to run under systemd (service manager)"
+            },
+            {
+                name: "systemd-delete",
+                type: "command",
+                description: "Delete the Akeno service from systemd"
+            },
+            {
                 name: "ipc-exec",
                 type: "command",
                 description: "Execute a command directly via the IPC server",
@@ -200,28 +210,6 @@ const ROOT_COMMANDS = [
                 name: ["list", "ls"],
                 type: "command",
                 description: "List web applications"
-            },
-            {
-                name: ["create", "init"],
-                type: "command",
-                description: "Setup a new application template in the current or specified directory.",
-                args: ["path"],
-                options: [
-                    {
-                        name: "-n",
-                        description: "Application name",
-                        args: ["name"]
-                    },
-                    {
-                        name: "-c",
-                        description: "Configuration options",
-                        args: ["config"]
-                    },
-                    {
-                        name: "-f",
-                        description: "Force creation even if the directory is not empty"
-                    }
-                ]
             },
             {
                 name: "info",
@@ -337,69 +325,11 @@ const ROOT_COMMANDS = [
                 args: ["name"]
             }
         ]
-    },
-    {
-        type: "group",
-        name: "Auth addon",
-        items: [
-            {
-                name: "auth login",
-                type: "command",
-                description: "Attempt login and return token",
-                args: ["name", "password"]
-            },
-            {
-                name: "auth verify",
-                type: "command",
-                description: "Verify login token",
-                args: ["token"]
-            },
-            {
-                name: "auth create",
-                type: "command",
-                description: "Create a new user",
-                args: ["name", "{options}"]
-            },
-            {
-                name: "auth list",
-                type: "command",
-                description: "List users",
-                args: ["offset", "limit"]
-            },
-            {
-                name: "auth detail",
-                type: "command",
-                description: "List details about a user",
-                args: ["name|token"]
-            },
-            {
-                name: "auth patch",
-                type: "command",
-                description: "Apply a patch to a user object",
-                args: ["name|token", "{patch}"]
-            },
-            {
-                name: "auth status",
-                type: "command",
-                description: "Get/Set account status (ok, disabled, ...)",
-                args: ["status"]
-            },
-            {
-                name: "auth delete",
-                type: "command",
-                description: "Delete an account",
-                args: ["name|token"],
-                options: [
-                    {
-                        name: "-f",
-                        description: "Skip confirmation"
-                    }
-                ]
-            }
-        ]
     }
 ];
 
+
+// TODO: Allow modules to extend the help menu
 
 const process_command_item = item => {
     item.isCommand = !item.type || item.type === "command";
@@ -488,7 +418,7 @@ async function resolve(argv){
                 if(argv.json) {
                     return log(JSON.stringify(response));
                 }
-            
+
                 log(logo + box(`You are running the Akeno backend - an open source, fast, modern and fully automated
 web application, API and content delivery management system / server!
 
@@ -549,12 +479,14 @@ Some examples:
                     if (err) {
                         log_error(`${signature} ⚠️  Could not restart Akeno:`, err.message || err, argv.updating? "- Updates will not be applied until restart!": "");
                         log_error(`${nestedSignature} Make sure that you have PM2 installed and setup for Akeno (\x1b[1msudo akeno pm2-setup\x1b[0m)!`);
-
+                        
                         if (process.getuid && process.getuid() !== 0) {
                             log_error(`${nestedSignature} You may need to run this command as root - try \x1b[1msudo akeno restart\x1b[0m.`);
                         } else {
                             log_error(`${nestedSignature} Make sure you are running this command as the same user that has the PM2 process.`);
                         }
+
+                        log_error(`${nestedSignature} If you are using systemd instead of pm2, use \x1b[1msystemd restart akeno\x1b[0m instead.`);
                         return process.exit(2);
                     }
 
@@ -569,6 +501,11 @@ Some examples:
             break;
         
         case "pm2-setup":
+            const systemdServiceFile = "/etc/systemd/system/akeno.service";
+            if (fs.existsSync(systemdServiceFile)) {
+                log_error(`${signature} Warning: A systemd service file for Akeno seems to exist at ${systemdServiceFile}. You probably don't need to setup PM2 or you may end up running Akeno twice. You can later run \x1b[1makeno pm2-delete\x1b[0m to remove the app from PM2 or \x1b[1makeno systemd-delete\x1b[0m to remove the systemd service.`);
+            }
+
             pm2.connect(function (err) {
                 if (err) {
                     console.error(err)
@@ -603,7 +540,7 @@ Some examples:
                 });
             });
             break;
-        
+
         case "pm2-delete":
             pm2.connect(function (err) {
                 if (err) {
@@ -620,6 +557,71 @@ Some examples:
                     log(`${signature} Akeno successfully deleted from PM2!`);
                 });
             });
+            break;
+
+        case "systemd-setup":
+            if(process.platform === "win32"){
+                log_error(`${signature} Systemd setup is not supported on Windows. Please run this command on a Linux system with systemd support.`);
+                process.exit(1);
+            }
+
+            const serviceName = "akeno";
+            const serviceFile = `/etc/systemd/system/${serviceName}.service`;
+            const execPath = nodePath.resolve(__dirname, "../app.js");
+            const serviceContent = `[Unit]
+Description=Akeno Web Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node ${execPath}
+Restart=always
+User=${process.env.USER || "www-data"}
+
+[Install]
+WantedBy=multi-user.target`;
+
+            if (fs.existsSync(serviceFile) && !argv.f) {
+                log_error(`${signature} Service file already exists at ${serviceFile}. Use -f to overwrite.`);
+                process.exit(1);
+            }
+
+            try {
+                fs.writeFileSync(serviceFile, serviceContent, { mode: 0o644 });
+                exec("systemctl daemon-reload");
+                exec(`systemctl enable ${serviceName}`);
+                log(`${signature} Systemd service created at ${serviceFile} and enabled!`);
+                log(`${nestedSignature} You can start Akeno with: sudo systemctl start ${serviceName}`);
+            } catch (err) {
+                log_error(`${signature} Failed to setup systemd service:`, err);
+                process.exit(1);
+            }
+            break;
+
+        case "systemd-delete":
+            if (process.platform === "win32") {
+                log_error(`${signature} Systemd delete is not supported on Windows.`);
+                process.exit(1);
+            }
+
+            const serviceNameDel = "akeno";
+            const serviceFileDel = `/etc/systemd/system/${serviceNameDel}.service`;
+
+            if (!fs.existsSync(serviceFileDel)) {
+                log_error(`${signature} Service file does not exist at ${serviceFileDel}.`);
+                process.exit(1);
+            }
+
+            try {
+                exec(`systemctl stop ${serviceNameDel}`);
+                exec(`systemctl disable ${serviceNameDel}`);
+                fs.unlinkSync(serviceFileDel);
+                exec("systemctl daemon-reload");
+                log(`${signature} Systemd service ${serviceNameDel} deleted and disabled!`);
+            } catch (err) {
+                log_error(`${signature} Failed to delete systemd service:`, err);
+                process.exit(1);
+            }
             break;
 
         case "module": {

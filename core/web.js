@@ -66,11 +66,11 @@ class WebApp extends Units.App {
      * Resolve a relative, absolute, or root path to a full path while safely avoiding directory traversal attacks.
      * @param {string} path 
      * @param {string} current 
+     * @param {boolean} useRootPath - Indicates whether to use the root path.
      * @returns 
      */
 
-    resolvePath(path, current = null) {
-        let useRootPath = false;
+    resolvePath(path, current = null, useRootPath = false) {
         let isRelative = false;
 
         if (path.charCodeAt(0) === 126) { // '~'
@@ -88,7 +88,7 @@ class WebApp extends Units.App {
         }
 
         const root = useRootPath ? this.path : this.root || this.path;
-        const relative = nodePath.resolve(isRelative ? (current || nodePath.sep) : "/", path);
+        const relative = nodePath.posix.resolve(isRelative ? (current || nodePath.sep) : "/", path);
 
         const full = nodePath.join(root, relative);
 
@@ -148,7 +148,7 @@ class WebApp extends Units.App {
         this._rootPathAllowed = serverBlock.get("allowRootPath", Boolean, true);
 
         if (custom_root && custom_root.length > 0) {
-            this.root = this.resolvePath(custom_root).full;
+            this.root = this.resolvePath(custom_root, null, true).full;
         } else {
             this.root = this.path;
         }
@@ -245,6 +245,12 @@ class WebApp extends Units.App {
             this.hook = require(path);
         }
 
+        if (this.config.data.has("ratelimit")) {
+            const limit = this.config.getBlock("ratelimit").get("limit", Number, 1000); // 1000 Requests
+            const interval = this.config.getBlock("ratelimit").get("interval", Number, 60000); // 1 Minute
+            this.ratelimit = new backend.helper.RateLimiter(limit, interval);
+        } else delete this.ratelimit;
+
         for (let api of this.config.getBlocks("module")) {
             // TODO: Proper module system
             const name = api.attributes;
@@ -272,11 +278,11 @@ class WebApp extends Units.App {
 
             // Routes (aliases)
             for (const route of this.config.getBlocks("route")) { // Since 1.6.5, this is now called alias
-                const to = route.get("to", String);
-                if (!to) continue;
+                const to = route.get("to", Array);
+                if (!to || typeof to[0] !== "string") continue;
 
                 for (const pattern of route.attributes) {
-                    this.pathMatcher.add(pattern, { alias: to });
+                    this.pathMatcher.add(pattern, { alias: to[0] });
                 }
             }
 
@@ -315,6 +321,11 @@ class WebApp extends Units.App {
         const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String);
         this._404 = _404 ? this.resolvePath(_404) : null;
     }
+
+    ws(options){
+        this._websocketEnabled = true;
+        this.websocket = options;
+    }
 }
 
 const server = new class WebServer extends Units.Module {
@@ -330,9 +341,7 @@ const server = new class WebServer extends Units.Module {
     async onRequest(req, res, app) {
         try {
             if (!app) {
-                res.cork(() => {
-                    res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error);
-                });
+                backend.helper.sendErrorPage(req, res, "404");
                 return;
             }
 
@@ -340,6 +349,10 @@ const server = new class WebServer extends Units.Module {
             if (backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))) {
                 res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
                 return;
+            }
+
+            if(app.ratelimit) {
+                if(!app.ratelimit.pass(req, res)) return;
             }
 
             // When the app is disabled
@@ -400,22 +413,30 @@ const server = new class WebServer extends Units.Module {
 
                     // Handle aliases (an URL points to a different file)
                     if (typeof attributes.alias === "string") {
+                        if(attributes.alias.charCodeAt(0) !== 47) {
+                            attributes.alias = "/" + attributes.alias;
+                        }
+
+                        url = attributes.alias;
+
                         if (attributes.alias.indexOf("$url") !== -1) {
-                            attributes.alias = attributes.alias.replace("$url", url);
+                            url = url.replace("$url", req.path);
                         }
 
                         if (attributes.alias.indexOf("$file") !== -1) {
-                            attributes.alias = attributes.alias.replace("$file", nodePath.basename(url));
+                            url = url.replace("$file", nodePath.basename(req.path));
                         }
 
-                        url = attributes.alias.charCodeAt(0) === 47 ? attributes.alias : "/" + attributes.alias;
+                        if (attributes.alias.indexOf("$path") !== -1) {
+                            url = url.replace("$path", nodePath.dirname(req.path));
+                        }
                     }
                 }
             }
 
             /**
              * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit and the cache system is a bit eh.
-            */
+             */
 
             // TODO: Cache this
             let resolvedPath = app.resolvePath(url);
@@ -427,7 +448,7 @@ const server = new class WebServer extends Units.Module {
             let file = resolvedPath.full;
             if (!(file = await files_try_async(file + ".html", file + "/index.html", file))) {
                 if (!app._404 || !app._404.full) {
-                    return backend.helper.send(req, res, url + " not found", null, "404 Not Found");
+                    return backend.helper.sendErrorPage(req, res, "404", "File \"" + url + "\" not found on this server.");
                 }
 
                 // Load the defined 404 page (existence should be checked when the app is loaded)
@@ -447,7 +468,7 @@ const server = new class WebServer extends Units.Module {
 
             // Because we can't read the accept-encoding header after generating async content....
             const extension = cacheEntry ? cacheEntry[0][5] : nodePath.extname(file).slice(1);
-            const suggestedCompressionAlgorithm = backend.helper.getUsedCompression(ACCEPTS_ENCODING, cacheEntry ? cacheEntry[0][6] : backend.mime.getType(extension));
+            const suggestedAlg = backend.helper.getUsedCompression(ACCEPTS_ENCODING, cacheEntry ? cacheEntry[0][6] : backend.mime.getType(extension));
 
             // Generate and serve fresh content if not cached or modified
             if (!cacheEntry || server.fileServer.needsUpdate(file, cacheEntry)) {
@@ -470,15 +491,17 @@ const server = new class WebServer extends Units.Module {
                 }
             }
 
-            server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedCompressionAlgorithm);
+            server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedAlg);
 
         } catch (error) {
-            app.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ", error);
+            const logTarget = app || server;
+
+            logTarget.error("Error when serving app \"" + logTarget.path + "\", requesting \"" + req.path + "\": ", error);
 
             try {
-                backend.helper.send(req, res, "Internal Server Error - Incident log was saved.", null, "500");
+                backend.helper.sendErrorPage(req, res, "500", "Internal Server Error - Incident log was saved.");
             } catch (error) {
-                app.error("Failed to send error response for app \"" + app.path + "\".", error);
+                logTarget.error("Failed to send error response for app \"" + logTarget.path + "\".", error);
             }
         }
     }
@@ -600,9 +623,7 @@ const server = new class WebServer extends Units.Module {
         const header = backend.config.getBlock("web").get("htmlHeader", String, `<!-- Server-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`) || '';
 
         this.etc = {
-            notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:2rem;box-sizing:border-box;background:#f8f9fa;color:#333;min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#e0e0e0}}h2{margin:0 0 1rem;font-size:1.5rem;font-weight:600}p{margin:0 0 2rem;opacity:0.8}hr{border:none;height:1px;background:currentColor;opacity:0.2;width:100%;max-width:300px;margin:2rem 0 1rem}footer{font-size:0.9rem;opacity:0.6}</style><h2>404 - Page Not Found</h2><p>The requested page could not be found on this server.</p><hr><footer>Powered by Akeno/${backend.version}</footer></html>`),
             default_disabled_message: Buffer.from(backend.config.getBlock("web").get("disabledMessage", String) || "This website is temporarily disabled."),
-
             EXTRAGON_CDN: backend.config.getBlock("web").get("extragon_cdn_url", String) || backend.mode === backend.modes.DEVELOPMENT ? `https://cdn.extragon.localhost` : `https://cdn.extragon.cloud`
         };
 
@@ -760,9 +781,12 @@ const ls_components = {
     "js": [
         "animation",
         "gl",
+        "imagecropper",
+        "modal",
         "network",
         "node",
         "reactive",
+        "resize",
         "tabs",
         "toast",
         "tooltips",
@@ -828,7 +852,7 @@ function initParser(header) {
 
                     let attrib = has_component_list ? entry.name : entry;
 
-                    const components = has_component_list && entry.values.length > 0 ? [] : backend.constants.EMPTY_ARRAY;
+                    let components = has_component_list && entry.values.length > 0 ? [] : backend.constants.EMPTY_ARRAY;
 
                     // We sort alphabetically and remove duplicates to maximize cache hits
                     // This is the fastest implementation based on my benchmark: https://jsbm.dev/Au74tivWZWKEo
@@ -871,20 +895,34 @@ function initParser(header) {
 
                         let components_string;
 
-                        if (is_merged || attrib === "ls.css") {
-                            components_string = (is_merged ? components.filter(value => !ls_components.js.includes(value)) : components).join();
+                        const singularCSSComponent = attrib.startsWith("ls.css.")? attrib.substring(8).toLowerCase() : null;
+                        if (singularCSSComponent && ls_components.css.includes(singularCSSComponent)) {
+                            components = [singularCSSComponent];
+                        }
 
-                            if (!(components_string.length === 0 && this.data.using_ls_css)) {
-                                this.write(`<link rel=stylesheet href="${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string ? components_string + "/" : ""}${this.data.using_ls_css ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
+                        const singularJSComponent = attrib.startsWith("ls.js.")? attrib.substring(6).toLowerCase() : null;
+                        if (singularJSComponent && ls_components.js.includes(singularJSComponent)) {
+                            components = [singularJSComponent];
+                        }
+
+                        if (is_merged || attrib === "ls.css" || singularCSSComponent) {
+                            const cssComponents = is_merged ? components.filter(value => !ls_components.js.includes(value)) : components;
+                            const useSingular = cssComponents.length === 1 && (this.data.using_ls_css || singularCSSComponent);
+                            components_string = cssComponents.join();
+
+                            if (components_string.length !== 0) {
+                                this.write(`<link rel=stylesheet href="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_css ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
                                 this.data.using_ls_css = true;
                             }
                         }
 
-                        if (is_merged || attrib === "ls.js") {
-                            components_string = (is_merged ? components.filter(value => !ls_components.css.includes(value)) : components).join();
+                        if (is_merged || attrib === "ls.js" || singularJSComponent) {
+                            const jsComponents = is_merged ? components.filter(value => !ls_components.css.includes(value)) : components;
+                            const useSingular = jsComponents.length === 1 && (this.data.using_ls_js || singularJSComponent);
+                            components_string = jsComponents.join();
 
-                            if (!(components_string.length === 0 && this.data.using_ls_js)) {
-                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${components_string ? components_string + "/" : ""}${this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"></script>`);
+                            if (components_string.length !== 0) {
+                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"></script>`);
                                 this.data.using_ls_js = true;
                             }
                         }
@@ -894,17 +932,40 @@ function initParser(header) {
                     }
 
 
+                    /**
+                     * TODO:FIXME: (High priority)
+                     * Implement a proper source system to allow custom sources, and use a real resource API instead of hard-coded URLs.
+                     */
+
                     switch (attrib) {
                         case "bootstrap-icons":
-                            this.write(`<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.13.1"}/font/bootstrap-icons.min.css">`)
+                            this.write(`<link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.13.1"}/font/bootstrap-icons.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@${version || "1.13.1"}/font/bootstrap-icons.min.css"></noscript>`);
                             break;
 
                         case "fa-icons":
-                            this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/all.min.css">`)
+                            this.write(`<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/all.min.css"></noscript>`);
                             break;
 
                         case "fa-brands":
                             this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${version || "6.7.0"}/css/brands.min.css">`)
+                            break;
+
+                        case "hljs":
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/highlight.min.js"></script>`);
+
+                            for (const component of components) {
+                                if(component.startsWith("lang:")) {
+                                    this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/languages/${component.slice(5)}.min.js"></script>`);
+                                }
+
+                                if(component.startsWith("theme:")) {
+                                    this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/styles/${component.slice(5)}.min.css">`);
+                                }
+                            }
+                            break;
+
+                        case "marked":
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "16.2.1"}/lib/marked.umd.min.js"></script>`);
                             break;
 
                         case "google-fonts":
@@ -925,7 +986,7 @@ function initParser(header) {
 
                                 const resolvedPath = this.data.app.resolvePath(attrib, this.data.directory);
                                 const path = resolvedPath.full;
-                                const link = (resolvedPath.useRootPath ? "~" : "") + resolvedPath.relative || attrib;
+                                const link = (resolvedPath.useRootPath ? "/~" : "") + resolvedPath.relative || attrib;
 
                                 if (!fs.existsSync(path)) {
                                     this.data.app.warn("Error: File \"" + path + "\" does not exist.");
@@ -959,10 +1020,50 @@ function initParser(header) {
                     break
                 }
 
-                this.write(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`)
+                if (block.properties.charset) {
+                    this.write(`<meta charset="${block.properties.charset}">`);
+                } else {
+                    if (!this.data._setDefaultCharset) {
+                        this.data._setDefaultCharset = true;
+                        this.write(`<meta charset="utf-8">`);
+                    }
+                }
 
                 if (block.properties.title) {
                     this.write(`<title>${block.properties.title}</title>`)
+                }
+
+                if (block.properties.description) {
+                    this.write(`<meta name="description" content="${block.properties.description}">`);
+                }
+
+                if (block.properties.keywords) {
+                    this.write(`<meta name="keywords" content="${block.properties.keywords}">`);
+                }
+
+                if (block.properties.author) {
+                    this.write(`<meta name="author" content="${block.properties.author}">`);
+                }
+
+                if (block.properties.copyright) {
+                    this.write(`<meta name="copyright" content="${block.properties.copyright}">`);
+                }
+
+                if (block.properties.themeColor) {
+                    this.write(`<meta name="theme-color" content="${block.properties.themeColor}">`);
+                }
+
+                if (block.properties.rating) {
+                    this.write(`<meta name="rating" content="${block.properties.rating}">`);
+                }
+
+                if (block.properties.viewport) {
+                    this.write(`<meta name="viewport" content="${block.properties.viewport}">`);
+                } else {
+                    if (!this.data._setDefaultViewport) {
+                        this.data._setDefaultViewport = true;
+                        this.write(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`);
+                    }
                 }
 
                 let bodyAttributes = this.data.using_ls_css ? "ls" : "";

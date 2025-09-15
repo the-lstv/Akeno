@@ -28,3 +28,4 @@ core/native/node
 core/native/test*
 
 .env
+build/config.gypi
