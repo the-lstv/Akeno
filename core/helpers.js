@@ -612,6 +612,37 @@ module.exports = {
         });
     },
 
+    errorPageBuffers: [
+        Buffer.from(`<!DOCTYPE html><html><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:2rem;box-sizing:border-box;background:#fff4f7;color:#90435b;--dark-color:#be7b90;min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}h2{margin:0 0 2rem;font-size:64px;font-weight:600;background:#ffdbe6;padding:8px 30px;border-radius:100px;font-family:monospace}@media(prefers-color-scheme: dark){body{background:#1b1617;color:#ddb6c2;--dark-color:#726468}h2{background:#292122}}p{margin:0;color:var(--dark-color)}hr{border:none;height:1px;background:currentColor;opacity:.2;width:100%;max-width:300px;margin:2rem 0 1rem}footer{font-size:.9rem;color:var(--dark-color)}a{color:inherit}</style>`),
+        Buffer.from(`<hr><footer>Powered by <a href="https://github.com/the-lstv/akeno" target="_blank">Akeno/${backend.version}</a></footer></html>`),
+    ],
+
+    setDefaultErrorPage(html){
+        const chunks = html.split("{{message}}");
+        this.errorPageBuffers = [
+            Buffer.from(chunks[0]),
+            Buffer.from(chunks[1])
+        ];
+    },
+
+    sendErrorPage(req, res, status, message){
+        if(req.abort) return;
+
+        if(typeof status !== "string") {
+            status = String(status || "500 Internal Server Error");
+        }
+
+        res.cork(() => {
+            const messageData = `<h2>${status || "Error"}</h2><p>${message || (status === "404"? "The requested page could not be found on this server." : "Internal Server Error")}</p>`;
+            const cl = this.errorPageBuffers[0].length + this.errorPageBuffers[1].length + messageData.length;
+
+            res.writeStatus(status).writeHeader('Content-Length', String(cl)).writeHeader('Content-Type', 'text/html');
+
+            res.write(this.errorPageBuffers[0]);
+            res.write(messageData);
+            res.end(this.errorPageBuffers[1]);
+        });
+    },
 
     getUsedCompression(acceptEncoding, mimeType){
         if(!backend.compression.enabled) return backend.compression.format.NONE;

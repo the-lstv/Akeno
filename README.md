@@ -1,6 +1,5 @@
 <p align="center">
   <img src="https://github.com/user-attachments/assets/a742cb99-7423-4be7-8e2c-f12b8324fae7" width="900"/>
-
 </p>
 
 Akeno is a really fast, modular server and web application runtime/framework written in C++ and JavaScript, primarily intended for:<br>

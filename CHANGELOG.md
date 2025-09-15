@@ -6,6 +6,7 @@
 - Write a proper documentation (https://lstv.space/docs/akeno is work in progress now)
 - Add a proper installation script (soon)
 - ! Stop relying on napi and use v8 directly
+- Allow modules to extend the CLI help menu
 
 ## Known bugs as of 1.6.6-beta
 - [Critical] Empty html files crash the server (parser bug)
@@ -19,7 +20,10 @@
 - Added a FileBucket API for efficient and deduplicated file storing with lightning-fast reads (using xxHash and LMDB)
 - Fixed high memory and CPU usage while uploading large files
 - Upload processing experiments, including on-the-fly image compression/re-encoding before storage
-- Experimental build for Windows
+- Experimental build and fixes for Windows (versions before 1.6.7 did not work on Windows)
+- Unified error page helper
+- Added a systemd service setup command
+- Web apps can now set a ratelimit
 - [Documentation is finally in the works!](https://lstv.space/docs/akeno)
 
 ## New in 1.6.6-beta

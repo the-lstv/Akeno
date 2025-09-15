@@ -88,7 +88,7 @@ class WebApp extends Units.App {
         }
 
         const root = useRootPath ? this.path : this.root || this.path;
-        const relative = nodePath.resolve(isRelative ? (current || nodePath.sep) : "/", path);
+        const relative = nodePath.posix.resolve(isRelative ? (current || nodePath.sep) : "/", path);
 
         const full = nodePath.join(root, relative);
 
@@ -245,6 +245,12 @@ class WebApp extends Units.App {
             this.hook = require(path);
         }
 
+        if (this.config.data.has("ratelimit")) {
+            const limit = this.config.getBlock("ratelimit").get("limit", Number, 1000); // 1000 Requests
+            const interval = this.config.getBlock("ratelimit").get("interval", Number, 60000); // 1 Minute
+            this.ratelimit = new backend.helper.RateLimiter(limit, interval);
+        } else delete this.ratelimit;
+
         for (let api of this.config.getBlocks("module")) {
             // TODO: Proper module system
             const name = api.attributes;
@@ -335,9 +341,7 @@ const server = new class WebServer extends Units.Module {
     async onRequest(req, res, app) {
         try {
             if (!app) {
-                res.cork(() => {
-                    res.writeHeader('Content-Type', 'text/html').writeStatus('404 Not Found').end(server.etc.notfound_error);
-                });
+                backend.helper.sendErrorPage(req, res, "404");
                 return;
             }
 
@@ -345,6 +349,10 @@ const server = new class WebServer extends Units.Module {
             if (backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))) {
                 res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
                 return;
+            }
+
+            if(app.ratelimit) {
+                if(!app.ratelimit.pass(req, res)) return;
             }
 
             // When the app is disabled
@@ -440,7 +448,7 @@ const server = new class WebServer extends Units.Module {
             let file = resolvedPath.full;
             if (!(file = await files_try_async(file + ".html", file + "/index.html", file))) {
                 if (!app._404 || !app._404.full) {
-                    return backend.helper.send(req, res, url + " not found", null, "404 Not Found");
+                    return backend.helper.sendErrorPage(req, res, "404", "File \"" + url + "\" not found on this server.");
                 }
 
                 // Load the defined 404 page (existence should be checked when the app is loaded)
@@ -486,12 +494,14 @@ const server = new class WebServer extends Units.Module {
             server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedAlg);
 
         } catch (error) {
-            app.error("Error when serving app \"" + app.path + "\", requesting \"" + req.path + "\": ", error);
+            const logTarget = app || server;
+
+            logTarget.error("Error when serving app \"" + logTarget.path + "\", requesting \"" + req.path + "\": ", error);
 
             try {
-                backend.helper.send(req, res, "Internal Server Error - Incident log was saved.", null, "500");
+                backend.helper.sendErrorPage(req, res, "500", "Internal Server Error - Incident log was saved.");
             } catch (error) {
-                app.error("Failed to send error response for app \"" + app.path + "\".", error);
+                logTarget.error("Failed to send error response for app \"" + logTarget.path + "\".", error);
             }
         }
     }
@@ -613,9 +623,7 @@ const server = new class WebServer extends Units.Module {
         const header = backend.config.getBlock("web").get("htmlHeader", String, `<!-- Server-generated code. Powered by Akeno v${backend.version} - https://github.com/the-lstv/Akeno -->`) || '';
 
         this.etc = {
-            notfound_error: Buffer.from(`<!DOCTYPE html><html>\n${header}\n<meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:2rem;box-sizing:border-box;background:#f8f9fa;color:#333;min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#e0e0e0}}h2{margin:0 0 1rem;font-size:1.5rem;font-weight:600}p{margin:0 0 2rem;opacity:0.8}hr{border:none;height:1px;background:currentColor;opacity:0.2;width:100%;max-width:300px;margin:2rem 0 1rem}footer{font-size:0.9rem;opacity:0.6}</style><h2>404 - Page Not Found</h2><p>The requested page could not be found on this server.</p><hr><footer>Powered by Akeno/${backend.version}</footer></html>`),
             default_disabled_message: Buffer.from(backend.config.getBlock("web").get("disabledMessage", String) || "This website is temporarily disabled."),
-
             EXTRAGON_CDN: backend.config.getBlock("web").get("extragon_cdn_url", String) || backend.mode === backend.modes.DEVELOPMENT ? `https://cdn.extragon.localhost` : `https://cdn.extragon.cloud`
         };
 
