@@ -11,13 +11,14 @@
 const moduleAlias = require('module-alias');
 
 moduleAlias.addAliases({
-    "akeno:backend": __dirname + "/app.js",
-    "akeno:kvdb": __dirname + "/core/kvdb.js",
-    "akeno:units": __dirname + "/core/unit.js",
-    "akeno:mime": __dirname + "/core/mime.js",
-    "akeno:ipc": __dirname + "/core/ipc",
-    "akeno:router": __dirname + "/core/router.js",
-    "akeno:bucket": __dirname + "/core/bucket"
+    "akeno:backend" : __dirname + "/app.js",
+    "akeno:web"     : __dirname + "/core/web.js",
+    "akeno:kvdb"    : __dirname + "/core/kvdb.js",
+    "akeno:units"   : __dirname + "/core/unit.js",
+    "akeno:mime"    : __dirname + "/core/mime.js",
+    "akeno:ipc"     : __dirname + "/core/ipc",
+    "akeno:router"  : __dirname + "/core/router.js",
+    "akeno:bucket"  : __dirname + "/core/bucket"
 });
 
 const Units = require("akeno:units");

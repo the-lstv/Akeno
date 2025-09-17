@@ -29,23 +29,22 @@ let
     backend = require("akeno:backend")
 ;
 
-
+/**
+ * Web application class for Akeno.
+ * Everything should be pre-computed here, routing should be mostly linear.
+ */
 class WebApp extends Units.App {
-    constructor(path) {
+    constructor(path, options = {}) {
         super();
 
         this.path = nodePath.normalize(path);
+        this.basename = nodePath.basename(path);
         this.root = this.path;
         this.type = "akeno.web.WebApp";
 
         this.configMtime = null;
         this.loaded = false;
 
-        this.readConfig();
-        if (!this.config) throw "Invalid or missing config";
-
-        this.basename = nodePath.basename(path);
-        this.name = this.config.getBlock("app").get("name", String, this.basename);
         this.enabled = null;
         this.ports = new Set;
 
@@ -59,7 +58,8 @@ class WebApp extends Units.App {
 
         this._rootPathAllowed = true;
 
-        this.reload(false);
+        this.reload(options, true);
+        this.name = this.config.getBlock("app").get("name", String, this.basename);
     }
 
     /**
@@ -101,19 +101,19 @@ class WebApp extends Units.App {
     }
 
     readConfig() {
-        let configPath = this.path + "/app.conf";
+        if(this._memoryConfig) return true;
 
-        if (!configPath) {
+        if (!this.configPath) {
             return false;
         }
 
         try {
-            this.configMtime = fs.statSync(configPath).mtimeMs;
+            this.configMtime = fs.statSync(this.configPath).mtimeMs;
         } catch {
             this.configMtime = null;
         }
 
-        this.config = configTools(parse(fs.readFileSync(configPath, "utf8"), {
+        this.config = configTools(parse(fs.readFileSync(this.configPath, "utf8"), {
             strict: true,
             asLookupTable: true
         }));
@@ -121,8 +121,36 @@ class WebApp extends Units.App {
         return true;
     }
 
-    reload(checkConfig = true) {
-        if (checkConfig) {
+    reload(options, checkConfig = true) {
+        if(options.config) {
+            if(typeof options.config === "object" && !options.config.data) {
+                // Config is possibly JSON, will need to parse
+                throw new Error("Provided config seems to be an object - this has not yet been implemented. (App " + path + ")");
+            } else if(typeof options.config === "object" && options.config.data) {
+                // Config is provided as configTools
+                this.config = options.config; // TODO: configTools should be a class
+            } else if(options.config instanceof Map) {
+                // Config is provided as a parsed Map of blocks
+                this.config = configTools(options.config);
+            } else if(typeof options.config === "string") {
+                // Config is provided as a string
+                this.config = configTools(parse(options.config, {
+                    strict: true,
+                    asLookupTable: true
+                }));
+            } else {
+                throw new Error("Provided config is not valid. (App " + path + ")");
+            }
+
+            this._memoryConfig = true;
+            delete options.config;
+        }
+
+        if(options.configPath) {
+            this.configPath = this.path + (this.options.configPath? nodePath.posix.resolve("/", this.options.configPath): "/app.conf");
+        }
+
+        if (checkConfig && !this._memoryConfig) {
             const configPath = this.path + "/app.conf";
             let currentMtime = null;
 
@@ -133,6 +161,8 @@ class WebApp extends Units.App {
             if (currentMtime && this.configMtime !== currentMtime) {
                 this.readConfig();
             } else return;
+
+            if (!this.config) throw "Invalid or missing config";
         }
 
         if (this.loaded) this.verbose("Hot-reloading");
@@ -271,9 +301,12 @@ class WebApp extends Units.App {
         this.loaded = true;
 
         // Precompute any path-specific attributes
-        this._hasAttribs = this.config.data.has("location") || this.config.data.has("redirect") || this.config.data.has("route") || this.config.data.has("handle");
+        this._hasAttribs = this.config.data.has("location") || this.config.data.has("addon") || this.config.data.has("redirect") || this.config.data.has("route") || this.config.data.has("handle");
         if (this._hasAttribs) {
-            if (!this.pathMatcher) this.pathMatcher = new PathMatcher();
+            if (!this.pathMatcher) this.pathMatcher = new PathMatcher({
+                mergeObjects: true // Internally merges objects
+            });
+
             this.pathMatcher.clear();
 
             // Routes (aliases)
@@ -307,6 +340,17 @@ class WebApp extends Units.App {
                 }
             }
 
+            // Addons - Load addon, block the path
+            if (this.config.data.has("addon")) {
+                for (const addon of this.config.getBlocks("addon")) {
+                    const path = this.resolvePath(addon.attributes[0]).full;
+                    console.log(path);
+                    
+                    Units.Manager.loadAddon(path);
+                    this.pathMatcher.add(addon.attributes[0], { deny: true });
+                }
+            }
+
             // General path attributes
             for (const route of this.config.getBlocks("location")) {
                 for (const pattern of route.attributes) {
@@ -315,7 +359,6 @@ class WebApp extends Units.App {
             }
         }
 
-
         this._browserRequirements = this.config.getBlock("browserSupport");
 
         const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String);
@@ -323,7 +366,6 @@ class WebApp extends Units.App {
     }
 
     ws(options){
-        this._websocketEnabled = true;
         this.websocket = options;
     }
 }
@@ -576,7 +618,7 @@ const server = new class WebServer extends Units.Module {
     }
 
     async reload(specific_app, skip_config_refresh) {
-        if (specific_app) return this.refreshApp(specific_app);
+        if (specific_app) return !!this.load(specific_app);
 
         if (!skip_config_refresh) backend.refreshConfig();
 
@@ -612,7 +654,7 @@ const server = new class WebServer extends Units.Module {
                 continue;
             }
 
-            this.refreshApp(location);
+            this.load(location);
         }
 
         this.log(`${skip_config_refresh ? "Loaded" : "Reloaded"} ${locations.length} web application${locations.length !== 1 ? "s" : ""} in ${(performance.now() - start).toFixed(2)}ms`);
@@ -666,14 +708,15 @@ const server = new class WebServer extends Units.Module {
         return null;
     }
 
-    refreshApp(path) {
+    // TODO:
+    load(path, options = {}) {
         path = nodePath.normalize(path);
 
         let app = applications.get(path);
 
         if (!app) {
             try {
-                app = new WebApp(path);
+                app = new WebApp(path, options);
             } catch (error) {
                 this.warn("Web application (at " + path + ") failed to load due to an error: ", error);
                 return false;
@@ -681,12 +724,14 @@ const server = new class WebServer extends Units.Module {
 
             if (!app) return false;
         } else {
-            app.reload();
+            app.reload(options);
         }
 
         if (!app.config) return false;
-        return true;
+        return app;
     }
+
+    create(path, options = {}) {}
 
     enableApp(app_path) {
         if (!(app_path = this.resolveApplicationPath(app_path))) return false;

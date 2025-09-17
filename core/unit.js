@@ -381,7 +381,7 @@ const Manager = {
 
     // TODO: Enhance
     loadAddon(path){
-        if(fs.statSync(path).isDirectory() && fs.existsSync(path + "/addon.json")){
+        if(fs.existsSync(path) && fs.statSync(path).isDirectory() && fs.existsSync(path + "/addon.json")){
             const addonConfig = JSON.parse(fs.readFileSync(path + "/addon.json", "utf8"));
 
             if(!addonConfig.id || !addonConfig.name){

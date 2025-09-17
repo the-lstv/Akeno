@@ -22,6 +22,7 @@ class Matcher extends Units.Module {
         this.exactMatches = new Map();
         this.wildcards = options.simpleMatcher? new SimpleWildcardMatcher(): new WildcardMatcher(options.segmentChar || "/", []);
         this.fallback = null;
+        this.options = options;
     }
 
     *expandPattern(pattern) {
@@ -84,7 +85,13 @@ class Matcher extends Units.Module {
                 continue;
             }
 
-            if (this.exactMatches.has(expandedPattern) && this.exactMatches.get(expandedPattern) !== handler) {
+            const existingHandler = this.exactMatches.get(expandedPattern);
+            if (existingHandler && existingHandler !== handler) {
+                if(this.options.mergeObjects) {
+                    handler = Object.assign(existingHandler, handler);
+                    continue;
+                }
+
                 this.warn(`Warning: Route already exists for domain: ${expandedPattern}, it is being overwritten.`);
             }
 
@@ -289,8 +296,8 @@ class SimpleWildcardMatcher {
 
 
 class DomainRouter extends Matcher {
-    constructor() {
-        super({ segmentChar: "." }, {
+    constructor(options) {
+        super({ segmentChar: ".", ...options }, {
             name: 'DomainRouter',
             description: 'A simple domain routing system for Akeno.',
             version: '1.0.0',
@@ -321,8 +328,8 @@ class DomainRouter extends Matcher {
 }
 
 class PathMatcher extends Matcher {
-    constructor() {
-        super({ segmentChar: "/" }, {
+    constructor(options) {
+        super({ segmentChar: "/", ...options }, {
             name: 'PathMatcher',
             description: 'A simple path matching system for Akeno.',
             version: '1.0.0',
