@@ -13,7 +13,8 @@ const fs = require("node:fs");
 let lmdb;
 
 try {
-    lmdb = require('node-lmdb');
+    lmdb = null;
+    // lmdb = require('node-lmdb');
 } catch (e) {
     if(e.code === "ERR_DLOPEN_FAILED") {
         console.warn('Warning: node-lmdb failed to load (ERR_DLOPEN_FAILED). Database has been switched to memory-only mode. Please verify that your environment is set up correctly.');

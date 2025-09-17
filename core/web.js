@@ -146,11 +146,9 @@ class WebApp extends Units.App {
             delete options.config;
         }
 
-        if(options.configPath) {
-            this.configPath = this.path + (this.options.configPath? nodePath.posix.resolve("/", this.options.configPath): "/app.conf");
-        }
+        if ((!this.config || checkConfig) && !this._memoryConfig) {
+            this.configPath = this.path + (options.configPath? nodePath.posix.resolve("/", options.configPath): "/app.conf");
 
-        if (checkConfig && !this._memoryConfig) {
             const configPath = this.path + "/app.conf";
             let currentMtime = null;
 
@@ -344,7 +342,6 @@ class WebApp extends Units.App {
             if (this.config.data.has("addon")) {
                 for (const addon of this.config.getBlocks("addon")) {
                     const path = this.resolvePath(addon.attributes[0]).full;
-                    console.log(path);
                     
                     Units.Manager.loadAddon(path);
                     this.pathMatcher.add(addon.attributes[0], { deny: true });
