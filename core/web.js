@@ -728,8 +728,6 @@ const server = new class WebServer extends Units.Module {
         return app;
     }
 
-    create(path, options = {}) {}
-
     enableApp(app_path) {
         if (!(app_path = this.resolveApplicationPath(app_path))) return false;
 
@@ -1217,4 +1215,5 @@ if (process.argv.includes("--debug-scan-ls-components")) {
     }
 }
 
+server.WebApp = WebApp;
 module.exports = server

@@ -177,8 +177,7 @@ function resolveHandler(req, res, handler, wsContext) {
             if(typeof handler.websocket.upgrade === "function") {
                 handler.websocket.upgrade(req, res, wsContext);
             } else {
-                // TODO: Websocket handlers for Apps
-                if(!req.abort) res.upgrade({
+                const customData = {
                     uuid: uuid(),
                     url: req.path,
                     query: req.getQuery(),
@@ -186,7 +185,19 @@ function resolveHandler(req, res, handler, wsContext) {
                     host: req.host,
                     ip: backend.helper.getRequestIP(res),
                     handler: handler.websocket
-                }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
+                };
+
+                if(typeof handler.websocket.beforeUpgrade === "function") {
+                    if(handler.websocket.beforeUpgrade(req, res, wsContext, customData) === false) {
+                        return;
+                    }
+                }
+
+                try {
+                    if(!req.abort) res.upgrade(customData, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
+                } catch (e) {
+                    console.error("WebSocket upgrade error:", e);
+                }
             }
             return;
         }
@@ -481,6 +492,7 @@ const backend = {
                 this.server = ssl_config? uws.SSLApp(ssl_config): uws.SSLApp();
                 this.server.any("/*", this.defaultResolver);
 
+                // TODO: Distinguish WS over HTTP/s
                 if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
             }
         },
@@ -531,17 +543,21 @@ const backend = {
 
             init() {
                 // TODO: In the future, this could be moved to the C++ side
-                // TODO: Add an API for dedicated WebSocket/http apps rather than a shared one
                 // Default WS handler
                 this.options = {
                     idleTimeout: backend.config.getBlock("websocket").get("idleTimeout", Number) || 60,
-                    maxBackpressure: backend.config.getBlock("websocket").get("maxBackpressure", Number) || 1024 * 1024,
+                    sendPingsAutomatically: backend.config.getBlock("websocket").get("sendPingsAutomatically", Boolean, true),
                     maxPayloadLength: backend.config.getBlock("websocket").get("maxPayloadLength", Number) || 32 * 1024,
+                    maxBackpressure: backend.config.getBlock("websocket").get("maxBackpressure", Number) || 1024 * 1024,
+                    maxLifetime: backend.config.getBlock("websocket").get("maxLifetime", Number) || 0,
+                    closeOnBackpressureLimit: backend.config.getBlock("websocket").get("closeOnBackpressureLimit", Boolean, false),
                     compression: uws[backend.config.getBlock("websocket").get("compression", String, "DEDICATED_COMPRESSOR_32KB").toLowerCase()] || uws.DEDICATED_COMPRESSOR_32KB,
-            
-                    sendPingsAutomatically: true,
 
                     upgrade: (res, req, context) => {
+                        if(!this.enabled) {
+                            return res.writeStatus("503 Service Unavailable").end("503 Service Unavailable");
+                        }
+
                         this.defaultResolver(res, req, context);
                     },
 
@@ -555,6 +571,26 @@ const backend = {
                     
                     close(ws, code, message) {
                         if(ws.handler.close) ws.handler.close(ws, code, message);
+                    },
+
+                    drain(ws) {
+                        if(ws.handler.drain) ws.handler.drain(ws);
+                    },
+
+                    dropped(ws, message, isBinary) {
+                        if(ws.handler.dropped) ws.handler.dropped(ws, message, isBinary);
+                    },
+
+                    ping(ws, message) {
+                        if(ws.handler.ping) ws.handler.ping(ws, message);
+                    },
+
+                    pong(ws, message) {
+                        if(ws.handler.pong) ws.handler.pong(ws, message);
+                    },
+
+                    subscription(ws, topic, newCount, oldCount) {
+                        if(ws.handler.subscription) ws.handler.subscription(ws, topic, newCount, oldCount);
                     }
                 };
             }

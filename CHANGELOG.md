@@ -12,6 +12,11 @@
 - [Critical] Empty html files crash the server (parser bug)
 - [Priority] HTML files without a template now have a bug where some @page directives are ignored
 
+## New in 1.6.8-beta
+- Added a neat WebSocket authentication helper
+- Added more options to the WebSocket interface
+- WebSockets can now be easily enabled or disabled
+
 ## New in 1.6.7-beta
 - Re-added WebSocket support and APIs
 - Globally accessible scripting API (experimental)

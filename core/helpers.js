@@ -1122,5 +1122,156 @@ module.exports = {
      */
     getRequestIP(res) {
         return decoder.decode(res.getRemoteAddressAsText());
+    },
+
+
+    /**
+     * WebSocket authentication helper utilizing multiple ways to authenticate, with error handling and separation of concerns.
+     * Uses either the "Authorization" header or the first message sent by the client as a token, automatically disconnects if authentication fails or after a timeout.
+     * @example
+     * router.ws(new AuthenticatedWebSocket({
+     *     authenticate(token, customData) {
+     *         // Perform your authentication here (eg. JWT)
+     *         // Token is either the first message value, or the value of the "Authorization" header
+     *         // Return user object if valid, otherwise null
+     *         // If a falsy value is returned, the connection is closed
+     *         return isValid? { userId: 123 } : null;
+     *     },
+     * 
+     *     open(ws) {
+     *         // WebSocket already authenticated
+     *         console.log(ws.user); // { userId: 123 }
+     *     },
+     * 
+     *     message(ws, data, isBinary) {},
+     *     close (ws) {}
+     * }))
+     */
+    AuthenticatedWebSocket: class {
+        /**
+         * Constructs an instance with customizable handlers and options.
+         *
+         * @param {Object} [options={}] - Configuration options.
+         * @param {function} [options.open] - Optional handler for opening connections.
+         * @param {function} [options.beforeUpgrade] - Optional handler before upgrade.
+         * @param {function} [options.message] - Optional handler for incoming messages.
+         * @param {function} [options.close] - Optional handler for closing connections.
+         * @param {function} [options.authenticate] - Required authentication handler.
+         * @param {number} [options.timeout] - Optional timeout value in milliseconds.
+         * @param {boolean} [options.sendErrors=false] - Whether to send JSON error messages.
+         * @param {boolean} [options.allowBinaryToken=false] - Whether to allow binary tokens.
+         * @param {boolean} [options.allowAuthHeader=true] - Whether to allow authentication header.
+         * @param {boolean} [options.allowFirstMessageAuth=true] - Whether to allow authentication on the first message.
+         * @throws {Error} If the authenticate handler is missing or not a function.
+         */
+        constructor(options = {}) {
+            if(typeof options.open === "function") this._open = options.open;
+            if(typeof options.beforeUpgrade === "function") this._beforeUpgrade = options.beforeUpgrade;
+            if(typeof options.message === "function") this._message = options.message;
+            if(typeof options.close === "function") this.close = options.close; // Close is passed directly
+            if(typeof options.authenticate === "function") this._authenticate = options.authenticate;
+
+            if(typeof options.timeout === "number") this.timeout = options.timeout;
+            this.sendErrors = !!options.sendErrors;
+            this.allowBinaryToken = !!options.allowBinaryToken;
+            this.allowAuthHeader = options.allowAuthHeader !== false;
+            this.allowFirstMessageAuth = options.allowFirstMessageAuth !== false;
+
+            this._decoder = new TextDecoder("utf-8");
+
+            if(typeof this._authenticate !== "function") {
+                throw new Error("Missing authenticate handler");
+            }
+        }
+
+        beforeUpgrade(req, res, context, customData) {
+            if(typeof this._beforeUpgrade === "function") {
+                if(this._beforeUpgrade(req, res, context, customData) === false) return false;
+            }
+
+            if(this.allowAuthHeader) {
+                const header = req.getHeader("authorization");
+                const token = header? header.split(" ")[1] : null;
+                
+                let user;
+                if(token) {
+                    try {
+                        user = this._authenticate(token, customData);
+                    } catch (e) {
+                        console.error("WebSocket auth error:", e);
+                    }
+                }
+
+                if(!user && !this.allowFirstMessageAuth) {
+                    res.writeStatus("401 Unauthorized").end();
+                    return false;
+                }
+
+                if(user) customData.user = user;
+            }
+            return true;
+        }
+
+        open(ws) {
+            // TODO: If backend is not in development mode and ws.secure is false, reject the connection
+
+            if(!ws.user) {
+                ws._authTimer = setTimeout(() => {
+                    try {
+                        if(!ws.authenticated) {
+                            if(this.sendErrors) {
+                                ws.send('{"error":"Authentication timeout","code":401}');
+                            }
+                            ws.close();
+                        }
+                    } catch {}
+                }, this.timeout || 4000);
+            } else {
+                ws.authenticated = true;
+                this._open?.(ws);
+            }
+        }
+
+        message(ws, data, isBinary){
+            if(!ws.authenticated) {
+                if(ws._authAttempted) {
+                    // Multiple messages before authentication are invalid and ignored
+                    return;
+                }
+
+                ws._authAttempted = true;
+
+                if(ws._authTimer) {
+                    clearTimeout(ws._authTimer);
+                    ws._authTimer = null;
+                }
+
+                let user;
+                try {
+                    if(this.allowBinaryToken && isBinary) {
+                        user = this._authenticate(data, ws);
+                    } else {
+                        user = this._authenticate(this._decoder.decode(data), ws);
+                    }
+                } catch (e) {
+                    console.error("WebSocket auth error:", e);
+                }
+
+                if(!user) {
+                    if(this.sendErrors) {
+                        ws.send('{"error":"Authentication failed","code":401}');
+                    }
+                    ws.close();
+                    return;
+                }
+
+                ws.user = user;
+                ws.authenticated = true;
+                this._open?.(ws);
+                return;
+            }
+
+            this._message?.(ws, data, isBinary);
+        }
     }
 }
