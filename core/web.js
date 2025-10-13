@@ -817,6 +817,7 @@ function checkSupportedBrowser(userAgent, properties) {
 const ls_path = backend.path + "/addons/cdn/ls";
 const latest_ls_version = fs.existsSync(ls_path + "/version") ? fs.readFileSync(ls_path + "/version", "utf8").trim() : "5.1.0";
 
+// TODO: Let the API itself handle this
 const ls_components = {
     "js": [
         "animation",
@@ -830,6 +831,7 @@ const ls_components = {
         "tabs",
         "toast",
         "tooltips",
+        "tree",
         "v4compat"
     ],
     "css": [

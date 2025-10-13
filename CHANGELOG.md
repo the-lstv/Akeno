@@ -10,6 +10,7 @@
 
 ## Known bugs as of 1.6.6-beta
 - [Critical] Empty html files crash the server (parser bug)
+- [Critical] Auto-closing tags are reading from OOB memory(?)
 - [Priority] HTML files without a template now have a bug where some @page directives are ignored
 
 ## New in 1.6.8-beta
