@@ -970,7 +970,7 @@ module.exports = {
             for(let part of files){
                 if (!(part.data instanceof Buffer)) part.data = Buffer.from(part.data);
 
-                if(part.data.length > 0 && part.type && part.type.startsWith("image/") && sharp) {
+                if(part.data.length > 0 && part.type && part.type.startsWith("image/") && mimeType !== "image/svg+xml" && sharp) {
                     try {
                         part.data = await sharp(part.data).webp({
                             quality: 80,
