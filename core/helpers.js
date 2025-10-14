@@ -333,12 +333,12 @@ class FileServer extends CacheManager {
     resolvePath(path) {
         if (this.root) {
             // make sure leading slash is honored
-            return nodePath.join(
+            return nodePath.posix.join(
                 this.root,
-                nodePath.resolve(nodePath.sep, path || nodePath.sep)
+                nodePath.posix.resolve('/', path || '/')
             );
         }
-        return nodePath.normalize(path);
+        return nodePath.posix.normalize(path);
     }
 
     /**
