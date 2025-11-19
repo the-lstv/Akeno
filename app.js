@@ -620,7 +620,7 @@ const backend = {
             "JSON"
         ]),
 
-        compress(buffer, format = 0){
+        compress(buffer, format = 0) {
             if(!(buffer instanceof Buffer)) {
                 buffer = Buffer.from(buffer);
             }
@@ -939,8 +939,8 @@ const backend = {
 if(true) {
     // We do this here to make intellisense work at least somewhere
     Units.Manager.initCore(backend);
-    
-    // Do not rely on this
+
+    // Do not rely on this 🙏
     global.backend = backend;
     module.exports = backend;
 
@@ -968,14 +968,23 @@ if(true) {
     process.on('exit', () => {
         backend.log(`[system] Exiting Akeno`);
     })
-    
+
+    // I don't recommend using .env
     if (!JWT_KEY) {
-        JWT_KEY = crypto.randomBytes(32).toString("hex");
-    
-        try {
-            fs.appendFileSync(PATH + ".env", `\nAKENO_KEY=${JWT_KEY}\n`);
-        } catch (err) {
-            backend.warn("Warning: Failed to export generated JWT key to .env file.", err);
+        if(fs.existsSync(".env")) {
+            const env = fs.readFileSync(".env", "utf8");
+            const index = env.indexOf("AKENO_KEY");
+            if(index > -1) {
+                JWT_KEY = env.substring(index + 10, env.indexOf("\n", index) || env.length);
+            }
+        } else {
+            JWT_KEY = crypto.randomBytes(32).toString("hex");
+
+            try {
+                fs.appendFileSync(PATH + ".env", `\nAKENO_KEY=${JWT_KEY}\n`);
+            } catch (err) {
+                backend.warn("Warning: Failed to export generated JWT key to .env file.", err);
+            }
         }
     }
     

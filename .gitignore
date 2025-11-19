@@ -1,4 +1,5 @@
 .vscode
+.idea
 
 etc/hits
 etc/generated
@@ -23,7 +24,6 @@ node_modules
 package-lock.json
 pnpm-lock.yaml
 
-core/native/build
 core/native/node
 core/native/test*
 
