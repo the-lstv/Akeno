@@ -261,8 +261,8 @@ const backend = {
         return item
     },
 
-    broadcast(topic, data, isBinary, compress){
-        if(backend.config.getBlock("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
+    broadcast(topic, data, isBinary = false, compress = false) {
+        (backend.protocols.https.server || backend.protocols.http.server).publish(topic, data, isBinary, compress);
     },
 
     constants: {
