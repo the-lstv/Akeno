@@ -45,6 +45,15 @@ const decoder = new TextDecoder("utf-8");
 const nullStringBuffer = Buffer.from("null");
 
 
+// Brings support for old browsers
+let esbuild;
+const TRANSPILE_EXTENSIONS = ['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css'];
+try {
+    esbuild = require("esbuild");
+} catch (e) {
+    esbuild = null;
+}
+
 class CacheManager extends Units.Server {
     /**
      * @param {object} options
@@ -52,12 +61,16 @@ class CacheManager extends Units.Server {
      * @param {function} [options.onMissing]
      * @param {object}   [options.cacheControl]
      * @param {boolean}  [options.enableCompression]
+     * @param {boolean}  [options.esbuildEnabled]
+     * @param {string[]} [options.esbuildTargets]
      */
     constructor({
         fileProcessor = null,
         onMissing = null,
         cacheControl = defaultCacheControl,
         enableCompression = true,
+        esbuildEnabled = backend.esbuildEnabled,
+        esbuildTargets = backend.esbuildTargets
     } = {}) {
         super();
 
@@ -74,6 +87,8 @@ class CacheManager extends Units.Server {
             };
         this.cacheControl = cacheControl || defaultCacheControl;
         this.enableCompression = !!enableCompression;
+        this.esbuildEnabled = !!esbuildEnabled;
+        this.esbuildTargets = esbuildTargets;
     }
 
     /**
@@ -187,7 +202,7 @@ class CacheManager extends Units.Server {
     /**
      * Public serve() entry point.
      */
-    async serve(req, res, key, status = null, options = null) {
+    async serve(req, res, key, status = null, options = null, suggestedCompressionAlgorithm = null) {
         if (this.cacheDisabled) {
             this.onMissing(req, res, key, status);
             return;
@@ -199,7 +214,7 @@ class CacheManager extends Units.Server {
             return;
         }
 
-        return this.serveWithoutChecking(req, res, entry, status, false, null, options);
+        return this.serveWithoutChecking(req, res, entry, status, false, suggestedCompressionAlgorithm, options);
     }
 
     /**
@@ -229,7 +244,7 @@ class CacheManager extends Units.Server {
      * @param {string|null} mimeType - Optional MIME type for the cache entry.
      * @returns {boolean} - Returns true if the entry was refreshed successfully.
      */
-    refresh(key, headers = null, cacheBreaker = null, content = null, mimeType = null) {
+    async refresh(key, headers = null, cacheBreaker = null, content = null, mimeType = null) {
         let entry = this.cache.get(key);
         if (!entry) {
             entry = [[]];
@@ -239,10 +254,6 @@ class CacheManager extends Units.Server {
             for (let i = 1; i < entry.length; i++) {
                 delete entry[i];
             }
-        }
-
-        if (content) {
-            entry[0][0] = content;
         }
 
         entry[0][1] = headers || {};
@@ -256,7 +267,21 @@ class CacheManager extends Units.Server {
             entry[0][1]['Content-Type'] = mimeType + '; charset=utf-8';
             entry[0][1]['X-Content-Type-Options'] = 'nosniff';
             entry[0][1].Connection = 'keep-alive';
+            entry[0][5] = backend.mime.getExtension(mimeType)[0] || '';
             entry[0][6] = mimeType;
+
+            if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes(entry[0][5])) {
+                const originalContent = content;
+                content = await this.transpile(content, entry[0][5]);
+
+                if (content !== originalContent && ['ts', 'tsx', 'jsx'].includes(entry[0][5])) {
+                    mimeType = 'text/javascript';
+                }
+            }
+        }
+
+        if (content) {
+            entry[0][0] = content;
         }
 
         if (cacheBreaker) {
@@ -275,6 +300,38 @@ class CacheManager extends Units.Server {
             this.serve(req, res, req.path);
         } else {
             this.onMissing(req, res, null);
+        }
+    }
+
+    /**
+     * Transpiles content using esbuild if enabled and applicable.
+     * @param {string|Buffer} content 
+     * @param {string} ext 
+     * @returns {Promise<string|Buffer>}
+     */
+    async transpile(content, ext) {
+        if (!this.esbuildEnabled || !esbuild) return content;
+
+        if(TRANSPILE_EXTENSIONS.indexOf(ext) === -1) return content;
+        if(ext === "mjs" || ext === "cjs") {
+            ext = 'js';
+        }
+
+        let code = content;
+        if (Buffer.isBuffer(content)) {
+            code = content.toString('utf8');
+        }
+
+        try {
+            const result = await esbuild.transform(code, {
+                loader: ext,
+                target: this.esbuildTargets,
+                minify: backend.mode !== backend.modes.DEVELOPMENT
+            });
+            return Buffer.from(result.code);
+        } catch (e) {
+            console.error("Esbuild transpilation error:", e);
+            return content;
         }
     }
 }
@@ -297,6 +354,8 @@ class FileServer extends CacheManager {
      * @param {boolean} [options.enableCompression] - If set to true, files will be compressed when served.
      * @param {boolean} [options.automatic] - If set to true, files will be automatically read and cached based on the request URL, even if they weren't added manually.
      * @param {string} [options.root] - Root directory for the cache, appended to all paths or for automatic serving.
+     * @param {boolean} [options.esbuildEnabled] - If set to true, files will be transpiled using esbuild.
+     * @param {string[]} [options.esbuildTargets] - Target environments for esbuild.
      * @memberof backend.helper
      * @constructor
      * 
@@ -320,9 +379,11 @@ class FileServer extends CacheManager {
         cacheControl,
         enableCompression = true,
         automatic = false,
-        root = ''
+        root = '',
+        esbuildEnabled,
+        esbuildTargets
     } = {}) {
-        super({ fileProcessor, onMissing, cacheControl, enableCompression });
+        super({ fileProcessor, onMissing, cacheControl, enableCompression, esbuildEnabled, esbuildTargets });
         this.automatic = !!automatic;
         this.root = root;
     }
@@ -401,6 +462,15 @@ class FileServer extends CacheManager {
                     resolved,
                     (ext === 'js' || ext === 'css') ? 'utf8' : null
                 );
+        }
+
+        if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes(ext)) {
+            const originalContent = content;
+            content = await this.transpile(content, ext);
+
+            if (content !== originalContent && ['ts', 'tsx', 'jsx'].includes(ext)) {
+                mimeType = 'text/javascript';
+            }
         }
 
         const stats = fs.statSync(resolved);

@@ -921,6 +921,9 @@ const backend = {
         // TODO: Add something like "in production only".
         backend.compression.enabled = backend.config.getBlock("web").get("compress", Boolean, true);
         backend.compression.codeEnabled = backend.config.getBlock("web").get("compress-code", Boolean, true);
+
+        backend.esbuildEnabled = backend.config.getBlock("web").get("esbuild", Boolean, false);
+        backend.esbuildTargets = backend.config.getBlock("web").get("esbuild-targets", Array, ["chrome58", "firefox57", "safari11"]);
     },
 
     trustedOrigins: new Set,

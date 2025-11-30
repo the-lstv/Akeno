@@ -839,6 +839,15 @@ const ls_components = {
     ]
 };
 
+// Brings support for old browsers
+let esbuild;
+const TRANSPILE_EXTENSIONS = ['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css'];
+try {
+    esbuild = require("esbuild");
+} catch (e) {
+    esbuild = null;
+}
+
 function initParser(header) {
     parser = new backend.native.parser({
         header,
@@ -851,8 +860,22 @@ function initParser(header) {
             // Inline script compression
             // TODO: Handle script type
             if(parent === "script") {
-                if(!backend.compression.codeEnabled) {
+                if(!backend.compression.codeEnabled || !backend.esbuildEnabled) {
                     return true;
+                }
+
+                if(backend.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes("js")) {
+                    try {
+                        const result = esbuild.transformSync(text, {
+                            minify: backend.compression.codeEnabled,
+                            loader: 'js',
+                            target: backend.esbuildTargets,
+                        });
+                        return result.code;
+                    } catch (e) {
+                        console.error("Esbuild JS transform error: ", e);
+                        return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.JS) : true;
+                    }
                 }
 
                 return backend.compression.code(text, backend.compression.format.JS);
@@ -860,8 +883,22 @@ function initParser(header) {
 
             // Inline style compression
             if (parent === "style") {
-                if(!backend.compression.codeEnabled) {
+                if(!backend.compression.codeEnabled || !backend.esbuildEnabled) {
                     return true;
+                }
+
+                if(backend.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes("css")) {
+                    try {
+                        const result = esbuild.transformSync(text, {
+                            minify: backend.compression.codeEnabled,
+                            loader: 'css',
+                            target: backend.esbuildTargets,
+                        });
+                        return result.code;
+                    } catch (e) {
+                        console.error("Esbuild CSS transform error: ", e);
+                        return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.CSS) : true;
+                    }
                 }
 
                 return backend.compression.code(text, backend.compression.format.CSS);
