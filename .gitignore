@@ -22,7 +22,7 @@ core/native/build
 node_modules
 # package.json
 package-lock.json
-pnpm-lock.yaml
+pnpm-*
 
 core/native/node
 core/native/test*

@@ -326,6 +326,7 @@ class CacheManager extends Units.Server {
             const result = await esbuild.transform(code, {
                 loader: ext,
                 target: this.esbuildTargets,
+                format: 'iife',
                 minify: backend.mode !== backend.modes.DEVELOPMENT
             });
             return Buffer.from(result.code);

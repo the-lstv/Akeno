@@ -869,6 +869,7 @@ function initParser(header) {
                         const result = esbuild.transformSync(text, {
                             minify: backend.compression.codeEnabled,
                             loader: 'js',
+                            format: 'iife',
                             target: backend.esbuildTargets,
                         });
                         return result.code;
