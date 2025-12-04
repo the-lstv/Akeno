@@ -100,6 +100,15 @@ class WebApp extends Units.App {
         return { full, relative, useRootPath };
     }
 
+    fileHasChangedSince(path, ms) {
+        const file = this.resolvePath(path).full;
+        try {
+            return fs.statSync(file).mtimeMs > ms;
+        } catch {
+            return false;
+        }
+    }
+
     readConfig() {
         if(this._memoryConfig) return true;
 
