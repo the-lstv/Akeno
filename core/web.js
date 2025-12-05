@@ -939,7 +939,7 @@ function initParser(header) {
                 for (const entry of block.attributes) {
                     const has_component_list = typeof entry !== "string";
 
-                    const scriptAttributes = `${block.properties.defer? "defer": ""} ${block.properties.async? "async": ""}`;
+                    const scriptAttributes = `${block.properties.defer? " defer": block.properties.async? " async": ""}`;
 
                     let attrib = has_component_list ? entry.name : entry;
                     let components = has_component_list && entry.values.length > 0 ? [] : backend.constants.EMPTY_ARRAY;
@@ -1012,7 +1012,7 @@ function initParser(header) {
                             components_string = jsComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js" ${scriptAttributes}></script>`);
+                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
                                 this.data.using_ls_js = true;
                             }
                         }
@@ -1041,11 +1041,11 @@ function initParser(header) {
                             break;
 
                         case "hljs":
-                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/highlight.min.js" ${scriptAttributes}></script>`);
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/highlight.min.js"${scriptAttributes}></script>`);
 
                             for (const component of components) {
                                 if(component.startsWith("lang:")) {
-                                    this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/languages/${component.slice(5)}.min.js" ${scriptAttributes}></script>`);
+                                    this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/languages/${component.slice(5)}.min.js"${scriptAttributes}></script>`);
                                 }
 
                                 if(component.startsWith("theme:")) {
@@ -1055,7 +1055,7 @@ function initParser(header) {
                             break;
 
                         case "marked":
-                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "16.2.1"}/lib/marked.umd.min.js" ${scriptAttributes}></script>`);
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "16.2.1"}/lib/marked.umd.min.js"${scriptAttributes}></script>`);
                             break;
 
                         case "google-fonts":
@@ -1088,7 +1088,7 @@ function initParser(header) {
 
                                 switch (extension) {
                                     case "js":
-                                        this.write(`<script src="${link}${mtime}" ${components.join(" ")} ${scriptAttributes}></script>`)
+                                        this.write(`<script src="${link}${mtime}" ${components.join(" ")}${scriptAttributes}></script>`)
                                         break;
                                     case "css":
                                         this.write(`<link rel=stylesheet href="${link}${mtime}" ${components.join(" ")}>`)
