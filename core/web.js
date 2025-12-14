@@ -830,6 +830,7 @@ const latest_ls_version = fs.existsSync(ls_path + "/version") ? fs.readFileSync(
 const ls_components = {
     "js": [
         "animation",
+        "dragdrop",
         "gl",
         "imagecropper",
         "modal",
@@ -838,6 +839,7 @@ const ls_components = {
         "reactive",
         "resize",
         "tabs",
+        "timeline",
         "toast",
         "tooltips",
         "tree",
