@@ -115,13 +115,13 @@ class KeyStorage {
 
     static openDb(path, name) {
         path = path + name;
-    
+
         if (name.startsWith("db/")) {
             if (!fs.existsSync(path)) {
                 fs.mkdirSync(path)
             }
         } else throw new Error("Invalid database path");
-    
+
         return new KeyStorage(path)
     }
 }

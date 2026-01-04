@@ -79,10 +79,10 @@ const db = {
     storages: {
         // - Main database
         main: KeyStorage.openDb(PATH, "db/main"),
-    
+
         // - Data database
         data: KeyStorage.openDb(PATH, "db/data"),
-    
+
         // - Cache database
         cache: KeyStorage.openDb(PATH, "db/cache")
     }
@@ -948,26 +948,26 @@ if(true) {
     module.exports = backend;
 
     backend.helper = require("./core/helpers");
-    
+
     // Load configuration file
     backend.refreshConfig();
-    
+
     db.storages.cache.open();
     db.storages.data.open();
-    
+
     db.compressionCache = db.storages.cache.openDbi("compression", { keyIsUint32: true }, true);
     db.generalCache = db.storages.cache.openDbi("general", {}, true);
     db.apps = db.storages.main.openDbi("app.metadata", {}, true);
-    
+
     Units.Manager.loadModule("./core/web");
 
     backend.webServerHandler = Units.Manager.module("akeno.web").onRequest;
     domainRouter.fallback = backend.webServerHandler;
-    
+
     process.on('uncaughtException', (error) => {
         backend.fatal("[uncaught error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
     })
-    
+
     process.on('exit', () => {
         backend.log(`[system] Exiting Akeno`);
     })
@@ -990,25 +990,25 @@ if(true) {
             }
         }
     }
-    
+
     try {
         // Disable uWebSockets version header, remove to re-enable
         uws._cfg('999999990007');
     } catch (error) {}
-    
+
     Units.Manager.refreshAddons();
-    
+
     if(backend.mode === backend.modes.DEVELOPMENT && IS_NODE_INSPECTOR_ENABLED) {
         console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
         console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
-    
+
         backend.exposeToDebugger("backend", backend);
         backend.exposeToDebugger("web", Units.Manager.module("akeno.web"));
     }
-    
+
     if (process.platform !== 'linux') {
         backend.warn(`Warning: Your platform (${process.platform}) has experimental support. Akeno is currently only officially supported on Linux, so you may run into unexpected issues.`);
     }
-    
+
     backend.log(`Starting \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${(performance.now() - SINCE_STARTUP).toFixed(2)}ms\x1b[0m.`);
 }

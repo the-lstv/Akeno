@@ -161,7 +161,7 @@ public:
     explicit HTMLParsingContext(std::string_view buf, HTMLParserOptions& options)
         : options(options),
         buffer(buf), it(buf.data()), chunk_end(buf.data() + buf.size()), value_start(buf.data()) {}
-    
+
     explicit HTMLParsingContext(HTMLParserOptions& options)
         : options(options) {}
 
@@ -289,7 +289,7 @@ public:
         if (checkCache) {
             auto cacheIt = fileCache.find(filePath);
             contentCached = cacheIt != fileCache.end() && cacheIt->second.lastModified == fileModTime;
-    
+
             if (contentCached && cacheIt->second.templateCache != nullptr) {
                 auto templateModTime = std::filesystem::last_write_time(cacheIt->second.templateCache->path);
                 if (cacheIt->second.templateLastModified != templateModTime) {
@@ -809,18 +809,18 @@ public:
         if (!file.is_open()) {
             throw std::runtime_error("Failed to open file: " + filePath);
         }
-    
+
         std::streamsize size = file.tellg();
         if (size > MAX_FILE_SIZE) {
             throw std::runtime_error("File size exceeds maximum allowed size: " + filePath);
         }
-    
+
         file.seekg(0, std::ios::beg);
         std::vector<char> buffer(size);
         if (!file.read(buffer.data(), size)) {
             throw std::runtime_error("Failed to read file: " + filePath);
         }
-    
+
         std::string_view fileContent(buffer.data(), size);
 
         HTMLParsingPosition pos = storePosition();
@@ -872,7 +872,7 @@ private:
             }
         }
     }
-    
+
     char string_char = 0;
 
     std::string class_buffer;
@@ -899,7 +899,7 @@ private:
 
             return;
         }
-    
+
         if(options.buffer && render_element) {
             if(!class_buffer.empty()) {
                 output->append(" class=\"").append(class_buffer).append("\"");

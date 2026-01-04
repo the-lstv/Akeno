@@ -71,14 +71,16 @@ class WebApp extends Units.App {
      */
 
     resolvePath(path, current = null, useRootPath = false) {
+        // Preserve original input for URL construction
+        const original = path;
         let isRelative = false;
 
         if (path.charCodeAt(0) === 126) { // '~'
             path = path.slice(1);
             useRootPath = true;
-        } else if (path.charCodeAt(0) !== 47) { // '/'
+        } else if (path.charCodeAt(0) !== 47) { // not starting with '/'
             isRelative = true;
-        } else if (path.charCodeAt(1) === 126 && path.charCodeAt(2) === 47) { // '/~/', special case :shrug:
+        } else if (path.length >= 3 && path.charCodeAt(1) === 126 && path.charCodeAt(2) === 47) { // '/~/'
             path = path.slice(2);
             useRootPath = true;
         }
@@ -87,17 +89,22 @@ class WebApp extends Units.App {
             useRootPath = false;
         }
 
-        const root = useRootPath ? this.path : this.root || this.path;
-        const relative = nodePath.posix.resolve(isRelative ? (current || nodePath.sep) : "/", path);
+        const root = useRootPath ? this.path : (this.root || this.path);
 
-        const full = nodePath.join(root, relative);
+        // Resolve to an absolute filesystem path for the server
+        const base = isRelative ? (current || "/") : "/";
+        const resolvedFsRelative = nodePath.posix.resolve(base, path);
+        const full = nodePath.join(root, resolvedFsRelative);
 
-        // Extra safety check, while it should already be safe, better to be extra safe.
+        // Safety: prevent traversal outside of root
         if (!full.startsWith(root)) {
             return { full, relative: nodePath.sep, useRootPath: true };
         }
 
-        return { full, relative, useRootPath };
+        // For client links, keep relative input as-is (e.g., "./assets/main.js")
+        const relativeForLink = isRelative ? original : resolvedFsRelative;
+
+        return { full, relative: relativeForLink, useRootPath };
     }
 
     fileHasChangedSince(path, ms) {
@@ -367,8 +374,19 @@ class WebApp extends Units.App {
 
         this._browserRequirements = this.config.getBlock("browserSupport");
 
+        // TODO: Temporary
+        this.__postCompileHook = this.config.has("task-post-compile") ? this.config.getBlock("task-post-compile") : null;
+
         const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String);
         this._404 = _404 ? this.resolvePath(_404) : null;
+    }
+
+    destroy() {
+        for (let domain of this.domains) {
+            backend.domainRouter.remove(domain);
+        }
+        applications.delete(this.path);
+        // TODO: Proper cleanup, clear caches, destroy modules, ports, etc.
     }
 
     ws(options){
@@ -536,6 +554,21 @@ const server = new class WebServer extends Units.Module {
                     await server.fileServer.refresh(file, null, null, content);
                 } else {
                     await server.fileServer.refresh(file, { "Vary": "Accept-Encoding, Akeno-Content-Only" }, extension === "html" ? (path) => parser.needsUpdate(path) : null, content);
+                }
+            }
+
+            // FIXME: This is temporary and very wrongly implemented, will need a proper rework later
+            if(!cacheEntry && app.__postCompileHook && file.endsWith(app.__postCompileHook.attributes[0])) {
+                const copyLocation = app.__postCompileHook.get("copy", String);
+                if(copyLocation) {
+                    const postCompilePath = nodePath.join(app.path, copyLocation.replace("$FILE", nodePath.basename(file)).replace("$APP", app.basename));
+                    app.log("Post-compiled file being written to " + postCompilePath);
+
+                    fs.promises.writeFile(postCompilePath, server.fileServer.cache.get(file)[0][0], (err) => {
+                        if(err) {
+                            app.error("Failed to copy compiled file to " + postCompilePath + ": ", err)
+                        }
+                    });
                 }
             }
 
@@ -830,12 +863,16 @@ const latest_ls_version = fs.existsSync(ls_path + "/version") ? fs.readFileSync(
 const ls_components = {
     "js": [
         "animation",
+        "automationgraph",
         "dragdrop",
         "gl",
         "imagecropper",
+        "knob",
+        "menu",
         "modal",
         "network",
         "node",
+        "patcher",
         "reactive",
         "resize",
         "tabs",
@@ -846,7 +883,8 @@ const ls_components = {
         "v4compat"
     ],
     "css": [
-        "flat"
+        "flat",
+        "knob"
     ]
 };
 
@@ -997,8 +1035,9 @@ function initParser(header) {
                             components = [singularJSComponent];
                         }
 
+                        
                         if (is_merged || attrib === "ls.css" || singularCSSComponent) {
-                            const cssComponents = is_merged ? components.filter(value => !ls_components.js.includes(value)) : components;
+                            const cssComponents = is_merged ? components.filter(value => ls_components.css.includes(value)) : components;
                             const useSingular = cssComponents.length === 1 && (this.data.using_ls_css || singularCSSComponent);
                             components_string = cssComponents.join();
 
@@ -1009,7 +1048,7 @@ function initParser(header) {
                         }
 
                         if (is_merged || attrib === "ls.js" || singularJSComponent) {
-                            const jsComponents = is_merged ? components.filter(value => !ls_components.css.includes(value)) : components;
+                            const jsComponents = is_merged ? components.filter(value => ls_components.js.includes(value)) : components;
                             const useSingular = jsComponents.length === 1 && (this.data.using_ls_js || singularJSComponent);
                             components_string = jsComponents.join();
 

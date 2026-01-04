@@ -633,7 +633,7 @@ module.exports = {
                     if(!backend.trustedOrigins.has(req.origin)) {
                         throw new Error(`Can't allow credentials for ${req.origin} because it is not on the trusted list`);
                     }
-    
+
                     res.writeHeader("Access-Control-Allow-Credentials", "true");
                     res.writeHeader("Access-Control-Allow-Origin", req.origin);
                     res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
@@ -800,7 +800,7 @@ module.exports = {
         return [algorithm, buffer, headers];
     },
 
-    
+
     /**
      * Send a templated response.
      * @param {object} req - The request object.

@@ -283,7 +283,7 @@ Napi::Value ParserWrapper::fromString(const Napi::CallbackInfo& info) {
     }
 
     std::string source = info[0].As<Napi::String>().Utf8Value();
-    
+
     Napi::Object ctxObj = info[1].As<Napi::Object>();
 
     std::string result;
@@ -416,7 +416,7 @@ void WriteLog(const Napi::CallbackInfo& info) {
     lineCount++;
 
     std::cout << '\n';
-    
+
     // if (lineCount % 10 == 0 || level >= LOG_ERROR) {
     //     std::cout << std::flush;
     // }

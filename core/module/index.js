@@ -43,7 +43,7 @@ module.exports = {
         async reloadAll(){
             return client.request(["akeno.web/reload"]);
         },
-    
+
         /**
          * Enable an application by its path.
          * @param {string} path - The path to the application.
@@ -52,7 +52,7 @@ module.exports = {
         async enable(path){
             return client.request(["akeno.web/enable", path]);
         },
-    
+
         /**
          * Disable an application by its path.
          * @param {string} path - The path to the application.
@@ -61,7 +61,7 @@ module.exports = {
         async disable(path){
             return client.request(["akeno.web/disable", path]);
         },
-    
+
         /**
          * Get the status of an application by its path.
          * @param {string} path - The path to the application.
@@ -70,7 +70,7 @@ module.exports = {
         async getStatus(path){
             return client.request(["akeno.web/status", path]);
         },
-    
+
         /**
          * List all applications.
          * @returns {Promise<any>} - A promise that resolves with the list of applications.
