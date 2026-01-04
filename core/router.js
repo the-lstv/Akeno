@@ -2,7 +2,7 @@
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
 
-    Last modified: 2025
+    Last modified: 2026
     License: GPL-3.0
     Version: 1.1.0
     Description: A routing/matching module for Akeno, allowing to match domains and paths with wildcards and groups.
