@@ -2,7 +2,7 @@
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
 
-    Last modified: 2025
+    Last modified: 2026
     License: GPL-3.0
     Version: 2.0.0
     Description: A performance optimized web application framework for Akeno.
@@ -29,23 +29,22 @@ let
     backend = require("akeno:backend")
 ;
 
-
+/**
+ * Web application class for Akeno.
+ * Everything should be pre-computed here, routing should be mostly linear.
+ */
 class WebApp extends Units.App {
-    constructor(path) {
+    constructor(path, options = {}) {
         super();
 
         this.path = nodePath.normalize(path);
+        this.basename = nodePath.basename(path);
         this.root = this.path;
         this.type = "akeno.web.WebApp";
 
         this.configMtime = null;
         this.loaded = false;
 
-        this.readConfig();
-        if (!this.config) throw "Invalid or missing config";
-
-        this.basename = nodePath.basename(path);
-        this.name = this.config.getBlock("app").get("name", String, this.basename);
         this.enabled = null;
         this.ports = new Set;
 
@@ -59,7 +58,8 @@ class WebApp extends Units.App {
 
         this._rootPathAllowed = true;
 
-        this.reload(false);
+        this.reload(options, true);
+        this.name = this.config.getBlock("app").get("name", String, this.basename);
     }
 
     /**
@@ -71,14 +71,16 @@ class WebApp extends Units.App {
      */
 
     resolvePath(path, current = null, useRootPath = false) {
+        // Preserve original input for URL construction
+        const original = path;
         let isRelative = false;
 
         if (path.charCodeAt(0) === 126) { // '~'
             path = path.slice(1);
             useRootPath = true;
-        } else if (path.charCodeAt(0) !== 47) { // '/'
+        } else if (path.charCodeAt(0) !== 47) { // not starting with '/'
             isRelative = true;
-        } else if (path.charCodeAt(1) === 126 && path.charCodeAt(2) === 47) { // '/~/', special case :shrug:
+        } else if (path.length >= 3 && path.charCodeAt(1) === 126 && path.charCodeAt(2) === 47) { // '/~/'
             path = path.slice(2);
             useRootPath = true;
         }
@@ -87,33 +89,47 @@ class WebApp extends Units.App {
             useRootPath = false;
         }
 
-        const root = useRootPath ? this.path : this.root || this.path;
-        const relative = nodePath.posix.resolve(isRelative ? (current || nodePath.sep) : "/", path);
+        const root = useRootPath ? this.path : (this.root || this.path);
 
-        const full = nodePath.join(root, relative);
+        // Resolve to an absolute filesystem path for the server
+        const base = isRelative ? (current || "/") : "/";
+        const resolvedFsRelative = nodePath.posix.resolve(base, path);
+        const full = nodePath.join(root, resolvedFsRelative);
 
-        // Extra safety check, while it should already be safe, better to be extra safe.
+        // Safety: prevent traversal outside of root
         if (!full.startsWith(root)) {
             return { full, relative: nodePath.sep, useRootPath: true };
         }
 
-        return { full, relative, useRootPath };
+        // For client links, keep relative input as-is (e.g., "./assets/main.js")
+        const relativeForLink = isRelative ? original : resolvedFsRelative;
+
+        return { full, relative: relativeForLink, useRootPath };
+    }
+
+    fileHasChangedSince(path, ms) {
+        const file = this.resolvePath(path).full;
+        try {
+            return fs.statSync(file).mtimeMs > ms;
+        } catch {
+            return false;
+        }
     }
 
     readConfig() {
-        let configPath = this.path + "/app.conf";
+        if(this._memoryConfig) return true;
 
-        if (!configPath) {
+        if (!this.configPath) {
             return false;
         }
 
         try {
-            this.configMtime = fs.statSync(configPath).mtimeMs;
+            this.configMtime = fs.statSync(this.configPath).mtimeMs;
         } catch {
             this.configMtime = null;
         }
 
-        this.config = configTools(parse(fs.readFileSync(configPath, "utf8"), {
+        this.config = configTools(parse(fs.readFileSync(this.configPath, "utf8"), {
             strict: true,
             asLookupTable: true
         }));
@@ -121,8 +137,34 @@ class WebApp extends Units.App {
         return true;
     }
 
-    reload(checkConfig = true) {
-        if (checkConfig) {
+    reload(options, checkConfig = true) {
+        if(options.config) {
+            if(typeof options.config === "object" && !options.config.data) {
+                // Config is possibly JSON, will need to parse
+                throw new Error("Provided config seems to be an object - this has not yet been implemented. (App " + path + ")");
+            } else if(typeof options.config === "object" && options.config.data) {
+                // Config is provided as configTools
+                this.config = options.config; // TODO: configTools should be a class
+            } else if(options.config instanceof Map) {
+                // Config is provided as a parsed Map of blocks
+                this.config = configTools(options.config);
+            } else if(typeof options.config === "string") {
+                // Config is provided as a string
+                this.config = configTools(parse(options.config, {
+                    strict: true,
+                    asLookupTable: true
+                }));
+            } else {
+                throw new Error("Provided config is not valid. (App " + path + ")");
+            }
+
+            this._memoryConfig = true;
+            delete options.config;
+        }
+
+        if ((!this.config || checkConfig) && !this._memoryConfig) {
+            this.configPath = this.path + (options.configPath? nodePath.posix.resolve("/", options.configPath): "/app.conf");
+
             const configPath = this.path + "/app.conf";
             let currentMtime = null;
 
@@ -133,6 +175,8 @@ class WebApp extends Units.App {
             if (currentMtime && this.configMtime !== currentMtime) {
                 this.readConfig();
             } else return;
+
+            if (!this.config) throw "Invalid or missing config";
         }
 
         if (this.loaded) this.verbose("Hot-reloading");
@@ -271,9 +315,12 @@ class WebApp extends Units.App {
         this.loaded = true;
 
         // Precompute any path-specific attributes
-        this._hasAttribs = this.config.data.has("location") || this.config.data.has("redirect") || this.config.data.has("route") || this.config.data.has("handle");
+        this._hasAttribs = this.config.data.has("location") || this.config.data.has("addon") || this.config.data.has("redirect") || this.config.data.has("route") || this.config.data.has("handle");
         if (this._hasAttribs) {
-            if (!this.pathMatcher) this.pathMatcher = new PathMatcher();
+            if (!this.pathMatcher) this.pathMatcher = new PathMatcher({
+                mergeObjects: true // Internally merges objects
+            });
+
             this.pathMatcher.clear();
 
             // Routes (aliases)
@@ -307,6 +354,16 @@ class WebApp extends Units.App {
                 }
             }
 
+            // Addons - Load addon, block the path
+            if (this.config.data.has("addon")) {
+                for (const addon of this.config.getBlocks("addon")) {
+                    const path = this.resolvePath(addon.attributes[0]).full;
+                    
+                    Units.Manager.loadAddon(path);
+                    this.pathMatcher.add(addon.attributes[0], { deny: true });
+                }
+            }
+
             // General path attributes
             for (const route of this.config.getBlocks("location")) {
                 for (const pattern of route.attributes) {
@@ -315,15 +372,24 @@ class WebApp extends Units.App {
             }
         }
 
-
         this._browserRequirements = this.config.getBlock("browserSupport");
+
+        // TODO: Temporary
+        this.__postCompileHook = this.config.has("task-post-compile") ? this.config.getBlock("task-post-compile") : null;
 
         const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String);
         this._404 = _404 ? this.resolvePath(_404) : null;
     }
 
+    destroy() {
+        for (let domain of this.domains) {
+            backend.domainRouter.remove(domain);
+        }
+        applications.delete(this.path);
+        // TODO: Proper cleanup, clear caches, destroy modules, ports, etc.
+    }
+
     ws(options){
-        this._websocketEnabled = true;
         this.websocket = options;
     }
 }
@@ -491,6 +557,21 @@ const server = new class WebServer extends Units.Module {
                 }
             }
 
+            // FIXME: This is temporary and very wrongly implemented, will need a proper rework later
+            if(!cacheEntry && app.__postCompileHook && file.endsWith(app.__postCompileHook.attributes[0])) {
+                const copyLocation = app.__postCompileHook.get("copy", String);
+                if(copyLocation) {
+                    const postCompilePath = nodePath.join(app.path, copyLocation.replace("$FILE", nodePath.basename(file)).replace("$APP", app.basename));
+                    app.log("Post-compiled file being written to " + postCompilePath);
+
+                    fs.promises.writeFile(postCompilePath, server.fileServer.cache.get(file)[0][0], (err) => {
+                        if(err) {
+                            app.error("Failed to copy compiled file to " + postCompilePath + ": ", err)
+                        }
+                    });
+                }
+            }
+
             server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedAlg);
 
         } catch (error) {
@@ -576,7 +657,7 @@ const server = new class WebServer extends Units.Module {
     }
 
     async reload(specific_app, skip_config_refresh) {
-        if (specific_app) return this.refreshApp(specific_app);
+        if (specific_app) return !!this.load(specific_app);
 
         if (!skip_config_refresh) backend.refreshConfig();
 
@@ -612,7 +693,7 @@ const server = new class WebServer extends Units.Module {
                 continue;
             }
 
-            this.refreshApp(location);
+            this.load(location);
         }
 
         this.log(`${skip_config_refresh ? "Loaded" : "Reloaded"} ${locations.length} web application${locations.length !== 1 ? "s" : ""} in ${(performance.now() - start).toFixed(2)}ms`);
@@ -666,14 +747,15 @@ const server = new class WebServer extends Units.Module {
         return null;
     }
 
-    refreshApp(path) {
+    // TODO:
+    load(path, options = {}) {
         path = nodePath.normalize(path);
 
         let app = applications.get(path);
 
         if (!app) {
             try {
-                app = new WebApp(path);
+                app = new WebApp(path, options);
             } catch (error) {
                 this.warn("Web application (at " + path + ") failed to load due to an error: ", error);
                 return false;
@@ -681,11 +763,11 @@ const server = new class WebServer extends Units.Module {
 
             if (!app) return false;
         } else {
-            app.reload();
+            app.reload(options);
         }
 
         if (!app.config) return false;
-        return true;
+        return app;
     }
 
     enableApp(app_path) {
@@ -777,25 +859,43 @@ function checkSupportedBrowser(userAgent, properties) {
 const ls_path = backend.path + "/addons/cdn/ls";
 const latest_ls_version = fs.existsSync(ls_path + "/version") ? fs.readFileSync(ls_path + "/version", "utf8").trim() : "5.1.0";
 
+// TODO: Let the API itself handle this
 const ls_components = {
     "js": [
         "animation",
+        "automationgraph",
+        "dragdrop",
         "gl",
         "imagecropper",
+        "knob",
+        "menu",
         "modal",
         "network",
         "node",
+        "patcher",
         "reactive",
         "resize",
         "tabs",
+        "timeline",
         "toast",
         "tooltips",
+        "tree",
         "v4compat"
     ],
     "css": [
-        "flat"
+        "flat",
+        "knob"
     ]
 };
+
+// Brings support for old browsers
+let esbuild;
+const TRANSPILE_EXTENSIONS = ['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css'];
+try {
+    esbuild = require("esbuild");
+} catch (e) {
+    esbuild = null;
+}
 
 function initParser(header) {
     parser = new backend.native.parser({
@@ -809,8 +909,23 @@ function initParser(header) {
             // Inline script compression
             // TODO: Handle script type
             if(parent === "script") {
-                if(!backend.compression.codeEnabled) {
+                if(!backend.compression.codeEnabled || !backend.esbuildEnabled) {
                     return true;
+                }
+
+                if(backend.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes("js")) {
+                    try {
+                        const result = esbuild.transformSync(text, {
+                            minify: backend.compression.codeEnabled,
+                            loader: 'js',
+                            format: 'iife',
+                            target: backend.esbuildTargets,
+                        });
+                        return result.code;
+                    } catch (e) {
+                        console.error("Esbuild JS transform error: ", e);
+                        return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.JS) : true;
+                    }
                 }
 
                 return backend.compression.code(text, backend.compression.format.JS);
@@ -818,8 +933,22 @@ function initParser(header) {
 
             // Inline style compression
             if (parent === "style") {
-                if(!backend.compression.codeEnabled) {
+                if(!backend.compression.codeEnabled || !backend.esbuildEnabled) {
                     return true;
+                }
+
+                if(backend.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes("css")) {
+                    try {
+                        const result = esbuild.transformSync(text, {
+                            minify: backend.compression.codeEnabled,
+                            loader: 'css',
+                            target: backend.esbuildTargets,
+                        });
+                        return result.code;
+                    } catch (e) {
+                        console.error("Esbuild CSS transform error: ", e);
+                        return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.CSS) : true;
+                    }
                 }
 
                 return backend.compression.code(text, backend.compression.format.CSS);
@@ -850,8 +979,9 @@ function initParser(header) {
                 for (const entry of block.attributes) {
                     const has_component_list = typeof entry !== "string";
 
-                    let attrib = has_component_list ? entry.name : entry;
+                    const scriptAttributes = `${block.properties.defer? " defer": block.properties.async? " async": ""}`;
 
+                    let attrib = has_component_list ? entry.name : entry;
                     let components = has_component_list && entry.values.length > 0 ? [] : backend.constants.EMPTY_ARRAY;
 
                     // We sort alphabetically and remove duplicates to maximize cache hits
@@ -905,8 +1035,9 @@ function initParser(header) {
                             components = [singularJSComponent];
                         }
 
+                        
                         if (is_merged || attrib === "ls.css" || singularCSSComponent) {
-                            const cssComponents = is_merged ? components.filter(value => !ls_components.js.includes(value)) : components;
+                            const cssComponents = is_merged ? components.filter(value => ls_components.css.includes(value)) : components;
                             const useSingular = cssComponents.length === 1 && (this.data.using_ls_css || singularCSSComponent);
                             components_string = cssComponents.join();
 
@@ -917,12 +1048,12 @@ function initParser(header) {
                         }
 
                         if (is_merged || attrib === "ls.js" || singularJSComponent) {
-                            const jsComponents = is_merged ? components.filter(value => !ls_components.css.includes(value)) : components;
+                            const jsComponents = is_merged ? components.filter(value => ls_components.js.includes(value)) : components;
                             const useSingular = jsComponents.length === 1 && (this.data.using_ls_js || singularJSComponent);
                             components_string = jsComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"></script>`);
+                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
                                 this.data.using_ls_js = true;
                             }
                         }
@@ -951,11 +1082,11 @@ function initParser(header) {
                             break;
 
                         case "hljs":
-                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/highlight.min.js"></script>`);
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/highlight.min.js"${scriptAttributes}></script>`);
 
                             for (const component of components) {
                                 if(component.startsWith("lang:")) {
-                                    this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/languages/${component.slice(5)}.min.js"></script>`);
+                                    this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/languages/${component.slice(5)}.min.js"${scriptAttributes}></script>`);
                                 }
 
                                 if(component.startsWith("theme:")) {
@@ -965,7 +1096,7 @@ function initParser(header) {
                             break;
 
                         case "marked":
-                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "16.2.1"}/lib/marked.umd.min.js"></script>`);
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "16.2.1"}/lib/marked.umd.min.js"${scriptAttributes}></script>`);
                             break;
 
                         case "google-fonts":
@@ -998,7 +1129,7 @@ function initParser(header) {
 
                                 switch (extension) {
                                     case "js":
-                                        this.write(`<script src="${link}${mtime}" ${components.join(" ")}></script>`)
+                                        this.write(`<script src="${link}${mtime}" ${components.join(" ")}${scriptAttributes}></script>`)
                                         break;
                                     case "css":
                                         this.write(`<link rel=stylesheet href="${link}${mtime}" ${components.join(" ")}>`)
@@ -1175,4 +1306,5 @@ if (process.argv.includes("--debug-scan-ls-components")) {
     }
 }
 
+server.WebApp = WebApp;
 module.exports = server

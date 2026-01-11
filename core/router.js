@@ -2,7 +2,7 @@
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
 
-    Last modified: 2025
+    Last modified: 2026
     License: GPL-3.0
     Version: 1.1.0
     Description: A routing/matching module for Akeno, allowing to match domains and paths with wildcards and groups.
@@ -22,6 +22,7 @@ class Matcher extends Units.Module {
         this.exactMatches = new Map();
         this.wildcards = options.simpleMatcher? new SimpleWildcardMatcher(): new WildcardMatcher(options.segmentChar || "/", []);
         this.fallback = null;
+        this.options = options;
     }
 
     *expandPattern(pattern) {
@@ -55,10 +56,20 @@ class Matcher extends Units.Module {
             searchFrom = group + 1;
         }
 
+        if(pattern[pattern.length - 1] === '/') {
+            pattern = pattern.slice(0, -1);
+        }
         yield pattern;
     }
 
     add(pattern, handler) {
+        if(Array.isArray(pattern)) {
+            for(const p of pattern) {
+                this.add(p, handler);
+            }
+            return;
+        }
+
         if (typeof pattern !== 'string' || !handler) {
             throw new Error('Invalid route definition');
         }
@@ -84,7 +95,13 @@ class Matcher extends Units.Module {
                 continue;
             }
 
-            if (this.exactMatches.has(expandedPattern) && this.exactMatches.get(expandedPattern) !== handler) {
+            const existingHandler = this.exactMatches.get(expandedPattern);
+            if (existingHandler && existingHandler !== handler) {
+                if(this.options.mergeObjects) {
+                    handler = Object.assign(existingHandler, handler);
+                    continue;
+                }
+
                 this.warn(`Warning: Route already exists for domain: ${expandedPattern}, it is being overwritten.`);
             }
 
@@ -129,6 +146,19 @@ class Matcher extends Units.Module {
 
         return false;
     }
+
+    getBasePath(pattern) {
+        const specialIndex = Math.min(
+            pattern.indexOf('{') !== -1 ? pattern.indexOf('{') : Infinity,
+            pattern.indexOf('*') !== -1 ? pattern.indexOf('*') : Infinity
+        );
+        
+        if (specialIndex !== Infinity) {
+            pattern = pattern.slice(0, specialIndex);
+        }
+
+        return pattern.replace(/[/!]+$/, '');
+    }
 }
 
 
@@ -147,7 +177,57 @@ class WildcardMatcher {
             }
             return p;
         });
+
+        // Try to merge with an existing pattern that differs by exactly one string segment
+        for (const existing of this.patterns) {
+            if (existing.handler !== handler || existing.parts.length !== parts.length) continue;
+
+            let diffIndex = -1;
+            let canMerge = true;
+
+            for (let i = 0; i < parts.length; i++) {
+                const existingPart = existing.parts[i];
+                const newPart = parts[i];
+
+                // Check if parts are equal
+                if (existingPart === newPart) continue;
+
+                // Check if existing is a set and new part is a string that can be added
+                if (typeof existingPart === 'object' && existingPart && existingPart.type === 'set' && typeof newPart === 'string') {
+                    if (diffIndex !== -1) { canMerge = false; break; }
+                    diffIndex = i;
+                    continue;
+                }
+
+                // Check if both are strings (can be converted to set)
+                if (typeof existingPart === 'string' && typeof newPart === 'string') {
+                    if (diffIndex !== -1) { canMerge = false; break; }
+                    diffIndex = i;
+                    continue;
+                }
+
+                // Parts are incompatible
+                canMerge = false;
+                break;
+            }
+
+            if (canMerge && diffIndex !== -1) {
+                const existingPart = existing.parts[diffIndex];
+                const newPart = parts[diffIndex];
+
+                if (typeof existingPart === 'object' && existingPart.type === 'set') {
+                    // Add to existing set
+                    existingPart.set.add(newPart);
+                } else {
+                    // Convert string to set
+                    existing.parts[diffIndex] = { type: 'set', set: new Set([existingPart, newPart]) };
+                }
+                return;
+            }
+        }
+
         this.patterns.push({ parts, handler, pattern });
+        this.patterns.sort((a, b) => b.parts.length - a.parts.length);
     }
 
     filter(callback) {
@@ -163,10 +243,10 @@ class WildcardMatcher {
 
     /**
      * Fast wildcard matching with segment support.
-     * @param {string} input - The input string to match against.
+     * @param {string|array} input - The input string or array of segments to match against.
      */
     match(input) {
-        const path = this.split(input);
+        const path = Array.isArray(input) ? input : this.split(input);
 
         for (const { parts, handler } of this.patterns) {
             // Exact match
@@ -175,8 +255,12 @@ class WildcardMatcher {
                 if (only === "**" || (typeof only === 'string' && path.length === 1 && ((only === "*" && path[0] !== "") || only === path[0]))) {
                     return handler;
                 }
-                if (typeof only === 'object' && only && only.type === 'negSet') {
-                    if (path.length === 1 && path[0] !== "" && !only.set.has(path[0])) {
+
+                if (typeof only === 'object' && only) {
+                    if (only.type === 'negSet' && path.length === 1 && path[0] !== "" && !only.set.has(path[0])) {
+                        return handler;
+                    }
+                    if (only.type === 'set' && path.length === 1 && only.set.has(path[0])) {
                         return handler;
                     }
                 }
@@ -196,9 +280,11 @@ class WildcardMatcher {
                     if (path[si] === "") break;
                     pi++;
                     si++;
-                } else if (pi < parts.length && typeof part === 'object' && part && part.type === 'negSet') {
-                    if (path[si] === "" || part.set.has(path[si])) {
-                        break;
+                } else if (pi < parts.length && typeof part === 'object' && part) {
+                    if (part.type === 'negSet') {
+                        if (path[si] === "" || part.set.has(path[si])) break;
+                    } else if (part.type === 'set') {
+                        if (path[si] === "" || !part.set.has(path[si])) break;
                     }
                     pi++;
                     si++;
@@ -289,8 +375,8 @@ class SimpleWildcardMatcher {
 
 
 class DomainRouter extends Matcher {
-    constructor() {
-        super({ segmentChar: "." }, {
+    constructor(options) {
+        super({ segmentChar: ".", ...options }, {
             name: 'DomainRouter',
             description: 'A simple domain routing system for Akeno.',
             version: '1.0.0',
@@ -321,8 +407,8 @@ class DomainRouter extends Matcher {
 }
 
 class PathMatcher extends Matcher {
-    constructor() {
-        super({ segmentChar: "/" }, {
+    constructor(options) {
+        super({ segmentChar: "/", ...options }, {
             name: 'PathMatcher',
             description: 'A simple path matching system for Akeno.',
             version: '1.0.0',

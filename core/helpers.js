@@ -45,6 +45,15 @@ const decoder = new TextDecoder("utf-8");
 const nullStringBuffer = Buffer.from("null");
 
 
+// Brings support for old browsers
+let esbuild;
+const TRANSPILE_EXTENSIONS = ['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css'];
+try {
+    esbuild = require("esbuild");
+} catch (e) {
+    esbuild = null;
+}
+
 class CacheManager extends Units.Server {
     /**
      * @param {object} options
@@ -52,12 +61,16 @@ class CacheManager extends Units.Server {
      * @param {function} [options.onMissing]
      * @param {object}   [options.cacheControl]
      * @param {boolean}  [options.enableCompression]
+     * @param {boolean}  [options.esbuildEnabled]
+     * @param {string[]} [options.esbuildTargets]
      */
     constructor({
         fileProcessor = null,
         onMissing = null,
         cacheControl = defaultCacheControl,
         enableCompression = true,
+        esbuildEnabled = backend.esbuildEnabled,
+        esbuildTargets = backend.esbuildTargets
     } = {}) {
         super();
 
@@ -74,6 +87,8 @@ class CacheManager extends Units.Server {
             };
         this.cacheControl = cacheControl || defaultCacheControl;
         this.enableCompression = !!enableCompression;
+        this.esbuildEnabled = !!esbuildEnabled;
+        this.esbuildTargets = esbuildTargets;
     }
 
     /**
@@ -187,7 +202,7 @@ class CacheManager extends Units.Server {
     /**
      * Public serve() entry point.
      */
-    async serve(req, res, key, status = null, options = null) {
+    async serve(req, res, key, status = null, options = null, suggestedCompressionAlgorithm = null) {
         if (this.cacheDisabled) {
             this.onMissing(req, res, key, status);
             return;
@@ -199,7 +214,7 @@ class CacheManager extends Units.Server {
             return;
         }
 
-        return this.serveWithoutChecking(req, res, entry, status, false, null, options);
+        return this.serveWithoutChecking(req, res, entry, status, false, suggestedCompressionAlgorithm, options);
     }
 
     /**
@@ -229,7 +244,7 @@ class CacheManager extends Units.Server {
      * @param {string|null} mimeType - Optional MIME type for the cache entry.
      * @returns {boolean} - Returns true if the entry was refreshed successfully.
      */
-    refresh(key, headers = null, cacheBreaker = null, content = null, mimeType = null) {
+    async refresh(key, headers = null, cacheBreaker = null, content = null, mimeType = null) {
         let entry = this.cache.get(key);
         if (!entry) {
             entry = [[]];
@@ -239,10 +254,6 @@ class CacheManager extends Units.Server {
             for (let i = 1; i < entry.length; i++) {
                 delete entry[i];
             }
-        }
-
-        if (content) {
-            entry[0][0] = content;
         }
 
         entry[0][1] = headers || {};
@@ -256,7 +267,21 @@ class CacheManager extends Units.Server {
             entry[0][1]['Content-Type'] = mimeType + '; charset=utf-8';
             entry[0][1]['X-Content-Type-Options'] = 'nosniff';
             entry[0][1].Connection = 'keep-alive';
+            entry[0][5] = backend.mime.getExtension(mimeType)[0] || '';
             entry[0][6] = mimeType;
+
+            if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes(entry[0][5])) {
+                const originalContent = content;
+                content = await this.transpile(content, entry[0][5]);
+
+                if (content !== originalContent && ['ts', 'tsx', 'jsx'].includes(entry[0][5])) {
+                    mimeType = 'text/javascript';
+                }
+            }
+        }
+
+        if (content) {
+            entry[0][0] = content;
         }
 
         if (cacheBreaker) {
@@ -275,6 +300,39 @@ class CacheManager extends Units.Server {
             this.serve(req, res, req.path);
         } else {
             this.onMissing(req, res, null);
+        }
+    }
+
+    /**
+     * Transpiles content using esbuild if enabled and applicable.
+     * @param {string|Buffer} content 
+     * @param {string} ext 
+     * @returns {Promise<string|Buffer>}
+     */
+    async transpile(content, ext) {
+        if (!this.esbuildEnabled || !esbuild) return content;
+
+        if(TRANSPILE_EXTENSIONS.indexOf(ext) === -1) return content;
+        if(ext === "mjs" || ext === "cjs") {
+            ext = 'js';
+        }
+
+        let code = content;
+        if (Buffer.isBuffer(content)) {
+            code = content.toString('utf8');
+        }
+
+        try {
+            const result = await esbuild.transform(code, {
+                loader: ext,
+                target: this.esbuildTargets,
+                format: 'iife',
+                minify: backend.mode !== backend.modes.DEVELOPMENT
+            });
+            return Buffer.from(result.code);
+        } catch (e) {
+            console.error("Esbuild transpilation error:", e);
+            return content;
         }
     }
 }
@@ -297,6 +355,8 @@ class FileServer extends CacheManager {
      * @param {boolean} [options.enableCompression] - If set to true, files will be compressed when served.
      * @param {boolean} [options.automatic] - If set to true, files will be automatically read and cached based on the request URL, even if they weren't added manually.
      * @param {string} [options.root] - Root directory for the cache, appended to all paths or for automatic serving.
+     * @param {boolean} [options.esbuildEnabled] - If set to true, files will be transpiled using esbuild.
+     * @param {string[]} [options.esbuildTargets] - Target environments for esbuild.
      * @memberof backend.helper
      * @constructor
      * 
@@ -320,9 +380,11 @@ class FileServer extends CacheManager {
         cacheControl,
         enableCompression = true,
         automatic = false,
-        root = ''
+        root = '',
+        esbuildEnabled,
+        esbuildTargets
     } = {}) {
-        super({ fileProcessor, onMissing, cacheControl, enableCompression });
+        super({ fileProcessor, onMissing, cacheControl, enableCompression, esbuildEnabled, esbuildTargets });
         this.automatic = !!automatic;
         this.root = root;
     }
@@ -333,12 +395,12 @@ class FileServer extends CacheManager {
     resolvePath(path) {
         if (this.root) {
             // make sure leading slash is honored
-            return nodePath.join(
+            return nodePath.posix.join(
                 this.root,
-                nodePath.resolve(nodePath.sep, path || nodePath.sep)
+                nodePath.posix.resolve('/', path || '/')
             );
         }
-        return nodePath.normalize(path);
+        return nodePath.posix.normalize(path);
     }
 
     /**
@@ -401,6 +463,15 @@ class FileServer extends CacheManager {
                     resolved,
                     (ext === 'js' || ext === 'css') ? 'utf8' : null
                 );
+        }
+
+        if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes(ext)) {
+            const originalContent = content;
+            content = await this.transpile(content, ext);
+
+            if (content !== originalContent && ['ts', 'tsx', 'jsx'].includes(ext)) {
+                mimeType = 'text/javascript';
+            }
         }
 
         const stats = fs.statSync(resolved);
@@ -562,7 +633,7 @@ module.exports = {
                     if(!backend.trustedOrigins.has(req.origin)) {
                         throw new Error(`Can't allow credentials for ${req.origin} because it is not on the trusted list`);
                     }
-    
+
                     res.writeHeader("Access-Control-Allow-Credentials", "true");
                     res.writeHeader("Access-Control-Allow-Origin", req.origin);
                     res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
@@ -613,7 +684,7 @@ module.exports = {
     },
 
     errorPageBuffers: [
-        Buffer.from(`<!DOCTYPE html><html><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:2rem;box-sizing:border-box;background:#fff4f7;color:#90435b;--dark-color:#be7b90;min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}h2{margin:0 0 2rem;font-size:64px;font-weight:600;background:#ffdbe6;padding:8px 30px;border-radius:100px;font-family:monospace}@media(prefers-color-scheme: dark){body{background:#1b1617;color:#ddb6c2;--dark-color:#726468}h2{background:#292122}}p{margin:0;color:var(--dark-color)}hr{border:none;height:1px;background:currentColor;opacity:.2;width:100%;max-width:300px;margin:2rem 0 1rem}footer{font-size:.9rem;color:var(--dark-color)}a{color:inherit}</style>`),
+        Buffer.from(`<!DOCTYPE html><html><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:2rem;box-sizing:border-box;background:#fff4f7;color:#90435b;--dark-color:#be7b90;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}h2{margin:0 0 2rem;font-size:64px;font-weight:600;background:#ffdbe6;padding:8px 30px;border-radius:100px;font-family:monospace}@media(prefers-color-scheme: dark){body{background:#1b1617;color:#ddb6c2;--dark-color:#726468}h2{background:#292122}}p{margin:0;color:var(--dark-color)}hr{border:none;height:1px;background:currentColor;opacity:.2;width:100%;max-width:300px;margin:2rem 0 1rem}footer{font-size:.9rem;color:var(--dark-color)}a{color:inherit}</style>`),
         Buffer.from(`<hr><footer>Powered by <a href="https://github.com/the-lstv/akeno" target="_blank">Akeno/${backend.version}</a></footer></html>`),
     ],
 
@@ -729,7 +800,7 @@ module.exports = {
         return [algorithm, buffer, headers];
     },
 
-    
+
     /**
      * Send a templated response.
      * @param {object} req - The request object.
@@ -970,7 +1041,7 @@ module.exports = {
             for(let part of files){
                 if (!(part.data instanceof Buffer)) part.data = Buffer.from(part.data);
 
-                if(part.data.length > 0 && part.type && part.type.startsWith("image/") && sharp) {
+                if(part.data.length > 0 && part.type && part.type.startsWith("image/") && part.type !== "image/svg+xml" && sharp) {
                     try {
                         part.data = await sharp(part.data).webp({
                             quality: 80,
@@ -1122,5 +1193,160 @@ module.exports = {
      */
     getRequestIP(res) {
         return decoder.decode(res.getRemoteAddressAsText());
+    },
+
+
+    /**
+     * WebSocket authentication helper utilizing multiple ways to authenticate, with error handling and separation of concerns.
+     * Uses either the "Authorization" header or the first message sent by the client as a token, automatically disconnects if authentication fails or after a timeout.
+     * @example
+     * router.ws(new AuthenticatedWebSocket({
+     *     authenticate(token, customData) {
+     *         // Perform your authentication here (eg. JWT)
+     *         // Token is either the first message value, or the value of the "Authorization" header
+     *         // Return user object if valid, otherwise null
+     *         // If a falsy value is returned, the connection is closed
+     *         return isValid? { userId: 123 } : null;
+     *     },
+     * 
+     *     open(ws) {
+     *         // WebSocket already authenticated
+     *         console.log(ws.user); // { userId: 123 }
+     *     },
+     * 
+     *     message(ws, data, isBinary) {},
+     *     close (ws) {}
+     * }))
+     */
+    AuthenticatedWebSocket: class {
+        /**
+         * Constructs an instance with customizable handlers and options.
+         *
+         * @param {Object} [options={}] - Configuration options.
+         * @param {function} [options.open] - Optional handler for opening connections.
+         * @param {function} [options.beforeUpgrade] - Optional handler before upgrade.
+         * @param {function} [options.message] - Optional handler for incoming messages.
+         * @param {function} [options.close] - Optional handler for closing connections.
+         * @param {function} [options.authenticate] - Required authentication handler.
+         * @param {number} [options.timeout] - Optional timeout value in milliseconds.
+         * @param {boolean} [options.sendErrors=false] - Whether to send JSON error messages.
+         * @param {boolean} [options.allowBinaryToken=false] - Whether to allow binary tokens.
+         * @param {boolean} [options.allowAuthHeader=true] - Whether to allow authentication header.
+         * @param {boolean} [options.allowFirstMessageAuth=true] - Whether to allow authentication on the first message.
+         * @throws {Error} If the authenticate handler is missing or not a function.
+         */
+        constructor(options = {}) {
+            if(typeof options.open === "function") this._open = options.open;
+            if(typeof options.beforeUpgrade === "function") this._beforeUpgrade = options.beforeUpgrade;
+            if(typeof options.message === "function") this._message = options.message;
+            if(typeof options.close === "function") this.close = options.close; // Close is passed directly
+            if(typeof options.authenticate === "function") this._authenticate = options.authenticate;
+
+            if(typeof options.timeout === "number") this.timeout = options.timeout;
+            this.sendErrors = !!options.sendErrors;
+            this.sendHello = !!options.sendHello;
+            this.allowBinaryToken = !!options.allowBinaryToken;
+            this.allowAuthHeader = options.allowAuthHeader !== false;
+            this.allowFirstMessageAuth = options.allowFirstMessageAuth !== false;
+
+            this._decoder = new TextDecoder("utf-8");
+
+            if(typeof this._authenticate !== "function") {
+                throw new Error("Missing authenticate handler");
+            }
+        }
+
+        beforeUpgrade(req, res, context, customData) {
+            if(typeof this._beforeUpgrade === "function") {
+                if(this._beforeUpgrade(req, res, context, customData) === false) return false;
+            }
+
+            if(this.allowAuthHeader) {
+                const header = req.getHeader("authorization");
+                const token = header? header.split(" ")[1] : null;
+                
+                let user;
+                if(token) {
+                    try {
+                        user = this._authenticate(token, customData);
+                    } catch (e) {
+                        console.error("WebSocket auth error:", e);
+                    }
+                }
+
+                if(!user && !this.allowFirstMessageAuth) {
+                    res.writeStatus("401 Unauthorized").end();
+                    return false;
+                }
+
+                if(user) customData.user = user;
+            }
+            return true;
+        }
+
+        open(ws) {
+            // TODO: If backend is not in development mode and ws.secure is false, reject the connection
+
+            if(!ws.user) {
+                ws._authTimer = setTimeout(() => {
+                    try {
+                        if(!ws.authenticated) {
+                            if(this.sendErrors) {
+                                ws.send('{"error":"Authentication timeout","code":401}');
+                            }
+                            ws.close();
+                        }
+                    } catch {}
+                }, this.timeout || 4000);
+            } else {
+                ws.authenticated = true;
+                if(this.sendHello) {
+                    ws.send('{"success":true}');
+                }
+                this._open?.(ws);
+            }
+        }
+
+        message(ws, data, isBinary){
+            if(!ws.authenticated) {
+                if(ws._authAttempted) {
+                    // Multiple messages before authentication are invalid and ignored
+                    return;
+                }
+
+                ws._authAttempted = true;
+
+                if(ws._authTimer) {
+                    clearTimeout(ws._authTimer);
+                    ws._authTimer = null;
+                }
+
+                let user;
+                try {
+                    if(this.allowBinaryToken && isBinary) {
+                        user = this._authenticate(data, ws);
+                    } else {
+                        user = this._authenticate(this._decoder.decode(data), ws);
+                    }
+                } catch (e) {
+                    console.error("WebSocket auth error:", e);
+                }
+
+                if(!user) {
+                    if(this.sendErrors) {
+                        ws.send('{"error":"Authentication failed","code":401}');
+                    }
+                    ws.close();
+                    return;
+                }
+
+                ws.user = user;
+                ws.authenticated = true;
+                this._open?.(ws);
+                return;
+            }
+
+            this._message?.(ws, data, isBinary);
+        }
     }
 }

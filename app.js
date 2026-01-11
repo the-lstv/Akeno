@@ -2,7 +2,7 @@
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
 
-    Last modified: 2025
+    Last modified: 2026
     License: GPL-3.0
     See: https://github.com/the-lstv/akeno
 */
@@ -11,13 +11,14 @@
 const moduleAlias = require('module-alias');
 
 moduleAlias.addAliases({
-    "akeno:backend": __dirname + "/app.js",
-    "akeno:kvdb": __dirname + "/core/kvdb.js",
-    "akeno:units": __dirname + "/core/unit.js",
-    "akeno:mime": __dirname + "/core/mime.js",
-    "akeno:ipc": __dirname + "/core/ipc",
-    "akeno:router": __dirname + "/core/router.js",
-    "akeno:bucket": __dirname + "/core/bucket"
+    "akeno:backend" : __dirname + "/app.js",
+    "akeno:web"     : __dirname + "/core/web.js",
+    "akeno:kvdb"    : __dirname + "/core/kvdb.js",
+    "akeno:units"   : __dirname + "/core/unit.js",
+    "akeno:mime"    : __dirname + "/core/mime.js",
+    "akeno:ipc"     : __dirname + "/core/ipc",
+    "akeno:router"  : __dirname + "/core/router.js",
+    "akeno:bucket"  : __dirname + "/core/bucket"
 });
 
 const Units = require("akeno:units");
@@ -78,10 +79,10 @@ const db = {
     storages: {
         // - Main database
         main: KeyStorage.openDb(PATH, "db/main"),
-    
+
         // - Data database
         data: KeyStorage.openDb(PATH, "db/data"),
-    
+
         // - Cache database
         cache: KeyStorage.openDb(PATH, "db/cache")
     }
@@ -176,8 +177,7 @@ function resolveHandler(req, res, handler, wsContext) {
             if(typeof handler.websocket.upgrade === "function") {
                 handler.websocket.upgrade(req, res, wsContext);
             } else {
-                // TODO: Websocket handlers for Apps
-                if(!req.abort) res.upgrade({
+                const customData = {
                     uuid: uuid(),
                     url: req.path,
                     query: req.getQuery(),
@@ -185,7 +185,19 @@ function resolveHandler(req, res, handler, wsContext) {
                     host: req.host,
                     ip: backend.helper.getRequestIP(res),
                     handler: handler.websocket
-                }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
+                };
+
+                if(typeof handler.websocket.beforeUpgrade === "function") {
+                    if(handler.websocket.beforeUpgrade(req, res, wsContext, customData) === false) {
+                        return;
+                    }
+                }
+
+                try {
+                    if(!req.abort) res.upgrade(customData, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
+                } catch (e) {
+                    console.error("WebSocket upgrade error:", e);
+                }
             }
             return;
         }
@@ -249,8 +261,8 @@ const backend = {
         return item
     },
 
-    broadcast(topic, data, isBinary, compress){
-        if(backend.config.getBlock("server").properties.enableSSL) return SSLApp.publish(topic, data, isBinary, compress); else return app.publish(topic, data, isBinary, compress);
+    broadcast(topic, data, isBinary = false, compress = false) {
+        (backend.protocols.https.server || backend.protocols.http.server).publish(topic, data, isBinary, compress);
     },
 
     constants: {
@@ -480,6 +492,7 @@ const backend = {
                 this.server = ssl_config? uws.SSLApp(ssl_config): uws.SSLApp();
                 this.server.any("/*", this.defaultResolver);
 
+                // TODO: Distinguish WS over HTTP/s
                 if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
             }
         },
@@ -530,17 +543,21 @@ const backend = {
 
             init() {
                 // TODO: In the future, this could be moved to the C++ side
-                // TODO: Add an API for dedicated WebSocket/http apps rather than a shared one
                 // Default WS handler
                 this.options = {
                     idleTimeout: backend.config.getBlock("websocket").get("idleTimeout", Number) || 60,
-                    maxBackpressure: backend.config.getBlock("websocket").get("maxBackpressure", Number) || 1024 * 1024,
+                    sendPingsAutomatically: backend.config.getBlock("websocket").get("sendPingsAutomatically", Boolean, true),
                     maxPayloadLength: backend.config.getBlock("websocket").get("maxPayloadLength", Number) || 32 * 1024,
+                    maxBackpressure: backend.config.getBlock("websocket").get("maxBackpressure", Number) || 1024 * 1024,
+                    maxLifetime: backend.config.getBlock("websocket").get("maxLifetime", Number) || 0,
+                    closeOnBackpressureLimit: backend.config.getBlock("websocket").get("closeOnBackpressureLimit", Boolean, false),
                     compression: uws[backend.config.getBlock("websocket").get("compression", String, "DEDICATED_COMPRESSOR_32KB").toLowerCase()] || uws.DEDICATED_COMPRESSOR_32KB,
-            
-                    sendPingsAutomatically: true,
 
                     upgrade: (res, req, context) => {
+                        if(!this.enabled) {
+                            return res.writeStatus("503 Service Unavailable").end("503 Service Unavailable");
+                        }
+
                         this.defaultResolver(res, req, context);
                     },
 
@@ -554,6 +571,26 @@ const backend = {
                     
                     close(ws, code, message) {
                         if(ws.handler.close) ws.handler.close(ws, code, message);
+                    },
+
+                    drain(ws) {
+                        if(ws.handler.drain) ws.handler.drain(ws);
+                    },
+
+                    dropped(ws, message, isBinary) {
+                        if(ws.handler.dropped) ws.handler.dropped(ws, message, isBinary);
+                    },
+
+                    ping(ws, message) {
+                        if(ws.handler.ping) ws.handler.ping(ws, message);
+                    },
+
+                    pong(ws, message) {
+                        if(ws.handler.pong) ws.handler.pong(ws, message);
+                    },
+
+                    subscription(ws, topic, newCount, oldCount) {
+                        if(ws.handler.subscription) ws.handler.subscription(ws, topic, newCount, oldCount);
                     }
                 };
             }
@@ -583,7 +620,7 @@ const backend = {
             "JSON"
         ]),
 
-        compress(buffer, format = 0){
+        compress(buffer, format = 0) {
             if(!(buffer instanceof Buffer)) {
                 buffer = Buffer.from(buffer);
             }
@@ -884,6 +921,9 @@ const backend = {
         // TODO: Add something like "in production only".
         backend.compression.enabled = backend.config.getBlock("web").get("compress", Boolean, true);
         backend.compression.codeEnabled = backend.config.getBlock("web").get("compress-code", Boolean, true);
+
+        backend.esbuildEnabled = backend.config.getBlock("web").get("esbuild", Boolean, false);
+        backend.esbuildTargets = backend.config.getBlock("web").get("esbuild-targets", Array, ["chrome58", "firefox57", "safari11"]);
     },
 
     trustedOrigins: new Set,
@@ -902,64 +942,73 @@ const backend = {
 if(true) {
     // We do this here to make intellisense work at least somewhere
     Units.Manager.initCore(backend);
-    
-    // Do not rely on this
+
+    // Do not rely on this 🙏
     global.backend = backend;
     module.exports = backend;
 
     backend.helper = require("./core/helpers");
-    
+
     // Load configuration file
     backend.refreshConfig();
-    
+
     db.storages.cache.open();
     db.storages.data.open();
-    
+
     db.compressionCache = db.storages.cache.openDbi("compression", { keyIsUint32: true }, true);
     db.generalCache = db.storages.cache.openDbi("general", {}, true);
     db.apps = db.storages.main.openDbi("app.metadata", {}, true);
-    
+
     Units.Manager.loadModule("./core/web");
 
     backend.webServerHandler = Units.Manager.module("akeno.web").onRequest;
     domainRouter.fallback = backend.webServerHandler;
-    
+
     process.on('uncaughtException', (error) => {
         backend.fatal("[uncaught error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
     })
-    
+
     process.on('exit', () => {
         backend.log(`[system] Exiting Akeno`);
     })
-    
+
+    // I don't recommend using .env
     if (!JWT_KEY) {
-        JWT_KEY = crypto.randomBytes(32).toString("hex");
-    
-        try {
-            fs.appendFileSync(PATH + ".env", `\nAKENO_KEY=${JWT_KEY}\n`);
-        } catch (err) {
-            backend.warn("Warning: Failed to export generated JWT key to .env file.", err);
+        if(fs.existsSync(".env")) {
+            const env = fs.readFileSync(".env", "utf8");
+            const index = env.indexOf("AKENO_KEY");
+            if(index > -1) {
+                JWT_KEY = env.substring(index + 10, env.indexOf("\n", index) || env.length);
+            }
+        } else {
+            JWT_KEY = crypto.randomBytes(32).toString("hex");
+
+            try {
+                fs.appendFileSync(PATH + ".env", `\nAKENO_KEY=${JWT_KEY}\n`);
+            } catch (err) {
+                backend.warn("Warning: Failed to export generated JWT key to .env file.", err);
+            }
         }
     }
-    
+
     try {
         // Disable uWebSockets version header, remove to re-enable
         uws._cfg('999999990007');
     } catch (error) {}
-    
+
     Units.Manager.refreshAddons();
-    
+
     if(backend.mode === backend.modes.DEVELOPMENT && IS_NODE_INSPECTOR_ENABLED) {
         console.log("%cWelcome to the Akeno debugger!", "color: #ff9959; font-size: 2rem; font-weight: bold")
         console.log("%cLook at the %c'backend'%c object to get started!", "font-size: 1.4rem", "color: aquamarine; font-size: 1.4rem", "font-size: 1.4rem")
-    
+
         backend.exposeToDebugger("backend", backend);
         backend.exposeToDebugger("web", Units.Manager.module("akeno.web"));
     }
-    
+
     if (process.platform !== 'linux') {
-        backend.warn(`Warning: Your platform (${process.platform}) has experimental support. Akeno is currently only officially supported on Linux, so you may run into unexpected issues.${process.platform === 'win32' ? ' You can try using WSL or other types of Linux VM to run this software.' : ''}`);
+        backend.warn(`Warning: Your platform (${process.platform}) has experimental support. Akeno is currently only officially supported on Linux, so you may run into unexpected issues.`);
     }
-    
+
     backend.log(`Starting \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${(performance.now() - SINCE_STARTUP).toFixed(2)}ms\x1b[0m.`);
 }

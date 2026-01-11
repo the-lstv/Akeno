@@ -4,7 +4,7 @@
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
 
-    Last modified: 2025
+    Last modified: 2026
     License: GPL-3.0
     Version: 1.1.0
     Description: Command line interface for Akeno
@@ -437,7 +437,7 @@ Some examples:
     akeno\x1b[1m logs                \x1b[90m│\x1b[0m  Show (and stream) logs
     akeno\x1b[1m disable <id>        \x1b[90m│\x1b[0m  Disable an application
     ...
-    
+
 ---
     \x1b[92m•\x1b[0m \x1b[1mTry "akeno --help" for explanation of all commands!\x1b[0m`));
                     process.exit()
@@ -948,7 +948,7 @@ WantedBy=multi-user.target`;
 
             renew(domain)
         break;
-    
+
         default:
             console.error(signature + " Unknown command \"" + (argv._[0] || "(no command)") + "\". Type 'akeno -h' for help.")
     }
@@ -976,7 +976,7 @@ function formatUptime(seconds) {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const remainingSeconds = Math.floor(seconds % 60);
-    
+
     return `${hours}h ${minutes}m ${remainingSeconds}s`;
 }
 
@@ -1048,7 +1048,7 @@ function box(text, padding = 1, margin = 0, color = "90") {
     result += (" ".repeat(fullWidth) + "\n").repeat(margin)
     result += " ".repeat(margin) + color + "┌" + ("─".repeat(outerWidth)) + "┐\x1b[0m" + " ".repeat(margin) + "\n"
     // result += (" ".repeat(margin) + color + "│\x1b[0m" + " ".repeat(padding) + (" ".repeat(width)) + " ".repeat(padding) + color + "│\x1b[0m" + " ".repeat(margin) + "\n").repeat(padding)
-    
+
     for(let i = 0; i < lines.length; i++){
         if(lines[i] == "---"){
             result += " ".repeat(margin) + color + "├" + ("─".repeat(outerWidth)) + "┤\x1b[0m" + " ".repeat(margin) + "\n"

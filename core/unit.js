@@ -2,9 +2,9 @@
     Author: Lukas (thelstv)
     Copyright: (c) https://lstv.space
 
-    Last modified: 2025
+    Last modified: 2026
     License: GPL-3.0
-    
+
     Units are the core part of Akeno, making it modular, extensible, and easy to debug.
 */
 
@@ -55,6 +55,16 @@ class Version {
 
     toString(){
         return `${this.major}.${this.minor}.${this.patch}${this.release ? '-' + this.release : ''}${this.build ? '+' + this.build : ''}`;
+    }
+
+    toJSON(){
+        return {
+            major: this.major,
+            minor: this.minor,
+            patch: this.patch,
+            release: this.release,
+            build: this.build
+        };
     }
 
     set(major = 0, minor = 0, patch = 0, release = null, build = null){
@@ -381,7 +391,7 @@ const Manager = {
 
     // TODO: Enhance
     loadAddon(path){
-        if(fs.statSync(path).isDirectory() && fs.existsSync(path + "/addon.json")){
+        if(fs.existsSync(path) && fs.statSync(path).isDirectory() && fs.existsSync(path + "/addon.json")){
             const addonConfig = JSON.parse(fs.readFileSync(path + "/addon.json", "utf8"));
 
             if(!addonConfig.id || !addonConfig.name){
@@ -405,7 +415,7 @@ const Manager = {
             let _mainfile = null;
             if(addonConfig.main) {
                 _mainfile = nodepath.normalize(path + "/" + addonConfig.main);
-    
+
                 if(!fs.existsSync(_mainfile)){
                     throw new Error(`Addon main file ${_mainfile} does not exist.`);
                 }

@@ -13,10 +13,15 @@ const fs = require("node:fs");
 let lmdb;
 
 try {
+    lmdb = null;
     // lmdb = require('node-lmdb');
-    throw "";
 } catch (e) {
-    console.warn('Warning: node-lmdb module is not installed. Since we are stepping away from this module for countless issues, it is not required, but the database will be switched to memory-only mode.\n* Data will not be stored to disk! *');
+    if(e.code === "ERR_DLOPEN_FAILED") {
+        console.warn('Warning: node-lmdb failed to load (ERR_DLOPEN_FAILED). Database has been switched to memory-only mode. Please verify that your environment is set up correctly.');
+    } else {
+        console.warn('Warning: node-lmdb module is not installed. Database will be switched to memory-only mode.\n* Data will not be stored to disk! *');
+    }
+
     lmdb = null;
 }
 
@@ -110,13 +115,13 @@ class KeyStorage {
 
     static openDb(path, name) {
         path = path + name;
-    
+
         if (name.startsWith("db/")) {
             if (!fs.existsSync(path)) {
                 fs.mkdirSync(path)
             }
         } else throw new Error("Invalid database path");
-    
+
         return new KeyStorage(path)
     }
 }

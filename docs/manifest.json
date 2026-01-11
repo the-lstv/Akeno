@@ -1,0 +1,10 @@
+{
+    "name": "Akeno",
+    "developer": "thelstv",
+    "repo": "https://github.com/the-lstv/akeno",
+    "versions": {
+        "1.6.7": {
+            "path": "1.6.7"
+        }
+    }
+}
