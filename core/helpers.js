@@ -1244,6 +1244,7 @@ module.exports = {
 
             if(typeof options.timeout === "number") this.timeout = options.timeout;
             this.sendErrors = !!options.sendErrors;
+            this.sendHello = !!options.sendHello;
             this.allowBinaryToken = !!options.allowBinaryToken;
             this.allowAuthHeader = options.allowAuthHeader !== false;
             this.allowFirstMessageAuth = options.allowFirstMessageAuth !== false;
@@ -1299,6 +1300,9 @@ module.exports = {
                 }, this.timeout || 4000);
             } else {
                 ws.authenticated = true;
+                if(this.sendHello) {
+                    ws.send('{"success":true}');
+                }
                 this._open?.(ws);
             }
         }
