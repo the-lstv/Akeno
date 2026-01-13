@@ -280,15 +280,6 @@ class WebApp extends Units.App {
             }
         }
 
-        // FIXME: (Temporary) backend hooks
-        if (this.config.data.has("hook")) {
-            const hook = this.config.getBlock("hook");
-            const path = this.path + "/" + hook.get("path", String, "hook.js");
-
-            this.warn("Web application " + this.basename + " has loaded a hook script from " + path + ". This feature may be removed at any time.");
-            this.hook = require(path);
-        }
-
         if (this.config.data.has("ratelimit")) {
             const limit = this.config.getBlock("ratelimit").get("limit", Number, 1000); // 1000 Requests
             const interval = this.config.getBlock("ratelimit").get("interval", Number, 60000); // 1 Minute
@@ -374,9 +365,6 @@ class WebApp extends Units.App {
 
         this._browserRequirements = this.config.getBlock("browserSupport");
 
-        // TODO: Temporary
-        this.__postCompileHook = this.config.has("task-post-compile") ? this.config.getBlock("task-post-compile") : null;
-
         const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String);
         this._404 = _404 ? this.resolvePath(_404) : null;
     }
@@ -409,15 +397,8 @@ const server = new class WebServer extends Units.Module {
             results: true
         });
 
-        this.cssBuildEvref = this._events.prepareEvent("build-css", {
-            async: true,
-            results: true
-        });
-
-        this.jsBuildEvref = this._events.prepareEvent("build-js", {
-            async: true,
-            results: true
-        });
+        // @experimental
+        this.cacheStoreEvref = this._events.prepareEvent("refreshing-cache");
     }
 
     // This is the main handler/router for websites/webapps.
@@ -450,18 +431,6 @@ const server = new class WebServer extends Units.Module {
                     res.cork(() => {
                         res.writeHeader('Content-Type', this._browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(this._browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${this._browserRequirements.chrome && this._browserRequirements.chrome} and up, Firefox ${this._browserRequirements.firefox && this._browserRequirements.firefox} and up.`))
                     })
-                    return;
-                }
-            }
-
-            // FIXME: TEMPORARY SOLUTION: Backend hooks (basically application middleware)
-            if (app.hook && typeof app.hook.onRequest === "function") {
-                try {
-                    const result = await app.hook.onRequest(req, res);
-                    if (result === false) return;
-                } catch (error) {
-                    app.error("Error in onRequest hook for app \"" + app.path + "\": ", error);
-                    backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
                     return;
                 }
             }
@@ -530,6 +499,7 @@ const server = new class WebServer extends Units.Module {
 
             let file = resolvedPath.full;
 
+            // Request event for addons
             const results = await server.emit(server.requestEvref, [req, res, app, resolvedPath]);
             if (results && results.length > 0) {
                 for (const result of results) {
@@ -587,22 +557,8 @@ const server = new class WebServer extends Units.Module {
                 }
             }
 
-            // FIXME: This is temporary and very wrongly implemented, will need a proper rework later
-            if(!cacheEntry && app.__postCompileHook && file.endsWith(app.__postCompileHook.attributes[0])) {
-                const copyLocation = app.__postCompileHook.get("copy", String);
-                if(copyLocation) {
-                    const postCompilePath = nodePath.join(app.path, copyLocation.replace("$FILE", nodePath.basename(file)).replace("$APP", app.basename));
-                    app.log("Post-compiled file being written to " + postCompilePath);
-
-                    fs.promises.writeFile(postCompilePath, server.fileServer.cache.get(file)[0][0], (err) => {
-                        if(err) {
-                            app.error("Failed to copy compiled file to " + postCompilePath + ": ", err)
-                        }
-                    });
-                }
-            }
-
             server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedAlg);
+            if(!cacheEntry) this.emit(server.cacheStoreEvref, [file, server.fileServer.cache.get(file), app]);
 
         } catch (error) {
             const logTarget = app || server;
