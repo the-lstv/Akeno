@@ -47,12 +47,80 @@ const nullStringBuffer = Buffer.from("null");
 
 // Brings support for old browsers
 let esbuild;
-const TRANSPILE_EXTENSIONS = ['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css'];
+const TRANSPILE_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css']);
 try {
     esbuild = require("esbuild");
 } catch (e) {
     esbuild = null;
 }
+
+const defaultTargets = ['chrome90', 'firefox90', 'safari15', 'edge90'];
+class ContentProcessor {
+    static async esTranspile(content, ext, targets = defaultTargets, asString = false) {
+        if (!esbuild || !TRANSPILE_EXTENSIONS.has(ext)) return { result: content, success: false };
+
+        // TODO:FIXME: This is very temporary and not well designed at all
+        // Should be more like middleware
+        const results = backend.emit(backend.buildHookEvref, [ext, content, asString]);
+        if(results) {
+            const last = results[results.length - 1];
+            if(last && typeof last === "object") {
+                if(last.content) content = last.content;
+                if(last.ext) ext = last.ext;
+            }
+        }
+
+        if(ext === "mjs" || ext === "cjs") {
+            ext = 'js';
+        }
+
+        let code = content;
+        if (Buffer.isBuffer(content)) {
+            code = content.toString('utf8');
+        }
+
+        try {
+            const result = await esbuild.transform(code, {
+                loader: ext,
+                target: targets || defaultTargets,
+                format: 'iife',
+                minify: backend.mode !== backend.modes.DEVELOPMENT
+            });
+            return { result: asString ? result.code : Buffer.from(result.code), success: true };
+        } catch (e) {
+            console.error("Esbuild transpilation error:", e);
+            return { result: content, success: false, error: e };
+        }
+    }
+
+    // TODO: streamline with above
+    static esTranspileSync(content, ext, targets = defaultTargets, asString = false) {
+        if (!esbuild || !TRANSPILE_EXTENSIONS.has(ext)) return { result: content, success: false };
+
+        if(ext === "mjs" || ext === "cjs") {
+            ext = 'js';
+        }
+
+        let code = content;
+        if (Buffer.isBuffer(content)) {
+            code = content.toString('utf8');
+        }
+
+        try {
+            const result = esbuild.transformSync(code, {
+                loader: ext,
+                target: targets || defaultTargets,
+                format: 'iife',
+                minify: backend.mode !== backend.modes.DEVELOPMENT
+            });
+            return { result: asString ? result.code : Buffer.from(result.code), success: true };
+        } catch (e) {
+            console.error("Esbuild transpilation error:", e);
+            return { result: content, success: false, error: e };
+        }
+    }
+}
+
 
 class CacheManager extends Units.Server {
     /**
@@ -270,7 +338,7 @@ class CacheManager extends Units.Server {
             entry[0][5] = backend.mime.getExtension(mimeType)[0] || '';
             entry[0][6] = mimeType;
 
-            if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes(entry[0][5])) {
+            if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.has(entry[0][5])) {
                 const originalContent = content;
                 content = await this.transpile(content, entry[0][5]);
 
@@ -311,29 +379,7 @@ class CacheManager extends Units.Server {
      */
     async transpile(content, ext) {
         if (!this.esbuildEnabled || !esbuild) return content;
-
-        if(TRANSPILE_EXTENSIONS.indexOf(ext) === -1) return content;
-        if(ext === "mjs" || ext === "cjs") {
-            ext = 'js';
-        }
-
-        let code = content;
-        if (Buffer.isBuffer(content)) {
-            code = content.toString('utf8');
-        }
-
-        try {
-            const result = await esbuild.transform(code, {
-                loader: ext,
-                target: this.esbuildTargets,
-                format: 'iife',
-                minify: backend.mode !== backend.modes.DEVELOPMENT
-            });
-            return Buffer.from(result.code);
-        } catch (e) {
-            console.error("Esbuild transpilation error:", e);
-            return content;
-        }
+        return (await ContentProcessor.esTranspile(content, ext, this.esbuildTargets)).result;
     }
 }
 
@@ -465,7 +511,7 @@ class FileServer extends CacheManager {
                 );
         }
 
-        if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes(ext)) {
+        if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.has(ext)) {
             const originalContent = content;
             content = await this.transpile(content, ext);
 
@@ -569,6 +615,9 @@ class FileServer extends CacheManager {
 
 
 module.exports = {
+    ContentProcessor,
+    TRANSPILE_EXTENSIONS,
+
     /**
      * Returns the path segments of the request.
      * @param {object} req - The request object.

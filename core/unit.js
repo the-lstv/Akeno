@@ -353,6 +353,11 @@ const Manager = {
         backendInstance.name = "core";
         backendInstance.id = "akeno";
 
+        new EventHandler(backendInstance);
+        backendInstance.buildHookEvref = backendInstance._events.prepareEvent("build-hook", {
+            results: true
+        });
+
         backend = backendInstance;
         module.exports.backend = backend;
 
@@ -749,4 +754,185 @@ class External extends Unit {
     }
 }
 
-module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, Server, backend };
+class EventHandler {
+    static REMOVE_LISTENER = Symbol("event-remove");
+
+    /**
+     * @param {object} target Possibly deprecated; Binds the event handler methods to a target object.
+     */
+    constructor(target){
+        EventHandler.prepareHandler(this);
+        if(target){
+            target._events = this;
+
+            ["emit", "on", "once", "off", "invoke"].forEach(method => {
+                if (!target.hasOwnProperty(method)) target[method] = this[method].bind(this);
+            });
+
+            this.target = target;
+        }
+    }
+
+    static prepareHandler(target){
+        target.events = new Map;
+    }
+
+    prepareEvent(name, options){
+        if(options && options.completed === false) {
+            // Clear data once uncompleted
+            options.data = null;
+        }
+
+        let event = this.events.get(name);
+        if(!event) {
+            event = { listeners: [], empty: [], ...options, _isEvent: true };
+            this.events.set(name, event);
+        } else if(options){
+            Object.assign(event, options);
+        }
+
+        return event;
+    }
+
+    on(name, callback, options){
+        const event = (name._isEvent? name: this.events.get(name)) || this.prepareEvent(name);
+        if(event.completed) {
+            if(event.data) callback(...event.data); else callback();
+            if(options && options.once) return this;
+        }
+
+        const index = event.empty.length > 0 ? event.empty.pop() : event.listeners.length;
+
+        const listener = event.listeners[index] = { callback, index, ...options };
+        return listener;
+    }
+
+    off(name, callback){
+        const event = name._isEvent? name: this.events.get(name);
+        if(!event) return;
+
+        for(let i = 0; i < event.listeners.length; i++){
+            if(event.listeners[i].callback === callback) {
+                event.empty.push(i);
+                event.listeners[i] = null;
+            }
+        }
+
+        return this;
+    }
+
+    once(name, callback, options){
+        return this.on(name, callback, Object.assign(options || {}, { once: true }));
+    }
+
+    /**
+     * @deprecated To be removed in 5.3.0
+    */
+    invoke(name, ...data){
+        return this.emit(name, data, { results: true });
+    }
+
+    /**
+     * Emit an event with the given name and data.
+     * @param {string|object} name Name of the event or an event object.
+     * @param {Array} data Data to pass to the event listeners.
+     * @param {object} options Override options for the event emission.
+     * @returns {Array|null} Returns an array of results or null.
+     */
+
+    emit(name, data, options = null) {
+        if (!name || !this.events) return;
+
+        const event = name._isEvent ? name : this.events.get(name);
+        if (!options) options = event;
+
+        const returnData = options && options.results ? [] : null;
+        if (!event) return returnData;
+
+        const hasData = Array.isArray(data) && data.length > 0;
+
+        for (let listener of event.listeners) {
+            if (!listener || typeof listener.callback !== "function") continue;
+
+            try {
+                const result = hasData ? listener.callback(...data) : listener.callback();
+
+                if (options.break && result === false) break;
+                if (options.results) returnData.push(result);
+
+                if (result === EventHandler.REMOVE_LISTENER) {
+                    event.empty.push(listener.index);
+                    event.listeners[listener.index] = null;
+                    listener = null;
+                    continue;
+                }
+            } catch (error) {
+                console.error(`Error in listener for event '${name}':`, listener, error);
+            }
+
+            if (listener && listener.once) {
+                event.empty.push(listener.index);
+                event.listeners[listener.index] = null;
+                listener = null;
+            }
+        }
+
+        if (options.async && options.results) {
+            return Promise.all(returnData);
+        }
+
+        return returnData;
+    }
+
+    /**
+     * Quickly emit an event without checks - to be used only in specific scenarios.
+     * @param {*} event Event object.
+     * @param {*} data Data array.
+     */
+
+    quickEmit(event, data){
+        if(!event._isEvent) throw new Error("Event must be a valid event object when using quickEmit");
+
+        for(let i = 0, len = event.listeners.length; i < len; i++){
+            const listener = event.listeners[i];
+            if(!listener || typeof listener.callback !== "function") continue;
+
+            if(listener.once) {
+                event.empty.push(listener.index);
+                event.listeners[listener.index] = null;
+            }
+
+            listener.callback(...data);
+        }
+    }
+
+    flush(){
+        this.events.clear();
+    }
+
+    /**
+     * Create an alias for an existing event.
+     * They will become identical and share listeners.
+     * @param {*} name Original event name.
+     * @param {*} alias Alias name.
+     */
+    alias(name, alias){
+        const event = (name._isEvent? name: this.events.get(name)) || this.prepareEvent(name);
+        event.aliases ??= [];
+
+        if(!event.aliases.includes(alias)) event.aliases.push(alias);
+        this.events.set(alias, event);
+    }
+
+    completed(name, data = [], options = {}){
+        this.emit(name, data);
+
+        this.prepareEvent(name, {
+            ...options,
+            completed: true,
+            data
+        })
+    }
+}
+
+module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, Server, EventHandler, backend };

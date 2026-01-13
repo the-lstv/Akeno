@@ -401,6 +401,23 @@ const server = new class WebServer extends Units.Module {
         this.registerType("WebApp", WebApp)
 
         this.fileServer = new backend.helper.FileServer();
+
+        new Units.EventHandler(this);
+
+        this.requestEvref = this._events.prepareEvent("request", {
+            async: true,
+            results: true
+        });
+
+        this.cssBuildEvref = this._events.prepareEvent("build-css", {
+            async: true,
+            results: true
+        });
+
+        this.jsBuildEvref = this._events.prepareEvent("build-js", {
+            async: true,
+            results: true
+        });
     }
 
     // This is the main handler/router for websites/webapps.
@@ -512,6 +529,19 @@ const server = new class WebServer extends Units.Module {
             const ACCEPTS_ENCODING = req.getHeader("accept-encoding") || "";
 
             let file = resolvedPath.full;
+
+            const results = await server.emit(server.requestEvref, [req, res, app, resolvedPath]);
+            if (results && results.length > 0) {
+                for (const result of results) {
+                    if (result && result.file) file = result.file;
+                    else if (result === false) {
+                        resolvedPath = app._404;
+                        file = app._404.full;
+                        errorCode = "404";
+                    }
+                }
+            }
+
             if (!(file = await files_try_async(file + ".html", file + "/index.html", file))) {
                 if (!app._404 || !app._404.full) {
                     return backend.helper.sendErrorPage(req, res, "404", "File \"" + url + "\" not found on this server.");
@@ -814,14 +844,6 @@ const server = new class WebServer extends Units.Module {
 }
 
 // Section: utils
-function files_try(...files) {
-    for (let file of files) {
-        if (fs.existsSync(file)) {
-            return file
-        }
-    }
-}
-
 async function files_try_async(...files) {
     for (let file of files) {
         try {
@@ -888,15 +910,6 @@ const ls_components = {
     ]
 };
 
-// Brings support for old browsers
-let esbuild;
-const TRANSPILE_EXTENSIONS = ['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css'];
-try {
-    esbuild = require("esbuild");
-} catch (e) {
-    esbuild = null;
-}
-
 function initParser(header) {
     parser = new backend.native.parser({
         header,
@@ -913,22 +926,24 @@ function initParser(header) {
                     return true;
                 }
 
-                if(backend.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes("js")) {
-                    try {
-                        const result = esbuild.transformSync(text, {
-                            minify: backend.compression.codeEnabled,
-                            loader: 'js',
-                            format: 'iife',
-                            target: backend.esbuildTargets,
-                        });
-                        return result.code;
-                    } catch (e) {
-                        console.error("Esbuild JS transform error: ", e);
-                        return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.JS) : true;
-                    }
-                }
+                // if(backend.esbuildEnabled) {
+                //     try {
+                //         const result = esbuild.transformSync(text, {
+                //             minify: backend.compression.codeEnabled,
+                //             loader: 'js',
+                //             format: 'iife',
+                //             target: backend.esbuildTargets,
+                //         });
+                //         return result.code;
+                //     } catch (e) {
+                //         console.error("Esbuild JS transform error: ", e);
+                //         return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.JS) : true;
+                //     }
+                // }
 
-                return backend.compression.code(text, backend.compression.format.JS);
+                return backend.helper.ContentProcessor.esTranspileSync(text, "js", null).result;
+
+                // return backend.compression.code(text, backend.compression.format.JS);
             }
 
             // Inline style compression
@@ -937,21 +952,24 @@ function initParser(header) {
                     return true;
                 }
 
-                if(backend.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes("css")) {
-                    try {
-                        const result = esbuild.transformSync(text, {
-                            minify: backend.compression.codeEnabled,
-                            loader: 'css',
-                            target: backend.esbuildTargets,
-                        });
-                        return result.code;
-                    } catch (e) {
-                        console.error("Esbuild CSS transform error: ", e);
-                        return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.CSS) : true;
-                    }
-                }
+                // if(backend.esbuildEnabled) {
+                //     try {
+                //         const result = esbuild.transformSync(text, {
+                //             minify: backend.compression.codeEnabled,
+                //             loader: 'css',
+                //             target: backend.esbuildTargets,
+                //         });
+                //         return result.code;
+                //     } catch (e) {
+                //         console.error("Esbuild CSS transform error: ", e);
+                //         return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.CSS) : true;
+                //     }
+                // }
 
-                return backend.compression.code(text, backend.compression.format.CSS);
+                // TODO: Idea; could have a special attribute to support inline scss (editor won't like it though)
+                return backend.helper.ContentProcessor.esTranspileSync(text, "css", null).result;
+
+                // return backend.compression.code(text, backend.compression.format.CSS);
             }
 
             // Parse with Atrium, text gets sent back to C++, blocks get handled via onBlock
