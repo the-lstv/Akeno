@@ -48,6 +48,15 @@ class WebApp extends Units.App {
         this.enabled = null;
         this.ports = new Set;
 
+        new Units.EventHandler(this);
+        this.requestEvref = this._events.prepareEvent("request", {
+            async: true,
+            results: true
+        });
+
+        // @experimental
+        this.cacheStoreEvref = this._events.prepareEvent("refreshed-cache");
+
         /**
          * @warning Do not use this set for routing - it is only a copy to allow for easy removal of domains.
          */
@@ -373,8 +382,12 @@ class WebApp extends Units.App {
         for (let domain of this.domains) {
             backend.domainRouter.remove(domain);
         }
-        applications.delete(this.path);
+
         // TODO: Proper cleanup, clear caches, destroy modules, ports, etc.
+
+        applications.delete(this.path);
+        this.events.clear();
+        super.destroy();
     }
 
     ws(options){
@@ -398,7 +411,7 @@ const server = new class WebServer extends Units.Module {
         });
 
         // @experimental
-        this.cacheStoreEvref = this._events.prepareEvent("refreshing-cache");
+        this.cacheStoreEvref = this._events.prepareEvent("refreshed-cache");
     }
 
     // This is the main handler/router for websites/webapps.
@@ -500,7 +513,9 @@ const server = new class WebServer extends Units.Module {
             let file = resolvedPath.full;
 
             // Request event for addons
-            const results = await server.emit(server.requestEvref, [req, res, app, resolvedPath]);
+            // TODO: Optimize
+            const evData = [req, res, app, resolvedPath];
+            const results = [...await server.emit(server.requestEvref, evData), ...await app.emit(app.requestEvref, evData)];
             if (results && results.length > 0) {
                 for (const result of results) {
                     if (result && result.file) file = result.file;
@@ -558,7 +573,13 @@ const server = new class WebServer extends Units.Module {
             }
 
             server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedAlg);
-            if(!cacheEntry) this.emit(server.cacheStoreEvref, [file, server.fileServer.cache.get(file), app]);
+
+            if(!cacheEntry) {
+                // TODO: Optimize
+                const evData = [file, server.fileServer.cache.get(file), app];
+                this.emit(server.cacheStoreEvref, evData);
+                app.emit(app.cacheStoreEvref, evData);
+            }
 
         } catch (error) {
             const logTarget = app || server;

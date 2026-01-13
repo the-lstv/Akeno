@@ -524,6 +524,8 @@ class Unit {
         }
     }
 
+    destroy(){ }
+
     start(){ }
     stop(){ }
     reload(){ }
