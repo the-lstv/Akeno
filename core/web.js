@@ -399,7 +399,7 @@ const server = new class WebServer extends Units.Module {
     constructor() {
         super({ name: "web", id: "akeno.web", version: "1.4.0-beta" });
 
-        this.registerType("WebApp", WebApp)
+        this.registerType("WebApp", WebApp);
 
         this.fileServer = new backend.helper.FileServer();
 
@@ -566,7 +566,7 @@ const server = new class WebServer extends Units.Module {
                 }
 
                 if (cacheEntry) {
-                    await server.fileServer.refresh(file, null, null, content);
+                    await server.fileServer.refresh(file, null, extension === "html" ? (path) => parser.needsUpdate(path) : null, content);
                 } else {
                     await server.fileServer.refresh(file, { "Vary": "Accept-Encoding, Akeno-Content-Only" }, extension === "html" ? (path) => parser.needsUpdate(path) : null, content);
                 }
@@ -918,7 +918,7 @@ function initParser(header) {
                 //     }
                 // }
 
-                return backend.helper.ContentProcessor.esTranspileSync(text, "js", null).result;
+                return backend.helper.ContentProcessor.buildSync(text, "js", null).result;
 
                 // return backend.compression.code(text, backend.compression.format.JS);
             }
@@ -944,7 +944,7 @@ function initParser(header) {
                 // }
 
                 // TODO: Idea; could have a special attribute to support inline scss (editor won't like it though)
-                return backend.helper.ContentProcessor.esTranspileSync(text, "css", null).result;
+                return backend.helper.ContentProcessor.buildSync(text, "css", null).result;
 
                 // return backend.compression.code(text, backend.compression.format.CSS);
             }

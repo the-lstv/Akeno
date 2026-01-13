@@ -47,7 +47,7 @@ const nullStringBuffer = Buffer.from("null");
 
 // Brings support for old browsers
 let esbuild;
-const TRANSPILE_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css']);
+const TRANSPILE_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css', 'html', 'lxml']);
 try {
     esbuild = require("esbuild");
 } catch (e) {
@@ -56,16 +56,36 @@ try {
 
 const defaultTargets = ['chrome90', 'firefox90', 'safari15', 'edge90'];
 class ContentProcessor {
-    static async esTranspile(content, ext, targets = defaultTargets, asString = false, filePath) {
-        if (!esbuild || !TRANSPILE_EXTENSIONS.has(ext)) return { result: content, success: false };
+    /**
+     * Internal build pipeline processor.
+     * @param {*} content 
+     * @param {*} ext 
+     * @param {*} targets 
+     * @param {*} asString 
+     * @param {*} filePath 
+     * @returns 
+     */
+    static async build({ content, ext, targets = defaultTargets, asBuffer = true, filePath, sync = false }) {
+        let originalBuffer = null, success = false;
+        if (Buffer.isBuffer(content)) {
+            originalBuffer = content;
+            content = content.toString('utf8');
+        }
+
+        if (!TRANSPILE_EXTENSIONS.has(ext)) return { result: originalBuffer || (asBuffer ? Buffer.from(content) : content), success };
 
         // TODO:FIXME: This is very temporary and not well designed at all
         // Should be more like 'middleware'
-        const results = await backend.emit(backend.buildHookEvref, [ext, content, filePath, asString]);
+        const results = await backend.emit(backend.buildHookEvref, [ ext, content, filePath ]);
         if(results) {
             const last = results[results.length - 1];
             if(last && typeof last === "object") {
-                if(last.content) content = last.content;
+                if(last.content) {
+                    content = last.content;
+
+                    // invalidate original buffer due to change
+                    originalBuffer = null;
+                }
                 if(last.ext) ext = last.ext;
             }
         }
@@ -74,50 +94,26 @@ class ContentProcessor {
             ext = 'js';
         }
 
-        let code = content;
-        if (Buffer.isBuffer(content)) {
-            code = content.toString('utf8');
+        if(esbuild) {
+            try {
+                const result = (sync ? esbuild.transformSync : await esbuild.transform)(content, {
+                    loader: ext,
+                    target: targets || defaultTargets,
+                    format: 'iife',
+                    minify: backend.mode !== backend.modes.DEVELOPMENT
+                });
+                return { result: asBuffer ? Buffer.from(result.code) : result.code, success: true };
+            } catch (e) {
+                console.error("Esbuild transpilation error:", e);
+                return { result: originalBuffer || (asBuffer ? Buffer.from(content) : content), success, error: e };
+            }
         }
 
-        try {
-            const result = await esbuild.transform(code, {
-                loader: ext,
-                target: targets || defaultTargets,
-                format: 'iife',
-                minify: backend.mode !== backend.modes.DEVELOPMENT
-            });
-            return { result: asString ? result.code : Buffer.from(result.code), success: true };
-        } catch (e) {
-            console.error("Esbuild transpilation error:", e);
-            return { result: content, success: false, error: e };
-        }
+        return { result: originalBuffer || (asBuffer ? Buffer.from(content) : content), success };
     }
 
-    // TODO: streamline with above
-    static esTranspileSync(content, ext, targets = defaultTargets, asString = false) {
-        if (!esbuild || !TRANSPILE_EXTENSIONS.has(ext)) return { result: content, success: false };
-
-        if(ext === "mjs" || ext === "cjs") {
-            ext = 'js';
-        }
-
-        let code = content;
-        if (Buffer.isBuffer(content)) {
-            code = content.toString('utf8');
-        }
-
-        try {
-            const result = esbuild.transformSync(code, {
-                loader: ext,
-                target: targets || defaultTargets,
-                format: 'iife',
-                minify: backend.mode !== backend.modes.DEVELOPMENT
-            });
-            return { result: asString ? result.code : Buffer.from(result.code), success: true };
-        } catch (e) {
-            console.error("Esbuild transpilation error:", e);
-            return { result: content, success: false, error: e };
-        }
+    static buildSync(options) {
+        return ContentProcessor.build({ ...options, sync: true });
     }
 }
 
@@ -383,7 +379,7 @@ class CacheManager extends Units.Server {
      */
     async transpile(content, ext, filePath) {
         if (!this.esbuildEnabled || !esbuild) return { result: content, success: false };
-        return await ContentProcessor.esTranspile(content, ext, this.esbuildTargets, false, filePath);
+        return await ContentProcessor.build({ content, ext, targets: this.esbuildTargets, asBuffer: true, filePath });
     }
 }
 
