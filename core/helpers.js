@@ -56,12 +56,12 @@ try {
 
 const defaultTargets = ['chrome90', 'firefox90', 'safari15', 'edge90'];
 class ContentProcessor {
-    static async esTranspile(content, ext, targets = defaultTargets, asString = false) {
+    static async esTranspile(content, ext, targets = defaultTargets, asString = false, filePath) {
         if (!esbuild || !TRANSPILE_EXTENSIONS.has(ext)) return { result: content, success: false };
 
         // TODO:FIXME: This is very temporary and not well designed at all
-        // Should be more like middleware
-        const results = backend.emit(backend.buildHookEvref, [ext, content, asString]);
+        // Should be more like 'middleware'
+        const results = await backend.emit(backend.buildHookEvref, [ext, content, filePath, asString]);
         if(results) {
             const last = results[results.length - 1];
             if(last && typeof last === "object") {
@@ -339,11 +339,15 @@ class CacheManager extends Units.Server {
             entry[0][6] = mimeType;
 
             if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.has(entry[0][5])) {
-                const originalContent = content;
-                content = await this.transpile(content, entry[0][5]);
+                const result = await this.transpile(content, entry[0][5], key);
+                if(result.success) {
+                    content = result.result;
 
-                if (content !== originalContent && ['ts', 'tsx', 'jsx'].includes(entry[0][5])) {
-                    mimeType = 'text/javascript';
+                    if (['ts', 'tsx', 'jsx'].includes(entry[0][5])) {
+                        mimeType = 'text/javascript';
+                    } else if (['scss', 'sass'].includes(entry[0][5])) {
+                        mimeType = 'text/css';
+                    }
                 }
             }
         }
@@ -377,9 +381,9 @@ class CacheManager extends Units.Server {
      * @param {string} ext 
      * @returns {Promise<string|Buffer>}
      */
-    async transpile(content, ext) {
-        if (!this.esbuildEnabled || !esbuild) return content;
-        return (await ContentProcessor.esTranspile(content, ext, this.esbuildTargets)).result;
+    async transpile(content, ext, filePath) {
+        if (!this.esbuildEnabled || !esbuild) return { result: content, success: false };
+        return await ContentProcessor.esTranspile(content, ext, this.esbuildTargets, false, filePath);
     }
 }
 
@@ -480,16 +484,16 @@ class FileServer extends CacheManager {
      * This is where we do fs.existsSync, fs.readFile, statSync, etc.
      */
     async refresh(rawPath, headers = null, cacheBreaker = null, content = null) {
-        const resolved = this.resolvePath(rawPath);
-        if (!fs.existsSync(resolved)) {
-            this.cache.delete(resolved);
+        const resolvedPath = this.resolvePath(rawPath);
+        if (!fs.existsSync(resolvedPath)) {
+            this.cache.delete(resolvedPath);
             return false;
         }
 
-        let file = this.cache.get(resolved);
+        let file = this.cache.get(resolvedPath);
         if (!file) {
             file = [[]];
-            this.cache.set(resolved, file);
+            this.cache.set(resolvedPath, file);
         } else {
             // Clear out any old compressed variants
             for (let i = 1; i < file.length; i++) {
@@ -498,29 +502,33 @@ class FileServer extends CacheManager {
         }
 
         // figure extension/mime
-        const ext = nodePath.extname(resolved).slice(1).toLowerCase();
-        const mimeType = backend.mime.getType(ext) || 'application/octet-stream';
+        const ext = nodePath.extname(resolvedPath).slice(1).toLowerCase();
+        let mimeType = backend.mime.getType(ext) || 'application/octet-stream';
 
         // read or delegate to processor
         if (content == null) {
             content = this.processor
-                ? await this.processor(resolved)
+                ? await this.processor(resolvedPath)
                 : await fs.promises.readFile(
-                    resolved,
+                    resolvedPath,
                     (ext === 'js' || ext === 'css') ? 'utf8' : null
                 );
         }
 
         if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.has(ext)) {
-            const originalContent = content;
-            content = await this.transpile(content, ext);
+            const result = await this.transpile(content, ext, resolvedPath);
+            if(result.success) {
+                content = result.result;
 
-            if (content !== originalContent && ['ts', 'tsx', 'jsx'].includes(ext)) {
-                mimeType = 'text/javascript';
+                if (['ts', 'tsx', 'jsx'].includes(ext)) {
+                    mimeType = 'text/javascript';
+                } else if (['scss', 'sass'].includes(ext)) {
+                    mimeType = 'text/css';
+                }
             }
         }
 
-        const stats = fs.statSync(resolved);
+        const stats = fs.statSync(resolvedPath);
 
         // store core
         file[0][0] = content;
@@ -543,7 +551,7 @@ class FileServer extends CacheManager {
         }
         file[0][5] = ext;            // extension
         file[0][6] = mimeType;       // mimeType
-        file[0][7] = resolved;       // store the actual key
+        file[0][7] = resolvedPath;       // store the actual key
         file[0][8] = now;            // lastAccessed
         return true;
     }
