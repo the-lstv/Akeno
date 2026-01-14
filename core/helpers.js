@@ -47,7 +47,7 @@ const nullStringBuffer = Buffer.from("null");
 
 // Brings support for old browsers
 let esbuild;
-const TRANSPILE_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css', 'html', 'lxml']);
+const TRANSPILE_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css', 'html', 'ls.html']);
 try {
     esbuild = require("esbuild");
 } catch (e) {
@@ -65,14 +65,14 @@ class ContentProcessor {
      * @param {*} filePath 
      * @returns 
      */
-    static async build({ content, ext, targets = defaultTargets, asBuffer = true, filePath, sync = false }) {
+    static async build({ content, ext, targets = defaultTargets, asBuffer = true, filePath }) {
         let originalBuffer = null, success = false;
         if (Buffer.isBuffer(content)) {
             originalBuffer = content;
             content = content.toString('utf8');
         }
 
-        if (!TRANSPILE_EXTENSIONS.has(ext)) return { result: originalBuffer || (asBuffer ? Buffer.from(content) : content), success };
+        if (!TRANSPILE_EXTENSIONS.has(ext)) return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success };
 
         // TODO:FIXME: This is very temporary and not well designed at all
         // Should be more like 'middleware'
@@ -94,9 +94,9 @@ class ContentProcessor {
             ext = 'js';
         }
 
-        if(esbuild) {
+        if(esbuild && ext !== 'html') {
             try {
-                const result = (sync ? esbuild.transformSync : await esbuild.transform)(content, {
+                const result = await esbuild.transform(content, {
                     loader: ext,
                     target: targets || defaultTargets,
                     format: 'iife',
@@ -105,15 +105,49 @@ class ContentProcessor {
                 return { result: asBuffer ? Buffer.from(result.code) : result.code, success: true };
             } catch (e) {
                 console.error("Esbuild transpilation error:", e);
-                return { result: originalBuffer || (asBuffer ? Buffer.from(content) : content), success, error: e };
+                return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success, error: e };
             }
         }
 
-        return { result: originalBuffer || (asBuffer ? Buffer.from(content) : content), success };
+        return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success };
     }
 
-    static buildSync(options) {
-        return ContentProcessor.build({ ...options, sync: true });
+    /**
+     * @deprecated
+     * Some build tools are async only (postcss), so we must preffer async.
+     * Annoyingly, our HTML parser is currently sync only, which means we need sync processing for inline tags.
+     */
+    static buildSync({ content, ext, targets = defaultTargets, asBuffer = true, filePath }) {
+        let originalBuffer = null, success = false;
+        if (Buffer.isBuffer(content)) {
+            originalBuffer = content;
+            content = content.toString('utf8');
+        }
+
+        if (!TRANSPILE_EXTENSIONS.has(ext)) return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success };
+
+        // Currently no support for hooks in sync mode
+
+        if(ext === "mjs" || ext === "cjs") {
+            ext = 'js';
+        }
+
+        if(esbuild && ext !== 'html') {
+            try {
+                const result = esbuild.transformSync(content, {
+                    loader: ext,
+                    target: targets || defaultTargets,
+                    format: 'iife',
+                    minify: backend.mode !== backend.modes.DEVELOPMENT
+                });
+                return { result: asBuffer ? Buffer.from(result.code) : result.code, success: true };
+            } catch (e) {
+                console.error("Esbuild transpilation error:", e);
+                return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success, error: e };
+            }
+        }
+
+        return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success };
     }
 }
 
@@ -378,7 +412,7 @@ class CacheManager extends Units.Server {
      * @returns {Promise<string|Buffer>}
      */
     async transpile(content, ext, filePath) {
-        if (!this.esbuildEnabled || !esbuild) return { result: content, success: false };
+        if (!this.esbuildEnabled) return { result: content, success: false };
         return await ContentProcessor.build({ content, ext, targets: this.esbuildTargets, asBuffer: true, filePath });
     }
 }
