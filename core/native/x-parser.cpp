@@ -449,7 +449,7 @@ public:
                         continue;
                     }
 
-                    if (*it == '{' && (it + 1) < chunk_end && it[1] == '{' && (it == output->data() || it[-1] != '\\')) {
+                    if (*it == '{' && (it + 1) < chunk_end && it[1] == '{' && (it == buffer.data() || it[-1] != '\\')) {
                         pushText(*output);
 
                         state = INLINE_VALUE;
@@ -612,7 +612,13 @@ public:
                             // Handle attributes
 
                             std::string_view attribute_view(value_start, it - value_start);
-                            
+
+                            if(attribute_view.empty()) {
+                                value_start = it + 1;
+                                space_broken = false;
+                                break;
+                            }
+
                             if (attribute_view[0] == '#') {
                                 output->append(" id=\"");
                                 output->append(attribute_view.substr(1));

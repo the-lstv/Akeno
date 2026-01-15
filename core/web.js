@@ -899,52 +899,23 @@ function initParser(header) {
             // Inline script compression
             // TODO: Handle script type
             if(parent === "script") {
-                if(!backend.compression.codeEnabled || !backend.esbuildEnabled) {
+                if(!backend.compression.codeEnabled) {
                     return true;
                 }
 
-                // if(backend.esbuildEnabled) {
-                //     try {
-                //         const result = esbuild.transformSync(text, {
-                //             minify: backend.compression.codeEnabled,
-                //             loader: 'js',
-                //             format: 'iife',
-                //             target: backend.esbuildTargets,
-                //         });
-                //         return result.code;
-                //     } catch (e) {
-                //         console.error("Esbuild JS transform error: ", e);
-                //         return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.JS) : true;
-                //     }
-                // }
-
-                return backend.helper.ContentProcessor.buildSync(text, "js", null).result;
+                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "js", targets: backend.esbuildTargets, asBuffer: false, filePath: this.data.path, app: this.data.app }).result;
 
                 // return backend.compression.code(text, backend.compression.format.JS);
             }
 
             // Inline style compression
             if (parent === "style") {
-                if(!backend.compression.codeEnabled || !backend.esbuildEnabled) {
+                if(!backend.compression.codeEnabled) {
                     return true;
                 }
 
-                // if(backend.esbuildEnabled) {
-                //     try {
-                //         const result = esbuild.transformSync(text, {
-                //             minify: backend.compression.codeEnabled,
-                //             loader: 'css',
-                //             target: backend.esbuildTargets,
-                //         });
-                //         return result.code;
-                //     } catch (e) {
-                //         console.error("Esbuild CSS transform error: ", e);
-                //         return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.CSS) : true;
-                //     }
-                // }
-
                 // TODO: Idea; could have a special attribute to support inline scss (editor won't like it though)
-                return backend.helper.ContentProcessor.buildSync(text, "css", null).result;
+                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "css", targets: backend.esbuildTargets, asBuffer: false, filePath: this.data.path, app: this.data.app }).result;
 
                 // return backend.compression.code(text, backend.compression.format.CSS);
             }

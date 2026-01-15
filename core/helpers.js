@@ -58,14 +58,15 @@ const defaultTargets = ['chrome90', 'firefox90', 'safari15', 'edge90'];
 class ContentProcessor {
     /**
      * Internal build pipeline processor.
-     * @param {*} content 
-     * @param {*} ext 
-     * @param {*} targets 
-     * @param {*} asString 
-     * @param {*} filePath 
-     * @returns 
+     * @param {string|Buffer} content Content to process
+     * @param {string} ext Extension of the content
+     * @param {string[]} targets Target environments for transpilation
+     * @param {boolean} asBuffer Whether to return the result as a Buffer
+     * @param {string} filePath Path of the file being processed (optional)
+     * @param {Units.App|object} app Application context (optional)
+     * @returns {Promise<{result: string|Buffer, success: boolean, error?: Error}>} Processed content and success status
      */
-    static async build({ content, ext, targets = defaultTargets, asBuffer = true, filePath }) {
+    static async build({ content, ext, targets = defaultTargets, asBuffer = true, filePath, app }) {
         let originalBuffer = null, success = false;
         if (Buffer.isBuffer(content)) {
             originalBuffer = content;
@@ -76,7 +77,8 @@ class ContentProcessor {
 
         // TODO:FIXME: This is very temporary and not well designed at all
         // Should be more like 'middleware'
-        const results = await backend.emit(backend.buildHookEvref, [ ext, content, filePath ]);
+        const evtData = [{ ext, content, filePath, app }];
+        const results = await backend.emit(backend.buildHookEvref, evtData);
         if(results) {
             const last = results[results.length - 1];
             if(last && typeof last === "object") {
@@ -117,7 +119,7 @@ class ContentProcessor {
      * Some build tools are async only (postcss), so we must preffer async.
      * Annoyingly, our HTML parser is currently sync only, which means we need sync processing for inline tags.
      */
-    static buildSync({ content, ext, targets = defaultTargets, asBuffer = true, filePath }) {
+    static buildSync({ content, ext, targets = defaultTargets, asBuffer = true, filePath, app }) {
         let originalBuffer = null, success = false;
         if (Buffer.isBuffer(content)) {
             originalBuffer = content;

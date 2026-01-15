@@ -5,7 +5,7 @@
 - Rework many parts, including the CLI, dynamic content, and the router
 - Write a proper documentation (https://lstv.space/docs/akeno is work in progress now)
 - Add a proper installation script (soon)
-- ! Stop relying on napi and use v8 directly
+- Stop relying on napi and use v8 directly
 - Allow modules to extend the CLI help menu
 
 ## Known bugs as of 1.6.6-beta
@@ -14,9 +14,11 @@
 - [Priority] HTML files without a template now have a bug where some @page directives are ignored
 
 ## New in 1.6.8-beta
+- A proper build pipeline and server events
 - Added a neat WebSocket authentication helper
 - Added more options to the WebSocket interface
 - WebSockets can now be easily enabled or disabled
+- Removed deprecated code
 
 ## New in 1.6.7-beta
 - Re-added WebSocket support and APIs
