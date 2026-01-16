@@ -28,7 +28,7 @@
 - Added a FileBucket API for efficient and deduplicated file storing with lightning-fast reads (using xxHash and LMDB)
 - Fixed high memory and CPU usage while uploading large files
 - Upload processing experiments, including on-the-fly image compression/re-encoding before storage
-- Experimental build and fixes for Windows (versions before 1.6.7 did not work on Windows)
+- Experimental build and fixes for Windows (1.6.7 is the first version to run on Windows)
 - Unified error page helper
 - Added a systemd service setup command
 - Web apps can now set a ratelimit

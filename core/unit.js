@@ -355,7 +355,7 @@ const Manager = {
 
         new EventHandler(backendInstance);
         backendInstance.buildHookEvref = backendInstance._events.prepareEvent("build-hook", {
-            async: true,
+            await: true,
             results: true
         });
 

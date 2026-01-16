@@ -903,7 +903,7 @@ function initParser(header) {
                     return true;
                 }
 
-                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "js", targets: backend.esbuildTargets, asBuffer: false, filePath: this.data.path, app: this.data.app }).result;
+                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "js", targets: backend.esbuildTargets, asBuffer: false, filePath: this?.data?.path, app: this?.data?.app }).result;
 
                 // return backend.compression.code(text, backend.compression.format.JS);
             }
@@ -915,7 +915,7 @@ function initParser(header) {
                 }
 
                 // TODO: Idea; could have a special attribute to support inline scss (editor won't like it though)
-                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "css", targets: backend.esbuildTargets, asBuffer: false, filePath: this.data.path, app: this.data.app }).result;
+                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "css", targets: backend.esbuildTargets, asBuffer: false, filePath: this?.data?.path, app: this?.data?.app }).result;
 
                 // return backend.compression.code(text, backend.compression.format.CSS);
             }

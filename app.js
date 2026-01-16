@@ -26,7 +26,7 @@ const Units = require("akeno:units");
 
 // Global variables
 let
-    version = new Units.Version("1.6.7-beta")
+    version = new Units.Version("1.6.8-beta")
 ;
 
 
