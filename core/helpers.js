@@ -66,52 +66,47 @@ class ContentProcessor {
      * @param {Units.App|object} app Application context (optional)
      * @returns {Promise<{result: string|Buffer, success: boolean, error?: Error}>} Processed content and success status
      */
-    static async build({ content, ext, targets = defaultTargets, asBuffer = true, filePath, app }) {
+    static async build(options) {
         let originalBuffer = null, success = false;
-        if (Buffer.isBuffer(content)) {
-            originalBuffer = content;
-            content = content.toString('utf8');
+        if (Buffer.isBuffer(options.content)) {
+            originalBuffer = options.content;
+            options.content = options.content.toString('utf8');
         }
 
-        if (!TRANSPILE_EXTENSIONS.has(ext)) return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success };
+        if (!TRANSPILE_EXTENSIONS.has(options.ext)) return { result: originalBuffer || (options.asBuffer ? Buffer.from(options.content || '') : options.content), success };
 
         // TODO:FIXME: This is very temporary and not well designed at all
         // Should be more like 'middleware'
-        const evtData = [{ ext, content, filePath, app }];
-        const results = await backend.emit(backend.buildHookEvref, evtData);
-        if(results) {
-            const last = results[results.length - 1];
-            if(last && typeof last === "object") {
-                if(last.content) {
-                    content = last.content;
-
-                    // invalidate original buffer due to change
-                    originalBuffer = null;
+        const evtData = [options];
+        const patch = await backend.emit(backend.buildHookEvref, evtData);
+        if (patch && patch.length > 0) {
+            for(let evtData of patch) {
+                if(typeof evtData === 'object' && evtData !== null) {
+                    Object.assign(options, evtData);
                 }
-                if(last.ext) ext = last.ext;
             }
         }
 
-        if(ext === "mjs" || ext === "cjs") {
-            ext = 'js';
+        if(options.ext === "mjs" || options.ext === "cjs") {
+            options.ext = 'js';
         }
 
-        if(esbuild && ext !== 'html') {
+        if(esbuild && options.ext !== 'html') {
             try {
-                const result = await esbuild.transform(content, {
-                    loader: ext,
-                    target: targets || defaultTargets,
+                const result = await esbuild.transform(options.content, {
+                    loader: options.ext,
+                    target: options.targets || defaultTargets,
                     format: 'iife',
                     minify: backend.mode !== backend.modes.DEVELOPMENT
                 });
-                return { result: asBuffer ? Buffer.from(result.code) : result.code, success: true };
+                return { result: options.asBuffer ? Buffer.from(result.code) : result.code, success: true };
             } catch (e) {
                 console.error("Esbuild transpilation error:", e);
-                return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success, error: e };
+                return { result: originalBuffer || (options.asBuffer ? Buffer.from(options.content || '') : options.content), success, error: e };
             }
         }
 
-        return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success };
+        return { result: originalBuffer || (options.asBuffer ? Buffer.from(options.content || '') : options.content), success };
     }
 
     /**
@@ -413,9 +408,9 @@ class CacheManager extends Units.Server {
      * @param {string} ext 
      * @returns {Promise<string|Buffer>}
      */
-    async transpile(content, ext, filePath) {
+    async transpile(content, ext, filePath, app) {
         if (!this.esbuildEnabled) return { result: content, success: false };
-        return await ContentProcessor.build({ content, ext, targets: this.esbuildTargets, asBuffer: true, filePath });
+        return await ContentProcessor.build({ content, ext, targets: this.esbuildTargets, asBuffer: true, filePath, app });
     }
 }
 
@@ -515,7 +510,7 @@ class FileServer extends CacheManager {
      * (Re)load a file from disk into the cache under `key===resolvedPath`.
      * This is where we do fs.existsSync, fs.readFile, statSync, etc.
      */
-    async refresh(rawPath, headers = null, cacheBreaker = null, content = null) {
+    async refresh(rawPath, headers = null, cacheBreaker = null, content = null, app = null) {
         const resolvedPath = this.resolvePath(rawPath);
         if (!fs.existsSync(resolvedPath)) {
             this.cache.delete(resolvedPath);
@@ -548,7 +543,7 @@ class FileServer extends CacheManager {
         }
 
         if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.has(ext)) {
-            const result = await this.transpile(content, ext, resolvedPath);
+            const result = await this.transpile(content, ext, resolvedPath, app);
             if(result.success) {
                 content = result.result;
 

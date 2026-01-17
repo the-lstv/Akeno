@@ -23,6 +23,8 @@ let
     { PathMatcher } = require("./router"),
     Units = require("./unit"),
 
+    { xxh3 } = require("@node-rs/xxhash");
+
     applications = new Map,
 
     // Backend object
@@ -50,7 +52,6 @@ class WebApp extends Units.App {
 
         new Units.EventHandler(this);
         this.requestEvref = this._events.prepareEvent("request", {
-            async: true,
             results: true
         });
 
@@ -406,7 +407,6 @@ const server = new class WebServer extends Units.Module {
         new Units.EventHandler(this);
 
         this.requestEvref = this._events.prepareEvent("request", {
-            async: true,
             results: true
         });
 
@@ -515,9 +515,20 @@ const server = new class WebServer extends Units.Module {
             // Request event for addons
             // TODO: Optimize
             const evData = [req, res, app, resolvedPath];
-            const results = [...await server.emit(server.requestEvref, evData), ...await app.emit(app.requestEvref, evData)];
-            if (results && results.length > 0) {
-                for (const result of results) {
+            const r1 = server.emit(server.requestEvref, evData);
+            const r2 = app.emit(app.requestEvref, evData);
+            if (r1 && r1.length > 0) {
+                for (const result of r1) {
+                    if (result && result.file) file = result.file;
+                    else if (result === false) {
+                        resolvedPath = app._404;
+                        file = app._404.full;
+                        errorCode = "404";
+                    }
+                }
+            }
+            if (r2 && r2.length > 0) {
+                for (const result of r2) {
                     if (result && result.file) file = result.file;
                     else if (result === false) {
                         resolvedPath = app._404;
@@ -566,9 +577,9 @@ const server = new class WebServer extends Units.Module {
                 }
 
                 if (cacheEntry) {
-                    await server.fileServer.refresh(file, null, extension === "html" ? (path) => parser.needsUpdate(path) : null, content);
+                    await server.fileServer.refresh(file, null, extension === "html" ? (path) => parser.needsUpdate(path) : null, content, app);
                 } else {
-                    await server.fileServer.refresh(file, { "Vary": "Accept-Encoding, Akeno-Content-Only" }, extension === "html" ? (path) => parser.needsUpdate(path) : null, content);
+                    await server.fileServer.refresh(file, { "Vary": "Accept-Encoding, Akeno-Content-Only" }, extension === "html" ? (path) => parser.needsUpdate(path) : null, content, app);
                 }
             }
 
@@ -1094,14 +1105,17 @@ function initParser(header) {
                                 const extension = attrib.slice(attrib.lastIndexOf('.') + 1);
 
                                 switch (extension) {
-                                    case "js":
+                                    case "js": case "mjs": case "cjs":
                                         this.write(`<script src="${link}${mtime}" ${components.join(" ")}${scriptAttributes}></script>`)
                                         break;
-                                    case "css":
+                                    case "css": case "scss":
                                         this.write(`<link rel=stylesheet href="${link}${mtime}" ${components.join(" ")}>`)
                                         break;
                                     case "json":
                                         this.write(`<script type="application/json" id="${components.length ? components.join(",") : attrib}">${fs.readFileSync(path)}</script>`)
+                                        break;
+                                    default:
+                                        this.data.app.warn("Error: Unknown file extension \"" + extension + "\" for file \"" + attrib + "\"");
                                         break;
                                 }
                             } else {
@@ -1232,6 +1246,11 @@ function initParser(header) {
                         this.data.app.warn("Failed to import (raw): " + item + " (" + path + ")", error);
                     }
                 }
+                break;
+
+            case "file-scope-key":
+                if (!this.data.file) break;
+                this.write(xxh3.xxh64(nodePath.dirname(this.data.file)).toString(16));
                 break;
 
             case "print":

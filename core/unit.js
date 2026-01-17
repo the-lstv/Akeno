@@ -759,16 +759,124 @@ class External extends Unit {
 
 class EventHandler {
     static REMOVE_LISTENER = Symbol("event-remove");
+    static optimize = true;
+
+    // Not available in node by default
+    static AsyncFunction = typeof AsyncFunction !== 'undefined' ? AsyncFunction : (async function(){}).constructor;
+    static Function = Function;
+
+    static EventObject = class EventObject {
+        compiled = null;
+        listeners = [];
+        free = [];
+        aliases = null;
+        completed = false;
+        warned = false;
+        data = null;
+
+        break = false;
+        results = false;
+        async = false;
+        await = false;
+
+        _isEvent = true;
+
+        remove(index) {
+            if(this.listeners.length === 1) {
+                this.listeners.length = 0;
+                this.free.length = 0;
+                return;
+            }
+
+            this.listeners[index] = null;
+            this.free.push(index);
+            this.compiled = null; // Invalidate compiled function
+        }
+
+        emit(data) {
+            return EventHandler.emit(this, data);
+        }
+
+        /**
+         * Recompile the event's internal emit function for performance.
+         * Compilation may get skipped in which case the normal emit loop is used.
+         */
+        recompile() {
+            const listeners = this.listeners;
+            const listenersCount = listeners.length;
+
+            // TODO: Unroll for large amounts of listeners
+            if (listenersCount < 2 || listenersCount >= 950 || EventHandler.optimize === false || this.await === true) return;
+
+            const collectResults = this.results === true;
+            const breakOnFalse = this.break === true;
+
+            const parts = [];
+            parts.push("var l=listeners;");
+            for (let i = 0; i < listenersCount; i++) {
+                const li = listeners[i];
+                if (li === null) continue;
+                parts.push("var f", i, "=l[", i, "].callback;");
+            }
+
+            parts.push(
+                "l=undefined;return(function(a,b,c,d,e){var v"
+            );
+
+            if (collectResults) parts.push(",r=[]");
+            parts.push(";");
+
+            // Main call loop
+            for (let i = 0; i < listenersCount; i++) {
+                const li = listeners[i];
+                if (li === null) continue;
+
+                if(this.await === true) {
+                    parts.push("v=await f");
+                } else {
+                    parts.push("v=f");
+                }
+
+                parts.push(i, "(a,b,c,d,e);");
+
+                // Optional break behavior
+                if (breakOnFalse) {
+                    parts.push("if(v===false)return", collectResults ? " r" : "", ";");
+                }
+
+                if (li.once) {
+                    if (collectResults) {
+                        parts.push("if(v!==RL)r.push(v);");
+                    }
+                    parts.push("event.remove(", i, ");");
+                } else {
+                    if (collectResults) {
+                        parts.push("if(v===RL){event.remove(", i, ")}else{r.push(v)};");
+                    } else {
+                        parts.push("if(v===RL){event.remove(", i, ")};");
+                    }
+                }
+            }
+
+            if (collectResults) parts.push("return r;");
+            parts.push("})");
+
+            const constructor = this.await? EventHandler.AsyncFunction: EventHandler.Function;
+            const factory = new constructor("RL", "listeners", "event", parts.join(""));
+            this.compiled = factory(EventHandler.REMOVE_LISTENER, listeners, this);
+        }
+    }
 
     /**
      * @param {object} target Possibly deprecated; Binds the event handler methods to a target object.
+     * @param {object} options Event handler options.
      */
-    constructor(target){
-        EventHandler.prepareHandler(this);
+    constructor(target, options = {}) {
+        EventHandler.prepareHandler(this, options);
         if(target){
             target._events = this;
 
-            ["emit", "on", "once", "off", "invoke"].forEach(method => {
+            ["emit", "quickEmit", "on", "once", "off"].forEach(method => {
                 if (!target.hasOwnProperty(method)) target[method] = this[method].bind(this);
             });
 
@@ -776,136 +884,258 @@ class EventHandler {
         }
     }
 
-    static prepareHandler(target){
-        target.events = new Map;
+    static prepareHandler(target, options = {}){
+        target.events = new Map();
+        if(options) target.eventOptions = options;
     }
 
-    prepareEvent(name, options){
-        if(options && options.completed === false) {
-            // Clear data once uncompleted
-            options.data = null;
+    /**
+     * Prepare or update an event object with given name and options.
+     * @param {string|symbol} name Name of the event.
+     * @param {object} options Event options.
+     * @returns {EventObject} Prepared event object.
+     * 
+     * @warning If you are going to use the event reference, remember to dispose of it properly to avoid memory leaks.
+     */
+    prepareEvent(name, options = undefined){
+        let event = this.events.get(name);
+
+        if(!event) {
+            event = new EventHandler.EventObject();
+            this.events.set(name, event);
         }
 
-        let event = this.events.get(name);
-        if(!event) {
-            event = { listeners: [], empty: [], ...options, _isEvent: true };
-            this.events.set(name, event);
-        } else if(options){
-            Object.assign(event, options);
+        if(options){
+            if(options.completed !== undefined) {
+                event.completed = options.completed;
+                if(!event.completed) event.data = null;
+            }
+
+            if(options.break !== undefined) event.break = !!options.break;
+            if(options.results !== undefined) event.results = !!options.results;
+            if(options.async !== undefined) event.async = !!options.async;
+            if(options.await !== undefined) {
+                event.await = !!options.await;
+                this.compiled = null; // Need to recompile
+            }
+
+            if(options.data !== undefined) event.data = options.data;
         }
 
         return event;
     }
 
     on(name, callback, options){
-        const event = (name._isEvent? name: this.events.get(name)) || this.prepareEvent(name);
+        const event = name._isEvent? name: (this.events.get(name) || this.prepareEvent(name));
         if(event.completed) {
-            if(event.data) callback(...event.data); else callback();
-            if(options && options.once) return this;
+            if(event.data) Array.isArray(event.data) ? callback.apply(null, event.data) : callback(event.data); else callback();
+            if(options && options.once) return;
         }
 
-        const index = event.empty.length > 0 ? event.empty.pop() : event.listeners.length;
+        options ||= {};
+        options.callback = callback;
 
-        const listener = event.listeners[index] = { callback, index, ...options };
-        return listener;
-    }
-
-    off(name, callback){
-        const event = name._isEvent? name: this.events.get(name);
-        if(!event) return;
-
-        for(let i = 0; i < event.listeners.length; i++){
-            if(event.listeners[i].callback === callback) {
-                event.empty.push(i);
-                event.listeners[i] = null;
+        const free = event.free;
+        if (free.length > 0) {
+            event.listeners[free.pop()] = options;
+        } else {
+            const amount = event.listeners.push(options);
+            if(amount > (this.eventOptions?.maxListeners || 1000) && !event.warned) {
+                console.warn(`EventHandler: Possible memory leak detected. ${event.listeners.length} listeners added for event '${name.toString()}'.`);
+                event.warned = true;
             }
         }
 
-        return this;
+        event.compiled = null; // Invalidate compiled function
+    }
+
+    off(name, callback){
+        const event = (name._isEvent? name: this.events.get(name));
+        if(!event) return;
+
+        const listeners = event.listeners;
+
+        for(let i = 0; i < listeners.length; i++){
+            const listener = listeners[i];
+            if(!listener) continue;
+
+            if(listener.callback === callback){
+                event.remove(i);
+            }
+        }
     }
 
     once(name, callback, options){
-        return this.on(name, callback, Object.assign(options || {}, { once: true }));
-    }
-
-    /**
-     * @deprecated To be removed in 5.3.0
-    */
-    invoke(name, ...data){
-        return this.emit(name, data, { results: true });
+        options ??= {};
+        options.once = true;
+        return this.on(name, callback, options);
     }
 
     /**
      * Emit an event with the given name and data.
-     * @param {string|object} name Name of the event or an event object.
-     * @param {Array} data Data to pass to the event listeners.
-     * @param {object} options Override options for the event emission.
-     * @returns {Array|null} Returns an array of results or null.
+     * @param {string|object} name Name of the event to emit or it's reference
+     * @param {Array} data Array of values to pass
+     * @param {object} event Optional emit options override
+     * @returns {null|Array|Promise<null|Array>} Array of results (if options.results is true) or null. If event.await is true, returns a Promise.
      */
-
-    emit(name, data, options = null) {
-        if (!name || !this.events) return;
-
+    emit(name, data) {
         const event = name._isEvent ? name : this.events.get(name);
-        if (!options) options = event;
+        if (!event || event.listeners.length === 0) return event && event.await ? Promise.resolve(null) : null;
 
-        const returnData = options && options.results ? [] : null;
-        if (!event) return returnData;
+        const listeners = event.listeners;
+        const listenerCount = listeners.length;
 
-        const hasData = Array.isArray(data) && data.length > 0;
+        const collectResults = event.results === true;
 
-        for (let listener of event.listeners) {
-            if (!listener || typeof listener.callback !== "function") continue;
+        const isArray = data && Array.isArray(data);
+        if(!isArray) data = [data];
+        const dataLen = isArray ? data.length : 0;
 
-            try {
-                const result = hasData ? listener.callback(...data) : listener.callback();
+        let a = undefined, b = undefined, c = undefined, d = undefined, e = undefined;
 
-                if (options.break && result === false) break;
-                if (options.results) returnData.push(result);
+        if (dataLen > 0) a = data[0];
+        if (dataLen > 1) b = data[1];
+        if (dataLen > 2) c = data[2];
+        if (dataLen > 3) d = data[3];
+        if (dataLen > 4) e = data[4];
 
-                if (result === EventHandler.REMOVE_LISTENER) {
-                    event.empty.push(listener.index);
-                    event.listeners[listener.index] = null;
-                    listener = null;
-                    continue;
+        // Awaiting path
+        if (event.await === true) {
+            if(!event.compiled) {
+                event.recompile();
+            }
+
+            if(event.compiled) {
+                return event.compiled(a, b, c, d, e);
+            }
+
+            const breakOnFalse = event.break === true;
+            const returnData = collectResults ? [] : null;
+
+            return (async () => {
+                for (let i = 0; i < listeners.length; i++) {
+                    const listener = listeners[i];
+                    if (listener === null) continue;
+
+                    let result = (dataLen < 6)? listener.callback(a, b, c, d, e): listener.callback.apply(null, data);
+                    if (result && typeof result.then === 'function') {
+                        result = await result;
+                    }
+
+                    if (collectResults) returnData.push(result);
+
+                    if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                        event.remove(i);
+                    }
+
+                    if (breakOnFalse && result === false) break;
                 }
-            } catch (error) {
-                console.error(`Error in listener for event '${name}':`, listener, error);
-            }
-
-            if (listener && listener.once) {
-                event.empty.push(listener.index);
-                event.listeners[listener.index] = null;
-                listener = null;
-            }
+                return returnData;
+            })();
         }
 
-        if (options.async && options.results) {
-            return Promise.all(returnData);
+        if(listenerCount === 1) {
+            const listener = listeners[0];
+
+            let result = listener.callback(a, b, c, d, e);
+
+            if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                event.remove(0);
+            }
+
+            return collectResults? [result]: null;
+        }
+
+        if(!event.compiled) {
+            event.recompile();
+        }
+
+        if(event.compiled) {
+            return event.compiled(a, b, c, d, e);
+        }
+
+        const breakOnFalse = event.break === true;
+        const returnData = collectResults ? [] : null;
+
+        if(dataLen < 6){
+            for (let i = 0; i < listeners.length; i++) {
+                const listener = listeners[i];
+                if (listener === null) continue;
+
+                let result = listener.callback(a, b, c, d, e);
+                if (collectResults) returnData.push(result);
+
+                if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                    event.remove(i);
+                }
+
+                if (breakOnFalse && result === false) break;
+            }
+        } else {
+            for (let i = 0; i < listeners.length; i++) {
+                const listener = listeners[i];
+                if (listener === null) continue;
+
+                let result = listener.callback.apply(null, data);
+                if (collectResults) returnData.push(result);
+
+                if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                    event.remove(i);
+                }
+
+                if (breakOnFalse && result === false) break;
+            }
         }
 
         return returnData;
     }
 
     /**
-     * Quickly emit an event without checks - to be used only in specific scenarios.
-     * @param {*} event Event object.
-     * @param {*} data Data array.
+     * Faster emit, without checking or collecting return values. Limited to 5 arguments.
+     * @warning This does not guarantee EventHandler.REMOVE_LISTENER or any other return value functionality. Async events are not supported with quickEmit.
+     * @param {string|object} event Event name or reference.
+     * @param {*} a First argument.
+     * @param {*} b Second argument.
+     * @param {*} c Third argument.
+     * @param {*} d Fourth argument.
+     * @param {*} e Fifth argument.
      */
+    quickEmit(name, a, b, c, d, e){
+        const event = name._isEvent ? name : this.events.get(name);
+        if (!event || event.listeners.length === 0) return false;
 
-    quickEmit(event, data){
-        if(!event._isEvent) throw new Error("Event must be a valid event object when using quickEmit");
+        if(event.await === true) {
+            throw new Error("quickEmit cannot be used with async/await events.");
+        }
 
-        for(let i = 0, len = event.listeners.length; i < len; i++){
-            const listener = event.listeners[i];
-            if(!listener || typeof listener.callback !== "function") continue;
+        if(event.listeners.length === 1) {
+            const listener = event.listeners[0];
+            listener.callback(a, b, c, d, e);
+            if (listener.once) {
+                event.remove(0);
+            }
+            return;
+        }
+
+        if(!event.compiled) {
+            event.recompile();
+        }
+
+        if(event.compiled) {
+            event.compiled(a, b, c, d, e);
+            return;
+        }
+
+        const listeners = event.listeners;
+        for(let i = 0, len = listeners.length; i < len; i++){
+            const listener = listeners[i];
+            if(listener === null) continue;
 
             if(listener.once) {
-                event.empty.push(listener.index);
-                event.listeners[listener.index] = null;
+                event.remove(i);
             }
 
-            listener.callback(...data);
+            listener.callback(a, b, c, d, e);
         }
     }
 
@@ -927,14 +1157,14 @@ class EventHandler {
         this.events.set(alias, event);
     }
 
-    completed(name, data = [], options = {}){
+    completed(name, data = undefined, options = null){
         this.emit(name, data);
 
-        this.prepareEvent(name, {
-            ...options,
-            completed: true,
-            data
-        })
+        options ??= {};
+        options.completed = true;
+        options.data = data;
+
+        this.prepareEvent(name, options);
     }
 }
 

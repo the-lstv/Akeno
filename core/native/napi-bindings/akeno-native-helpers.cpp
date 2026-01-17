@@ -273,7 +273,10 @@ ParserWrapper::ParserWrapper(const Napi::CallbackInfo& info)
 }
 
 Napi::Value ParserWrapper::createContext(const Napi::CallbackInfo& info) {
-    return ParserContext::constructor.New({ Napi::External<ParserWrapper>::New(env_, this), info[0] });
+    Napi::Value dataArg = (info.Length() > 0 && info[0].IsObject())
+        ? info[0]
+        : Napi::Object::New(env_);
+    return ParserContext::constructor.New({ Napi::External<ParserWrapper>::New(env_, this), dataArg });
 }
 
 Napi::Value ParserWrapper::fromString(const Napi::CallbackInfo& info) {
@@ -318,8 +321,10 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
 
     FileCache& result = ctx.fromFile(filePath, &ctxObj, appPath);
 
+    std::shared_ptr<FileCache> resultPtr(&result, [](FileCache*) {});
+
     // Create a shared_ptr to manage the lifetime of the string data
-    auto* storagePtr = new std::shared_ptr<std::string>(std::make_shared<std::string>(std::move(ctx.exportCopy(&result))));
+    auto* storagePtr = new std::shared_ptr<std::string>(std::make_shared<std::string>(std::move(ctx.exportCopy(resultPtr))));
 
     Napi::Value data = Napi::Buffer<char>::New(
         info.Env(),
@@ -384,9 +389,11 @@ void WriteLog(const Napi::CallbackInfo& info) {
 
     std::cout << "\x1b[" << color << "m[" << source << "]\x1b[" << suffix << "m";
 
-    std::string continuation = "\n";
-    if (sourceLen > 0) {
-        continuation += std::string(sourceLen - 1, ' ');
+    std::string continuation;
+    continuation.reserve(8 + sourceLen);
+    continuation += '\n';
+    if (sourceLen > 1) {
+        continuation.append(sourceLen - 1, ' ');
     }
     continuation += "\x1b[90m⤷\x1b[0m   ";
 

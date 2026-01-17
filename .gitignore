@@ -29,3 +29,6 @@ core/native/test*
 
 .env
 build/config.gypi
+
+*spec.js
+*test.js

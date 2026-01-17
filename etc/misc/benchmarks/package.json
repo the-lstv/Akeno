@@ -1,0 +1,10 @@
+{
+	"dependencies": {
+		"drip": "^1.4.0",
+		"emitix": "^2.3.2",
+		"eventemitter2": "^6.4.9",
+		"eventemitter3": "^5.0.1",
+		"fastemitter": "0.0.5-0",
+		"tseep": "^1.3.1"
+	}
+}
