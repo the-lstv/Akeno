@@ -761,10 +761,6 @@ class EventHandler {
     static REMOVE_LISTENER = Symbol("event-remove");
     static optimize = true;
 
-    // Not available in node by default
-    static AsyncFunction = typeof AsyncFunction !== 'undefined' ? AsyncFunction : (async function(){}).constructor;
-    static Function = Function;
-
     static EventObject = class EventObject {
         compiled = null;
         listeners = [];
@@ -778,19 +774,19 @@ class EventHandler {
         results = false;
         async = false;
         await = false;
+        deopt = false;
 
         _isEvent = true;
 
         remove(index) {
-            if(this.listeners.length === 1) {
-                this.listeners.length = 0;
-                this.free.length = 0;
-                return;
-            }
+            const listeners = this.listeners;
+            if (listeners[index] == null) return;
+            this.compiled = null;
 
-            this.listeners[index] = null;
+            if(listeners.length === 1 || listeners.length === this.free.length + 1) { listeners.length = 0; this.free.length = 0; return; }
+
+            listeners[index] = null;
             this.free.push(index);
-            this.compiled = null; // Invalidate compiled function
         }
 
         emit(data) {
@@ -806,22 +802,29 @@ class EventHandler {
             const listenersCount = listeners.length;
 
             // TODO: Unroll for large amounts of listeners
-            if (listenersCount < 2 || listenersCount >= 950 || EventHandler.optimize === false || this.await === true) return;
+            if (listenersCount < 2 || listenersCount >= 950 || EventHandler.optimize === false || this.deopt === true) return;
 
             const collectResults = this.results === true;
             const breakOnFalse = this.break === true;
 
+            // if(this.last_compile_count === listenersCount && this.factory) {
+            //     this.compiled = this.factory(EventHandler.REMOVE_LISTENER, listeners, this);
+            //     return;
+            // }
+
             const parts = [];
-            parts.push("var l=listeners;");
+            parts.push("(function(RL,listeners,event){var l=listeners;");
             for (let i = 0; i < listenersCount; i++) {
                 const li = listeners[i];
                 if (li === null) continue;
                 parts.push("var f", i, "=l[", i, "].callback;");
             }
 
-            parts.push(
-                "l=undefined;return(function(a,b,c,d,e){var v"
-            );
+            if(this.await === true) {
+                parts.push("l=undefined;return(async function(a,b,c,d,e){var v");
+            } else {
+                parts.push("l=undefined;return(function(a,b,c,d,e){var v");
+            }
 
             if (collectResults) parts.push(",r=[]");
             parts.push(";");
@@ -831,10 +834,12 @@ class EventHandler {
                 const li = listeners[i];
                 if (li === null) continue;
 
+                parts.push("v=");
+
                 if(this.await === true) {
-                    parts.push("v=await f");
+                    parts.push("await f");
                 } else {
-                    parts.push("v=f");
+                    parts.push("f");
                 }
 
                 parts.push(i, "(a,b,c,d,e);");
@@ -859,10 +864,9 @@ class EventHandler {
             }
 
             if (collectResults) parts.push("return r;");
-            parts.push("})");
+            parts.push("})})");
 
-            const constructor = this.await? EventHandler.AsyncFunction: EventHandler.Function;
-            const factory = new constructor("RL", "listeners", "event", parts.join(""));
+            const factory = eval(parts.join(""));
             this.compiled = factory(EventHandler.REMOVE_LISTENER, listeners, this);
         }
     }
@@ -917,6 +921,10 @@ class EventHandler {
             if(options.await !== undefined) {
                 event.await = !!options.await;
                 this.compiled = null; // Need to recompile
+            }
+            if(options.deopt !== undefined) {
+                event.deopt = !!options.deopt;
+                this.compiled = null; // Remove compiled function
             }
 
             if(options.data !== undefined) event.data = options.data;
@@ -1036,6 +1044,7 @@ class EventHandler {
 
         if(listenerCount === 1) {
             const listener = listeners[0];
+            if (listener === null) return null;
 
             let result = listener.callback(a, b, c, d, e);
 

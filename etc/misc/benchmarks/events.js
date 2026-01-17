@@ -31,7 +31,7 @@ const EMITS = 100_000;
 const LISTENERS = 50;
 // const EMITS = 1;
 // const LISTENERS = 1_000_000;
-const TEST_ONCE = false;
+const TEST_ONCE = true;
 
 console.log(`\nListeners per event: ${LISTENERS}`);
 console.log(`Emit iterations:      ${EMITS}\n`);
@@ -40,10 +40,6 @@ console.log(`Emit iterations:      ${EMITS}\n`);
 class EventHandler {
     static REMOVE_LISTENER = Symbol("event-remove");
     static optimize = true;
-
-    // Not available in node by default
-    static AsyncFunction = typeof AsyncFunction !== 'undefined' ? AsyncFunction : (async function(){}).constructor;
-    static Function = Function;
 
     static EventObject = class EventObject {
         compiled = null;
@@ -63,15 +59,14 @@ class EventHandler {
         _isEvent = true;
 
         remove(index) {
-            if(this.listeners.length === 1) {
-                this.listeners.length = 0;
-                this.free.length = 0;
-                return;
-            }
+            const listeners = this.listeners;
+            if (listeners[index] == null) return;
+            this.compiled = null;
 
-            this.listeners[index] = null;
+            if(listeners.length === 1 || listeners.length === this.free.length + 1) { listeners.length = 0; this.free.length = 0; return; }
+
+            listeners[index] = null;
             this.free.push(index);
-            this.compiled = null; // Invalidate compiled function
         }
 
         emit(data) {
@@ -87,22 +82,29 @@ class EventHandler {
             const listenersCount = listeners.length;
 
             // TODO: Unroll for large amounts of listeners
-            if (listenersCount < 2 || listenersCount >= 950 || EventHandler.optimize === false || this.await === true || this.deopt === true) return;
+            if (listenersCount < 2 || listenersCount >= 950 || EventHandler.optimize === false || this.deopt === true) return;
 
             const collectResults = this.results === true;
             const breakOnFalse = this.break === true;
 
+            // if(this.last_compile_count === listenersCount && this.factory) {
+            //     this.compiled = this.factory(EventHandler.REMOVE_LISTENER, listeners, this);
+            //     return;
+            // }
+
             const parts = [];
-            parts.push("var l=listeners;");
+            parts.push("(function(RL,listeners,event){var l=listeners;");
             for (let i = 0; i < listenersCount; i++) {
                 const li = listeners[i];
                 if (li === null) continue;
                 parts.push("var f", i, "=l[", i, "].callback;");
             }
 
-            parts.push(
-                "l=undefined;return(function(a,b,c,d,e){var v"
-            );
+            if(this.await === true) {
+                parts.push("l=undefined;return(async function(a,b,c,d,e){var v");
+            } else {
+                parts.push("l=undefined;return(function(a,b,c,d,e){var v");
+            }
 
             if (collectResults) parts.push(",r=[]");
             parts.push(";");
@@ -112,10 +114,12 @@ class EventHandler {
                 const li = listeners[i];
                 if (li === null) continue;
 
+                parts.push("v=");
+
                 if(this.await === true) {
-                    parts.push("v=await f");
+                    parts.push("await f");
                 } else {
-                    parts.push("v=f");
+                    parts.push("f");
                 }
 
                 parts.push(i, "(a,b,c,d,e);");
@@ -140,10 +144,9 @@ class EventHandler {
             }
 
             if (collectResults) parts.push("return r;");
-            parts.push("})");
+            parts.push("})})");
 
-            const constructor = this.await? EventHandler.AsyncFunction: EventHandler.Function;
-            const factory = new constructor("RL", "listeners", "event", parts.join(""));
+            const factory = eval(parts.join(""));
             this.compiled = factory(EventHandler.REMOVE_LISTENER, listeners, this);
         }
     }
@@ -321,6 +324,7 @@ class EventHandler {
 
         if(listenerCount === 1) {
             const listener = listeners[0];
+            if (listener === null) return null;
 
             let result = listener.callback(a, b, c, d, e);
 
@@ -732,7 +736,7 @@ class BenchmarkWrapper {
         return table;
     }
 
-    bench(name, fn, iterations = 1_000_000) {
+    bench(name, fn, iterations = 1_000_000, listeners = LISTENERS) {
         // Warmup
         if(iterations !== 1) for (let i = 0; i < 2000; i++) fn();
 
@@ -745,8 +749,8 @@ class BenchmarkWrapper {
         for (let i = 0; i < iterations; i++) fn();
         const end = process.hrtime.bigint();
 
-        if (check !== iterations * LISTENERS) {
-            console.warn(`Warning: Possible bug in test '${name}'. Listeners called: ${check} times, expected: ${iterations * LISTENERS}.`);
+        if (check !== iterations * listeners) {
+            console.warn(`Warning: Possible bug in test '${name}'. Listeners called: ${check} times, expected: ${iterations * listeners}.`);
         }
 
         const ns = Number(end - start);
@@ -785,6 +789,24 @@ class BenchmarkWrapper {
             }
         }
 
+        this.bench(`${name} on,off,on`, () => {
+            const evt = (a, b, c) => { check++; };
+            events.on('evt2', evt);
+            events.emit('evt2', [1, 2, 3]);
+            events.off('evt2', evt);
+            events.emit('evt2', [1, 2, 3]);
+            events.on('evt2', evt);
+            events.emit('evt2', [1, 2, 3]);
+            events.off('evt2', evt);
+        }, EMITS, 2);
+
+        this.bench(`${name} volatile events`, () => {
+            const evt = (a, b, c) => { check++; };
+            events.on('evt', evt);
+            events.off('evt', evt);
+            events.emit('evt', [1, 2, 3]);
+        }, EMITS);
+
         // Also test quickEmit and event ref
         if(isEvH) {
             const refEvt = events.prepareEvent('evt');
@@ -808,14 +830,22 @@ class BenchmarkWrapper {
             this.bench(`${name} emit(ref, [3], await)`, () => {
                 return events.emit(asyncRefEvt, [1, 2, 3]);
             }, EMITS);
+            events.prepareEvent('evt', { await: false });
         }
 
         if(TEST_ONCE) {
-            // Also test once
             this.bench(`${name} once(name, [3])`, () => {
-                events.once('evt', (a, b, c) => { });
+                events.once('evt', (a, b, c) => { check++; });
                 return events.emit('evt', [1, 2, 3]);
-            }, EMITS);
+            }, EMITS, LISTENERS +1);
+
+            if(isEvH) {
+                events.flush();
+                this.bench(`${name} once(name, [3]) when empty`, () => {
+                    events.once('evt', (a, b, c) => { check++; });
+                    return events.emit('evt', [1, 2, 3]);
+                }, EMITS, 1);
+            }
         }
 
         // if(isEvH) {
@@ -864,16 +894,16 @@ const benchmark = new BenchmarkWrapper((collector) => {
     // Existing benchmarks
     collector.runBenchmarks(EventHandler, 'EventHandler2');         // The new EventHandler being benchmarked here
 
-    EventHandler.optimize = false;
-    collector.runBenchmarks(EventHandler, 'EventHandler2 (deopt)'); // Always uses loops instead of compiled functions to see the loop path performance
-    collector.runBenchmarks(OldEventHandler, 'EventHandler');       // Old version for reference, which was only made to compete with DOM events.. so not a very high bar :P
+    // EventHandler.optimize = false;
+    // collector.runBenchmarks(EventHandler, 'EventHandler2 (deopt)'); // Always uses loops instead of compiled functions to see the loop path performance
+    // collector.runBenchmarks(OldEventHandler, 'EventHandler');       // Old version for reference, which was only made to compete with DOM events.. so not a very high bar :P
 
     collector.runBenchmarks(Tseep, 'Tseep');                        // Tseep is still the king here and is very consistent (though EventHandler2.quickEmit(ref) is beats it slightly thanks to avoiding Map lookup)
-    collector.runBenchmarks(TseepSafe, 'TseepSafe');                // Loop-based variant of Tseep, EventHandler2's loop variant beats it about 2x :D
+    // collector.runBenchmarks(TseepSafe, 'TseepSafe');                // Loop-based variant of Tseep, EventHandler2's loop variant beats it about 2x :D
 
-    collector.runBenchmarks(EventEmitter, 'EventEmitter1');         // Node.js built-in, today seems to be comparable to EE2 and EE3
-    collector.runBenchmarks(EventEmitter2, 'EventEmitter2');        // All EE1, EE2 and EE3 perform very similarly and are beaten by EventHandler2 & Tseep in every test case, even the loop variants, likely due to their internal structure
-    collector.runBenchmarks(EventEmitter3, 'EventEmitter3');
+    // collector.runBenchmarks(EventEmitter, 'EventEmitter1');         // Node.js built-in, today seems to be comparable to EE2 and EE3
+    // collector.runBenchmarks(EventEmitter2, 'EventEmitter2');        // All EE1, EE2 and EE3 perform very similarly and are beaten by EventHandler2 & Tseep in every test case, even the loop variants, likely due to their internal structure
+    // collector.runBenchmarks(EventEmitter3, 'EventEmitter3');
 
     // // The following libraries seem to no longer be maintained and have issues, so the benchmarks are more for education rather than practical use.
     // collector.runBenchmarks(EmitixEventEmitter, 'emitix');          // Emitix seems to be the slowest one despite claiming to be the fastest in their benchmarks. It is fast in one case only (no args).
