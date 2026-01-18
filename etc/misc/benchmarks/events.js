@@ -27,17 +27,22 @@ const { EventEmitter: EmitixEventEmitter } = require('emitix');
 const fastemitter = require('fastemitter');
 
 
-const EMITS = 100_000;
-const LISTENERS = 50;
+const EMITS = 5_000_000;
+const LISTENERS = 0;
 // const EMITS = 1;
 // const LISTENERS = 1_000_000;
-const TEST_ONCE = true;
+const TEST_ONCE = false;
 
 console.log(`\nListeners per event: ${LISTENERS}`);
 console.log(`Emit iterations:      ${EMITS}\n`);
 
-
-class EventHandler {
+/**
+ * TO-DOs:
+ * 
+ * - Minimize compilations by keeping stable listeners and volatile separate - loop over volatile listeners, compile for stable ones.
+ * - Optimize compiled code and it's hot path.
+ */
+class LS_EventEmitter {
     static REMOVE_LISTENER = Symbol("event-remove");
     static optimize = true;
 
@@ -70,7 +75,7 @@ class EventHandler {
         }
 
         emit(data) {
-            return EventHandler.emit(this, data);
+            return LS_EventEmitter.emit(this, data);
         }
 
         /**
@@ -82,7 +87,7 @@ class EventHandler {
             const listenersCount = listeners.length;
 
             // TODO: Unroll for large amounts of listeners
-            if (listenersCount < 2 || listenersCount >= 950 || EventHandler.optimize === false || this.deopt === true) return;
+            if (listenersCount < 2 || listenersCount >= 950 || LS_EventEmitter.optimize === false || this.deopt === true) return;
 
             const collectResults = this.results === true;
             const breakOnFalse = this.break === true;
@@ -147,7 +152,7 @@ class EventHandler {
             parts.push("})})");
 
             const factory = eval(parts.join(""));
-            this.compiled = factory(EventHandler.REMOVE_LISTENER, listeners, this);
+            this.compiled = factory(LS_EventEmitter.REMOVE_LISTENER, listeners, this);
         }
     }
 
@@ -155,8 +160,8 @@ class EventHandler {
      * @param {object} target Possibly deprecated; Binds the event handler methods to a target object.
      * @param {object} options Event handler options.
      */
-    constructor(target, options = {}) {
-        EventHandler.prepareHandler(this, options);
+    constructor(target, options = undefined) {
+        LS_EventEmitter.prepareHandler(this, options);
         if(target){
             target._events = this;
 
@@ -168,9 +173,9 @@ class EventHandler {
         }
     }
 
-    static prepareHandler(target, options = {}){
+    static prepareHandler(target, options = undefined){
         target.events = new Map();
-        if(options) target.eventOptions = options;
+        if(typeof options === "object") target.eventOptions = options;
     }
 
     /**
@@ -185,7 +190,7 @@ class EventHandler {
         let event = this.events.get(name);
 
         if(!event) {
-            event = new EventHandler.EventObject();
+            event = new LS_EventEmitter.EventObject();
             this.events.set(name, event);
         }
 
@@ -312,7 +317,7 @@ class EventHandler {
 
                     if (collectResults) returnData.push(result);
 
-                    if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                    if (listener.once || result === LS_EventEmitter.REMOVE_LISTENER) {
                         event.remove(i);
                     }
 
@@ -328,7 +333,7 @@ class EventHandler {
 
             let result = listener.callback(a, b, c, d, e);
 
-            if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+            if (listener.once || result === LS_EventEmitter.REMOVE_LISTENER) {
                 event.remove(0);
             }
 
@@ -354,7 +359,7 @@ class EventHandler {
                 let result = listener.callback(a, b, c, d, e);
                 if (collectResults) returnData.push(result);
 
-                if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                if (listener.once || result === LS_EventEmitter.REMOVE_LISTENER) {
                     event.remove(i);
                 }
 
@@ -368,7 +373,7 @@ class EventHandler {
                 let result = listener.callback.apply(null, data);
                 if (collectResults) returnData.push(result);
 
-                if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                if (listener.once || result === LS_EventEmitter.REMOVE_LISTENER) {
                     event.remove(i);
                 }
 
@@ -457,14 +462,14 @@ class EventHandler {
     }
 }
 
-class OldEventHandler {
+class OldLS_EventEmitter {
     static REMOVE_LISTENER = Symbol("event-remove");
 
     /**
      * @param {object} target Possibly deprecated; Binds the event handler methods to a target object.
      */
     constructor(target){
-        EventHandler.prepareHandler(this);
+        LS_EventEmitter.prepareHandler(this);
         if(target){
             target._events = this;
 
@@ -563,7 +568,7 @@ class OldEventHandler {
                 if (options.break && result === false) break;
                 if (options.results) returnData.push(result);
 
-                if (result === EventHandler.REMOVE_LISTENER) {
+                if (result === LS_EventEmitter.REMOVE_LISTENER) {
                     event.empty.push(listener.index);
                     event.listeners[listener.index] = null;
                     listener = null;
@@ -769,7 +774,7 @@ class BenchmarkWrapper {
     }
 
     runBenchmarks(impl, name) {
-        const isEvH = impl === EventHandler || impl === OldEventHandler;
+        const isEvH = impl === LS_EventEmitter || impl === OldLS_EventEmitter;
         const events = addListener(new impl());
 
         for(let i = 0; i < 7; i++) {
@@ -789,23 +794,23 @@ class BenchmarkWrapper {
             }
         }
 
-        this.bench(`${name} on,off,on`, () => {
-            const evt = (a, b, c) => { check++; };
-            events.on('evt2', evt);
-            events.emit('evt2', [1, 2, 3]);
-            events.off('evt2', evt);
-            events.emit('evt2', [1, 2, 3]);
-            events.on('evt2', evt);
-            events.emit('evt2', [1, 2, 3]);
-            events.off('evt2', evt);
-        }, EMITS, 2);
+        // this.bench(`${name} on,off,on`, () => {
+        //     const evt = (a, b, c) => { check++; };
+        //     events.on('evt2', evt);
+        //     events.emit('evt2', [1, 2, 3]);
+        //     events.off('evt2', evt);
+        //     events.emit('evt2', [1, 2, 3]);
+        //     events.on('evt2', evt);
+        //     events.emit('evt2', [1, 2, 3]);
+        //     events.off('evt2', evt);
+        // }, EMITS, 2);
 
-        this.bench(`${name} volatile events`, () => {
-            const evt = (a, b, c) => { check++; };
-            events.on('evt', evt);
-            events.off('evt', evt);
-            events.emit('evt', [1, 2, 3]);
-        }, EMITS);
+        // this.bench(`${name} volatile events`, () => {
+        //     const evt = (a, b, c) => { check++; };
+        //     events.on('evt', evt);
+        //     events.off('evt', evt);
+        //     events.emit('evt', [1, 2, 3]);
+        // }, EMITS);
 
         // Also test quickEmit and event ref
         if(isEvH) {
@@ -892,16 +897,16 @@ const benchmark = new BenchmarkWrapper((collector) => {
     });
 
     // Existing benchmarks
-    collector.runBenchmarks(EventHandler, 'EventHandler2');         // The new EventHandler being benchmarked here
+    collector.runBenchmarks(LS_EventEmitter, 'LS:EventEmitter');         // The new EventHandler being benchmarked here
 
-    // EventHandler.optimize = false;
-    // collector.runBenchmarks(EventHandler, 'EventHandler2 (deopt)'); // Always uses loops instead of compiled functions to see the loop path performance
-    // collector.runBenchmarks(OldEventHandler, 'EventHandler');       // Old version for reference, which was only made to compete with DOM events.. so not a very high bar :P
+    // LS_EventEmitter.optimize = false;
+    // collector.runBenchmarks(LS_EventEmitter, 'LS:EventEmitter (deopt)'); // Always uses loops instead of compiled functions to see the loop path performance
+    // collector.runBenchmarks(OldLS_EventEmitter, 'LS:EventEmitter (old)');       // Old version for reference, which was only made to compete with DOM events.. so not a very high bar :P
 
     collector.runBenchmarks(Tseep, 'Tseep');                        // Tseep is still the king here and is very consistent (though EventHandler2.quickEmit(ref) is beats it slightly thanks to avoiding Map lookup)
     // collector.runBenchmarks(TseepSafe, 'TseepSafe');                // Loop-based variant of Tseep, EventHandler2's loop variant beats it about 2x :D
 
-    // collector.runBenchmarks(EventEmitter, 'EventEmitter1');         // Node.js built-in, today seems to be comparable to EE2 and EE3
+    // collector.runBenchmarks(EventEmitter, 'EventEmitter1');         // Node.js built-in, today seems to actually be faster than both EE2 and EE3, so you may acually prefer EE1 over those.
     // collector.runBenchmarks(EventEmitter2, 'EventEmitter2');        // All EE1, EE2 and EE3 perform very similarly and are beaten by EventHandler2 & Tseep in every test case, even the loop variants, likely due to their internal structure
     // collector.runBenchmarks(EventEmitter3, 'EventEmitter3');
 
@@ -909,6 +914,7 @@ const benchmark = new BenchmarkWrapper((collector) => {
     // collector.runBenchmarks(EmitixEventEmitter, 'emitix');          // Emitix seems to be the slowest one despite claiming to be the fastest in their benchmarks. It is fast in one case only (no args).
     // collector.runBenchmarks(fastemitter, 'fastemitter');            // Fastemitter seems to be dropping calls (eg. only 500000 out of 1000000 get called), maybe it limits to 5 listeners without letting you know.
     // collector.runBenchmarks(Drip, 'Drip');                          // Drip seems to be crashing with < 7 listeners, and it also drops calls at > 7 listeners. Does it hard-code to 7 listeners?? That can't be right
+    console.log((new Tseep).emit.toString());
 });
 
 if (require.main === module) {
@@ -916,4 +922,4 @@ if (require.main === module) {
     console.log(check === EMITS * LISTENERS);
 }
 
-module.exports = { EventHandler };
+module.exports = { EventHandler: LS_EventEmitter };
