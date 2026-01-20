@@ -23,6 +23,8 @@ let
     { PathMatcher } = require("./router"),
     Units = require("./unit"),
 
+    { xxh3 } = require("@node-rs/xxhash");
+
     applications = new Map,
 
     // Backend object
@@ -47,6 +49,14 @@ class WebApp extends Units.App {
 
         this.enabled = null;
         this.ports = new Set;
+
+        new Units.EventHandler(this);
+        this.requestEvref = this._events.prepareEvent("request", {
+            results: true
+        });
+
+        // @experimental
+        this.cacheStoreEvref = this._events.prepareEvent("refreshed-cache");
 
         /**
          * @warning Do not use this set for routing - it is only a copy to allow for easy removal of domains.
@@ -280,15 +290,6 @@ class WebApp extends Units.App {
             }
         }
 
-        // FIXME: (Temporary) backend hooks
-        if (this.config.data.has("hook")) {
-            const hook = this.config.getBlock("hook");
-            const path = this.path + "/" + hook.get("path", String, "hook.js");
-
-            this.warn("Web application " + this.basename + " has loaded a hook script from " + path + ". This feature may be removed at any time.");
-            this.hook = require(path);
-        }
-
         if (this.config.data.has("ratelimit")) {
             const limit = this.config.getBlock("ratelimit").get("limit", Number, 1000); // 1000 Requests
             const interval = this.config.getBlock("ratelimit").get("interval", Number, 60000); // 1 Minute
@@ -374,9 +375,6 @@ class WebApp extends Units.App {
 
         this._browserRequirements = this.config.getBlock("browserSupport");
 
-        // TODO: Temporary
-        this.__postCompileHook = this.config.has("task-post-compile") ? this.config.getBlock("task-post-compile") : null;
-
         const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String);
         this._404 = _404 ? this.resolvePath(_404) : null;
     }
@@ -385,8 +383,12 @@ class WebApp extends Units.App {
         for (let domain of this.domains) {
             backend.domainRouter.remove(domain);
         }
-        applications.delete(this.path);
+
         // TODO: Proper cleanup, clear caches, destroy modules, ports, etc.
+
+        applications.delete(this.path);
+        this.events.clear();
+        super.destroy();
     }
 
     ws(options){
@@ -398,9 +400,18 @@ const server = new class WebServer extends Units.Module {
     constructor() {
         super({ name: "web", id: "akeno.web", version: "1.4.0-beta" });
 
-        this.registerType("WebApp", WebApp)
+        this.registerType("WebApp", WebApp);
 
         this.fileServer = new backend.helper.FileServer();
+
+        new Units.EventHandler(this);
+
+        this.requestEvref = this._events.prepareEvent("request", {
+            results: true
+        });
+
+        // @experimental
+        this.cacheStoreEvref = this._events.prepareEvent("refreshed-cache");
     }
 
     // This is the main handler/router for websites/webapps.
@@ -433,18 +444,6 @@ const server = new class WebServer extends Units.Module {
                     res.cork(() => {
                         res.writeHeader('Content-Type', this._browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(this._browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${this._browserRequirements.chrome && this._browserRequirements.chrome} and up, Firefox ${this._browserRequirements.firefox && this._browserRequirements.firefox} and up.`))
                     })
-                    return;
-                }
-            }
-
-            // FIXME: TEMPORARY SOLUTION: Backend hooks (basically application middleware)
-            if (app.hook && typeof app.hook.onRequest === "function") {
-                try {
-                    const result = await app.hook.onRequest(req, res);
-                    if (result === false) return;
-                } catch (error) {
-                    app.error("Error in onRequest hook for app \"" + app.path + "\": ", error);
-                    backend.helper.send(req, res, "<b>Internal Server Error - Incident log was saved.</b>", null, 500);
                     return;
                 }
             }
@@ -512,6 +511,33 @@ const server = new class WebServer extends Units.Module {
             const ACCEPTS_ENCODING = req.getHeader("accept-encoding") || "";
 
             let file = resolvedPath.full;
+
+            // Request event for addons
+            // TODO: Optimize
+            const evData = [req, res, app, resolvedPath];
+            const r1 = server.emit(server.requestEvref, evData);
+            const r2 = app.emit(app.requestEvref, evData);
+            if (r1 && r1.length > 0) {
+                for (const result of r1) {
+                    if (result && result.file) file = result.file;
+                    else if (result === false) {
+                        resolvedPath = app._404;
+                        file = app._404.full;
+                        errorCode = "404";
+                    }
+                }
+            }
+            if (r2 && r2.length > 0) {
+                for (const result of r2) {
+                    if (result && result.file) file = result.file;
+                    else if (result === false) {
+                        resolvedPath = app._404;
+                        file = app._404.full;
+                        errorCode = "404";
+                    }
+                }
+            }
+
             if (!(file = await files_try_async(file + ".html", file + "/index.html", file))) {
                 if (!app._404 || !app._404.full) {
                     return backend.helper.sendErrorPage(req, res, "404", "File \"" + url + "\" not found on this server.");
@@ -551,28 +577,20 @@ const server = new class WebServer extends Units.Module {
                 }
 
                 if (cacheEntry) {
-                    await server.fileServer.refresh(file, null, null, content);
+                    await server.fileServer.refresh(file, null, extension === "html" ? (path) => parser.needsUpdate(path) : null, content, app);
                 } else {
-                    await server.fileServer.refresh(file, { "Vary": "Accept-Encoding, Akeno-Content-Only" }, extension === "html" ? (path) => parser.needsUpdate(path) : null, content);
-                }
-            }
-
-            // FIXME: This is temporary and very wrongly implemented, will need a proper rework later
-            if(!cacheEntry && app.__postCompileHook && file.endsWith(app.__postCompileHook.attributes[0])) {
-                const copyLocation = app.__postCompileHook.get("copy", String);
-                if(copyLocation) {
-                    const postCompilePath = nodePath.join(app.path, copyLocation.replace("$FILE", nodePath.basename(file)).replace("$APP", app.basename));
-                    app.log("Post-compiled file being written to " + postCompilePath);
-
-                    fs.promises.writeFile(postCompilePath, server.fileServer.cache.get(file)[0][0], (err) => {
-                        if(err) {
-                            app.error("Failed to copy compiled file to " + postCompilePath + ": ", err)
-                        }
-                    });
+                    await server.fileServer.refresh(file, { "Vary": "Accept-Encoding, Akeno-Content-Only" }, extension === "html" ? (path) => parser.needsUpdate(path) : null, content, app);
                 }
             }
 
             server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedAlg);
+
+            if(!cacheEntry) {
+                // TODO: Optimize
+                const evData = [file, server.fileServer.cache.get(file), app];
+                this.emit(server.cacheStoreEvref, evData);
+                app.emit(app.cacheStoreEvref, evData);
+            }
 
         } catch (error) {
             const logTarget = app || server;
@@ -814,14 +832,6 @@ const server = new class WebServer extends Units.Module {
 }
 
 // Section: utils
-function files_try(...files) {
-    for (let file of files) {
-        if (fs.existsSync(file)) {
-            return file
-        }
-    }
-}
-
 async function files_try_async(...files) {
     for (let file of files) {
         try {
@@ -888,15 +898,6 @@ const ls_components = {
     ]
 };
 
-// Brings support for old browsers
-let esbuild;
-const TRANSPILE_EXTENSIONS = ['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css'];
-try {
-    esbuild = require("esbuild");
-} catch (e) {
-    esbuild = null;
-}
-
 function initParser(header) {
     parser = new backend.native.parser({
         header,
@@ -909,49 +910,25 @@ function initParser(header) {
             // Inline script compression
             // TODO: Handle script type
             if(parent === "script") {
-                if(!backend.compression.codeEnabled || !backend.esbuildEnabled) {
+                if(!backend.compression.codeEnabled) {
                     return true;
                 }
 
-                if(backend.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes("js")) {
-                    try {
-                        const result = esbuild.transformSync(text, {
-                            minify: backend.compression.codeEnabled,
-                            loader: 'js',
-                            format: 'iife',
-                            target: backend.esbuildTargets,
-                        });
-                        return result.code;
-                    } catch (e) {
-                        console.error("Esbuild JS transform error: ", e);
-                        return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.JS) : true;
-                    }
-                }
+                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "js", targets: backend.esbuildTargets, asBuffer: false, filePath: this?.data?.path, app: this?.data?.app }).result;
 
-                return backend.compression.code(text, backend.compression.format.JS);
+                // return backend.compression.code(text, backend.compression.format.JS);
             }
 
             // Inline style compression
             if (parent === "style") {
-                if(!backend.compression.codeEnabled || !backend.esbuildEnabled) {
+                if(!backend.compression.codeEnabled) {
                     return true;
                 }
 
-                if(backend.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes("css")) {
-                    try {
-                        const result = esbuild.transformSync(text, {
-                            minify: backend.compression.codeEnabled,
-                            loader: 'css',
-                            target: backend.esbuildTargets,
-                        });
-                        return result.code;
-                    } catch (e) {
-                        console.error("Esbuild CSS transform error: ", e);
-                        return backend.compression.codeEnabled ? backend.compression.code(text, backend.compression.format.CSS) : true;
-                    }
-                }
+                // TODO: Idea; could have a special attribute to support inline scss (editor won't like it though)
+                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "css", targets: backend.esbuildTargets, asBuffer: false, filePath: this?.data?.path, app: this?.data?.app }).result;
 
-                return backend.compression.code(text, backend.compression.format.CSS);
+                // return backend.compression.code(text, backend.compression.format.CSS);
             }
 
             // Parse with Atrium, text gets sent back to C++, blocks get handled via onBlock
@@ -1128,14 +1105,17 @@ function initParser(header) {
                                 const extension = attrib.slice(attrib.lastIndexOf('.') + 1);
 
                                 switch (extension) {
-                                    case "js":
+                                    case "js": case "mjs": case "cjs":
                                         this.write(`<script src="${link}${mtime}" ${components.join(" ")}${scriptAttributes}></script>`)
                                         break;
-                                    case "css":
+                                    case "css": case "scss":
                                         this.write(`<link rel=stylesheet href="${link}${mtime}" ${components.join(" ")}>`)
                                         break;
                                     case "json":
                                         this.write(`<script type="application/json" id="${components.length ? components.join(",") : attrib}">${fs.readFileSync(path)}</script>`)
+                                        break;
+                                    default:
+                                        this.data.app.warn("Error: Unknown file extension \"" + extension + "\" for file \"" + attrib + "\"");
                                         break;
                                 }
                             } else {
@@ -1266,6 +1246,11 @@ function initParser(header) {
                         this.data.app.warn("Failed to import (raw): " + item + " (" + path + ")", error);
                     }
                 }
+                break;
+
+            case "file-scope-key":
+                if (!this.data.file) break;
+                this.write(xxh3.xxh64(nodePath.dirname(this.data.file)).toString(16));
                 break;
 
             case "print":

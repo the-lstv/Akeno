@@ -5,18 +5,15 @@
 - Rework many parts, including the CLI, dynamic content, and the router
 - Write a proper documentation (https://lstv.space/docs/akeno is work in progress now)
 - Add a proper installation script (soon)
-- ! Stop relying on napi and use v8 directly
+- Stop relying on napi and use v8 directly
 - Allow modules to extend the CLI help menu
 
-## Known bugs as of 1.6.6-beta
-- [Critical] Empty html files crash the server (parser bug)
-- [Critical] Auto-closing tags are reading from OOB memory(?)
-- [Priority] HTML files without a template now have a bug where some @page directives are ignored
-
 ## New in 1.6.8-beta
+- A proper build pipeline and server events
 - Added a neat WebSocket authentication helper
 - Added more options to the WebSocket interface
 - WebSockets can now be easily enabled or disabled
+- Removed deprecated code
 
 ## New in 1.6.7-beta
 - Re-added WebSocket support and APIs
@@ -26,7 +23,7 @@
 - Added a FileBucket API for efficient and deduplicated file storing with lightning-fast reads (using xxHash and LMDB)
 - Fixed high memory and CPU usage while uploading large files
 - Upload processing experiments, including on-the-fly image compression/re-encoding before storage
-- Experimental build and fixes for Windows (versions before 1.6.7 did not work on Windows)
+- Experimental build and fixes for Windows (1.6.7 is the first version to run on Windows)
 - Unified error page helper
 - Added a systemd service setup command
 - Web apps can now set a ratelimit

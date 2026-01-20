@@ -2,14 +2,13 @@
   <img src="https://github.com/user-attachments/assets/a742cb99-7423-4be7-8e2c-f12b8324fae7" width="900"/>
 </p>
 
-Akeno is a really fast, modular server and web application runtime/framework written in C++ and JavaScript, primarily intended for:<br>
+Akeno is a really fast, modular server and web application runtime/framework written in JavaScript and C++, primarily intended for:<br>
 - Static and dynamic websites/apps
-- Realtime web apps of nearly any scale
+- Realtime web apps of any scale
 - Low-latency APIs
 - Local protocols, game servers, etc.
 - Database servers
-- Content delivery
-- User management
+- Content delivery networks (CDN)<br>
 
 It supports various configurations for HTTP, HTTPS, HTTP3 (experimental), and WebSocket protocols.<br>
 Thanks to its modularity, it can be easily expanded.
@@ -20,7 +19,7 @@ The most interesting part is its powerful webserver, which is highly optimized a
 
 ---
 ### Quick start
-Akeno requires Node.js 22+
+Akeno requires Node.js 23+
 <br>
 
 > [!NOTE]

@@ -47,12 +47,107 @@ const nullStringBuffer = Buffer.from("null");
 
 // Brings support for old browsers
 let esbuild;
-const TRANSPILE_EXTENSIONS = ['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css'];
+const TRANSPILE_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css', 'html', 'ls.html']);
 try {
     esbuild = require("esbuild");
 } catch (e) {
     esbuild = null;
 }
+
+const defaultTargets = ['chrome90', 'firefox90', 'safari15', 'edge90'];
+class ContentProcessor {
+    /**
+     * Internal build pipeline processor.
+     * @param {string|Buffer} content Content to process
+     * @param {string} ext Extension of the content
+     * @param {string[]} targets Target environments for transpilation
+     * @param {boolean} asBuffer Whether to return the result as a Buffer
+     * @param {string} filePath Path of the file being processed (optional)
+     * @param {Units.App|object} app Application context (optional)
+     * @returns {Promise<{result: string|Buffer, success: boolean, error?: Error}>} Processed content and success status
+     */
+    static async build(options) {
+        let originalBuffer = null, success = false;
+        if (Buffer.isBuffer(options.content)) {
+            originalBuffer = options.content;
+            options.content = options.content.toString('utf8');
+        }
+
+        if (!TRANSPILE_EXTENSIONS.has(options.ext)) return { result: originalBuffer || (options.asBuffer ? Buffer.from(options.content || '') : options.content), success };
+
+        // TODO:FIXME: This is very temporary and not well designed at all
+        // Should be more like 'middleware'
+        const evtData = [options];
+        const patch = await backend.emit(backend.buildHookEvref, evtData);
+        if (patch && patch.length > 0) {
+            for(let evtData of patch) {
+                if(typeof evtData === 'object' && evtData !== null) {
+                    Object.assign(options, evtData);
+                }
+            }
+        }
+
+        if(options.ext === "mjs" || options.ext === "cjs") {
+            options.ext = 'js';
+        }
+
+        if(esbuild && options.ext !== 'html') {
+            try {
+                const result = await esbuild.transform(options.content, {
+                    loader: options.ext,
+                    target: options.targets || defaultTargets,
+                    format: 'iife',
+                    minify: backend.mode !== backend.modes.DEVELOPMENT
+                });
+                return { result: options.asBuffer ? Buffer.from(result.code) : result.code, success: true };
+            } catch (e) {
+                console.error("Esbuild transpilation error:", e);
+                return { result: originalBuffer || (options.asBuffer ? Buffer.from(options.content || '') : options.content), success, error: e };
+            }
+        }
+
+        return { result: originalBuffer || (options.asBuffer ? Buffer.from(options.content || '') : options.content), success };
+    }
+
+    /**
+     * @deprecated
+     * Some build tools are async only (postcss), so we must preffer async.
+     * Annoyingly, our HTML parser is currently sync only, which means we need sync processing for inline tags.
+     */
+    static buildSync({ content, ext, targets = defaultTargets, asBuffer = true, filePath, app }) {
+        let originalBuffer = null, success = false;
+        if (Buffer.isBuffer(content)) {
+            originalBuffer = content;
+            content = content.toString('utf8');
+        }
+
+        if (!TRANSPILE_EXTENSIONS.has(ext)) return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success };
+
+        // Currently no support for hooks in sync mode
+
+        if(ext === "mjs" || ext === "cjs") {
+            ext = 'js';
+        }
+
+        if(esbuild && ext !== 'html') {
+            try {
+                const result = esbuild.transformSync(content, {
+                    loader: ext,
+                    target: targets || defaultTargets,
+                    format: 'iife',
+                    minify: backend.mode !== backend.modes.DEVELOPMENT
+                });
+                return { result: asBuffer ? Buffer.from(result.code) : result.code, success: true };
+            } catch (e) {
+                console.error("Esbuild transpilation error:", e);
+                return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success, error: e };
+            }
+        }
+
+        return { result: originalBuffer || (asBuffer ? Buffer.from(content || '') : content), success };
+    }
+}
+
 
 class CacheManager extends Units.Server {
     /**
@@ -270,12 +365,16 @@ class CacheManager extends Units.Server {
             entry[0][5] = backend.mime.getExtension(mimeType)[0] || '';
             entry[0][6] = mimeType;
 
-            if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes(entry[0][5])) {
-                const originalContent = content;
-                content = await this.transpile(content, entry[0][5]);
+            if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.has(entry[0][5])) {
+                const result = await this.transpile(content, entry[0][5], key);
+                if(result.success) {
+                    content = result.result;
 
-                if (content !== originalContent && ['ts', 'tsx', 'jsx'].includes(entry[0][5])) {
-                    mimeType = 'text/javascript';
+                    if (['ts', 'tsx', 'jsx'].includes(entry[0][5])) {
+                        mimeType = 'text/javascript';
+                    } else if (['scss', 'sass'].includes(entry[0][5])) {
+                        mimeType = 'text/css';
+                    }
                 }
             }
         }
@@ -309,31 +408,9 @@ class CacheManager extends Units.Server {
      * @param {string} ext 
      * @returns {Promise<string|Buffer>}
      */
-    async transpile(content, ext) {
-        if (!this.esbuildEnabled || !esbuild) return content;
-
-        if(TRANSPILE_EXTENSIONS.indexOf(ext) === -1) return content;
-        if(ext === "mjs" || ext === "cjs") {
-            ext = 'js';
-        }
-
-        let code = content;
-        if (Buffer.isBuffer(content)) {
-            code = content.toString('utf8');
-        }
-
-        try {
-            const result = await esbuild.transform(code, {
-                loader: ext,
-                target: this.esbuildTargets,
-                format: 'iife',
-                minify: backend.mode !== backend.modes.DEVELOPMENT
-            });
-            return Buffer.from(result.code);
-        } catch (e) {
-            console.error("Esbuild transpilation error:", e);
-            return content;
-        }
+    async transpile(content, ext, filePath, app) {
+        if (!this.esbuildEnabled) return { result: content, success: false };
+        return await ContentProcessor.build({ content, ext, targets: this.esbuildTargets, asBuffer: true, filePath, app });
     }
 }
 
@@ -433,17 +510,17 @@ class FileServer extends CacheManager {
      * (Re)load a file from disk into the cache under `key===resolvedPath`.
      * This is where we do fs.existsSync, fs.readFile, statSync, etc.
      */
-    async refresh(rawPath, headers = null, cacheBreaker = null, content = null) {
-        const resolved = this.resolvePath(rawPath);
-        if (!fs.existsSync(resolved)) {
-            this.cache.delete(resolved);
+    async refresh(rawPath, headers = null, cacheBreaker = null, content = null, app = null) {
+        const resolvedPath = this.resolvePath(rawPath);
+        if (!fs.existsSync(resolvedPath)) {
+            this.cache.delete(resolvedPath);
             return false;
         }
 
-        let file = this.cache.get(resolved);
+        let file = this.cache.get(resolvedPath);
         if (!file) {
             file = [[]];
-            this.cache.set(resolved, file);
+            this.cache.set(resolvedPath, file);
         } else {
             // Clear out any old compressed variants
             for (let i = 1; i < file.length; i++) {
@@ -452,29 +529,33 @@ class FileServer extends CacheManager {
         }
 
         // figure extension/mime
-        const ext = nodePath.extname(resolved).slice(1).toLowerCase();
-        const mimeType = backend.mime.getType(ext) || 'application/octet-stream';
+        const ext = nodePath.extname(resolvedPath).slice(1).toLowerCase();
+        let mimeType = backend.mime.getType(ext) || 'application/octet-stream';
 
         // read or delegate to processor
         if (content == null) {
             content = this.processor
-                ? await this.processor(resolved)
+                ? await this.processor(resolvedPath)
                 : await fs.promises.readFile(
-                    resolved,
+                    resolvedPath,
                     (ext === 'js' || ext === 'css') ? 'utf8' : null
                 );
         }
 
-        if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.includes(ext)) {
-            const originalContent = content;
-            content = await this.transpile(content, ext);
+        if (this.esbuildEnabled && esbuild && TRANSPILE_EXTENSIONS.has(ext)) {
+            const result = await this.transpile(content, ext, resolvedPath, app);
+            if(result.success) {
+                content = result.result;
 
-            if (content !== originalContent && ['ts', 'tsx', 'jsx'].includes(ext)) {
-                mimeType = 'text/javascript';
+                if (['ts', 'tsx', 'jsx'].includes(ext)) {
+                    mimeType = 'text/javascript';
+                } else if (['scss', 'sass'].includes(ext)) {
+                    mimeType = 'text/css';
+                }
             }
         }
 
-        const stats = fs.statSync(resolved);
+        const stats = fs.statSync(resolvedPath);
 
         // store core
         file[0][0] = content;
@@ -497,7 +578,7 @@ class FileServer extends CacheManager {
         }
         file[0][5] = ext;            // extension
         file[0][6] = mimeType;       // mimeType
-        file[0][7] = resolved;       // store the actual key
+        file[0][7] = resolvedPath;       // store the actual key
         file[0][8] = now;            // lastAccessed
         return true;
     }
@@ -569,6 +650,9 @@ class FileServer extends CacheManager {
 
 
 module.exports = {
+    ContentProcessor,
+    TRANSPILE_EXTENSIONS,
+
     /**
      * Returns the path segments of the request.
      * @param {object} req - The request object.

@@ -120,7 +120,7 @@ struct FileCache {
     std::string content;
 
     // FIXME: Would be safer to use path
-    FileCache* templateCache = nullptr;
+    std::shared_ptr<FileCache> templateCache = nullptr;
     std::filesystem::file_time_type templateLastModified;
 
     FileCache() = default;
@@ -143,18 +143,18 @@ struct HTMLParsingPosition {
     const char* chunk_end;
     const char* value_start;
     std::string* output;
-    FileCache* cacheEntry;
+    std::shared_ptr<FileCache> cacheEntry;
 
     HTMLParsingPosition() 
         : it(nullptr), chunk_end(nullptr), value_start(nullptr), output(nullptr), cacheEntry(nullptr) {}
 
-    HTMLParsingPosition(const char* it, const char* chunk_end, const char* value_start, std::string* output = nullptr, FileCache* cacheEntry = nullptr) 
-        : it(it), chunk_end(chunk_end), value_start(value_start), output(output), cacheEntry(cacheEntry) {}
+    HTMLParsingPosition(const char* it, const char* chunk_end, const char* value_start, std::string* output = nullptr, std::shared_ptr<FileCache> cacheEntry = nullptr) 
+        : it(it), chunk_end(chunk_end), value_start(value_start), output(output), cacheEntry(std::move(cacheEntry)) {}
 };
 
 
 // Global cache map
-static std::unordered_map<std::string, FileCache> fileCache;
+static std::unordered_map<std::string, std::shared_ptr<FileCache>> fileCache;
 
 class HTMLParsingContext {
 public:
@@ -194,26 +194,27 @@ public:
             return true;
         }
 
+        if (!std::filesystem::exists(filePath)) return true;
         auto fileModTime = std::filesystem::last_write_time(filePath);
-        if (cacheIt->second.lastModified != fileModTime) {
+        if (cacheIt->second->lastModified != fileModTime) {
             return true;
         }
-        
-        
+
         // Check template file modification time if it exists
         // NOTE: Make sure it gets handled if the template gets deleted
-        if (cacheIt->second.templateCache != nullptr) {
-            auto templateModTime = std::filesystem::last_write_time(cacheIt->second.templateCache->path);
-            if (cacheIt->second.templateLastModified != templateModTime) {
+        if (cacheIt->second->templateCache != nullptr) {
+            const auto& tmpl = cacheIt->second->templateCache;
+            if (!std::filesystem::exists(tmpl->path)) return true;
+            auto templateModTime = std::filesystem::last_write_time(tmpl->path);
+            if (cacheIt->second->templateLastModified != templateModTime) {
                 return true;
             }
         }
-
         return false;
     }
 
     // TODO: This *needs* a better implementation
-    std::string exportCopy(const FileCache *cacheEntry) {
+    std::string exportCopy(const std::shared_ptr<FileCache>& cacheEntry) {
         if (!cacheEntry) return "";
 
         // If no template, just wrap the (possibly trimmed) file content
@@ -231,7 +232,7 @@ public:
         }
 
         // 2. Merge extracted head into the template's <head>
-        const auto *tmpl = cacheEntry->templateCache;
+        const auto *tmpl = cacheEntry->templateCache.get();
         std::string combinedTemplateContent = tmpl->content;
 
         size_t tmplHeadOpen2 = std::string::npos;
@@ -281,37 +282,39 @@ public:
 
     FileCache& fromFile(std::string filePath, void* userData = nullptr, std::string rootPath = "", bool checkCache = true) {
         filePath = std::filesystem::path(filePath).lexically_normal().string();
+        if (!std::filesystem::exists(filePath)) {
+            throw std::runtime_error("Unable to open file: " + filePath);
+        }
         auto fileModTime = std::filesystem::last_write_time(filePath);
-
         bool contentCached = true;
         bool templateCached = true;
 
         if (checkCache) {
             auto cacheIt = fileCache.find(filePath);
-            contentCached = cacheIt != fileCache.end() && cacheIt->second.lastModified == fileModTime;
+            contentCached = cacheIt != fileCache.end() && cacheIt->second->lastModified == fileModTime;
 
-            if (contentCached && cacheIt->second.templateCache != nullptr) {
-                auto templateModTime = std::filesystem::last_write_time(cacheIt->second.templateCache->path);
-                if (cacheIt->second.templateLastModified != templateModTime) {
-                    cacheIt->second.templateLastModified = templateModTime;
+            if (contentCached && cacheIt->second->templateCache != nullptr) {
+                auto templateModTime = std::filesystem::last_write_time(cacheIt->second->templateCache->path);
+                if (cacheIt->second->templateLastModified != templateModTime) {
+                    cacheIt->second->templateLastModified = templateModTime;
                     templateCached = false;
 
-                    // Only update the template cache
-                    if(contentCached) {
-                        fromFile(cacheIt->second.templateCache->path, userData, rootPath);
-                        return cacheIt->second;
+                    if (contentCached) {
+                        fromFile(cacheIt->second->templateCache->path, userData, rootPath);
+                        return *cacheIt->second;
                     }
                 }
             }
 
             if (contentCached && templateCached) {
-                return cacheIt->second;
+                cacheEntry = cacheIt->second;
+                return *cacheIt->second;
             }
         }
 
-        FileCache newCacheEntry(filePath, fileModTime);
-        auto [insertIt, inserted] = fileCache.emplace(filePath, std::move(newCacheEntry));
-        cacheEntry = &insertIt->second;
+        auto newEntry = std::make_shared<FileCache>(filePath, fileModTime);
+        auto [insertIt, inserted] = fileCache.emplace(filePath, newEntry);
+        cacheEntry = insertIt->second;
 
         if (!inserted) {
             cacheEntry->content.clear();
@@ -326,6 +329,11 @@ public:
         std::streamsize size = file.tellg();
         if (size > MAX_FILE_SIZE) {
             throw std::runtime_error("File size exceeds the maximum limit of " + std::to_string(MAX_FILE_SIZE) + " bytes.");
+        }
+
+        if(size == 0) {
+            cacheEntry->content.clear();
+            return *cacheEntry;
         }
 
         file.seekg(0, std::ios::beg);
@@ -361,9 +369,10 @@ public:
             options.onEnd(userData);
         }
 
-        // if(options.buffer) {
-        //     output->append("</html>");
-        // }
+        if (options.buffer && output && !ls_inline_script.empty()) {
+            output->insert(0, "<script>\n" + ls_inline_script + "</script>\n");
+            ls_inline_script.clear();
+        }
 
         resetState();
     }
@@ -392,6 +401,30 @@ public:
         }
 
         for (; it < chunk_end; ++it) {
+
+            if (ls_template_capture) {
+                constexpr std::string_view closing = "</ls::template>";
+                std::string_view remaining(it, chunk_end - it);
+                auto pos = remaining.find(closing);
+                if (pos == std::string_view::npos) {
+                    ls_template_buffer.append(remaining);
+                    it = chunk_end;
+                    break;
+                }
+                ls_template_buffer.append(remaining.substr(0, pos));
+                it += pos + closing.size() - 1;
+
+                ls_template_capture = false;
+                if (!ls_template_id.empty()) {
+                    ls_inline_script.append(buildLsTemplateFunction(ls_template_id, ls_template_buffer));
+                }
+                ls_template_buffer.clear();
+                ls_template_id.clear();
+
+                state = TEXT;
+                value_start = it + 1;
+                continue;
+            }
 
             // Match strings
             if(string_char != 0 && *it != string_char) {
@@ -449,7 +482,7 @@ public:
                         continue;
                     }
 
-                    if (*it == '{' && (it + 1) < chunk_end && it[1] == '{' && (it == output->data() || it[-1] != '\\')) {
+                    if (*it == '{' && (it + 1) < chunk_end && it[1] == '{' && (it == buffer.data() || it[-1] != '\\')) {
                         pushText(*output);
 
                         state = INLINE_VALUE;
@@ -500,14 +533,15 @@ public:
 
                     if (*it == '>' || *it == '/' || std::isspace(static_cast<unsigned char>(*it))) {
 
-                        
                         if(!end_tag) {
-                            
                             // Handle opening tags
-
                             std::string_view tag(value_start, it - value_start);
 
+                            ls_template_tag = is_template && template_scope == "ls" && tag == "template";
                             render_element = !is_template && tag != "html" && tag != "!DOCTYPE";
+                            if (ls_template_tag) {
+                                render_element = false;
+                            }
 
                             if (options.onOpeningTag && render_element) {
                                 options.onOpeningTag(*output, tagStack, tag, userData);
@@ -594,7 +628,7 @@ public:
                     break;
 
                 case ATTRIBUTE: {
-                    if(!render_element) {
+                    if(!render_element && !ls_template_tag) {
                         if(*it == '>') {
                             if (it < chunk_end) {
                                 value_start = it + 1;
@@ -608,28 +642,40 @@ public:
                     bool isInline = *it == '{' && (it + 1) < chunk_end && it[1] == '{';
 
                     if(*it == '=' || *it == '>' || *it == '/' || std::isspace(static_cast<unsigned char>(*it)) || isInline) {
-                        if(options.buffer && (it > value_start)){
-                            // Handle attributes
-
+                        if(it > value_start){
                             std::string_view attribute_view(value_start, it - value_start);
-                            
-                            if (attribute_view[0] == '#') {
-                                output->append(" id=\"");
-                                output->append(attribute_view.substr(1));
-                                output->append("\"");
-                            } else if (attribute_view[0] == '.') {
-                                if(!class_buffer.empty()) {
-                                    class_buffer.append(" ");
+                            if(attribute_view.empty()) {
+                                value_start = it + 1;
+                                space_broken = false;
+                                break;
+                            }
+
+                            if (ls_template_tag) {
+                                if (attribute_view[0] == '#') {
+                                    ls_template_id = std::string(attribute_view.substr(1));
+                                } else {
+                                    ls_template_attr_name = std::string(attribute_view);
                                 }
-                                
-                                std::string attribute_str(attribute_view.substr(1));
-                                std::replace(attribute_str.begin(), attribute_str.end(), '.', ' ');
-                                class_buffer.append(attribute_str);
-                            } else if (attribute_view == "class") {
-                                flag_appendToClass = true;
-                            } else {
-                                output->append(" ");
-                                output->append(attribute_view);
+                            } else if(options.buffer){
+                                // Handle attributes
+                                if (attribute_view[0] == '#') {
+                                    output->append(" id=\"");
+                                    output->append(attribute_view.substr(1));
+                                    output->append("\"");
+                                } else if (attribute_view[0] == '.') {
+                                    if(!class_buffer.empty()) {
+                                        class_buffer.append(" ");
+                                    }
+
+                                    std::string attribute_str(attribute_view.substr(1));
+                                    std::replace(attribute_str.begin(), attribute_str.end(), '.', ' ');
+                                    class_buffer.append(attribute_str);
+                                } else if (attribute_view == "class") {
+                                    flag_appendToClass = true;
+                                } else {
+                                    output->append(" ");
+                                    output->append(attribute_view);
+                                }
                             }
                         }
 
@@ -641,8 +687,8 @@ public:
                         }
                         
                         if(isInline) {
-                            it++;
-                            value_start = it + 1;
+							it++;
+							value_start = it + 1;
 
                             while(it < chunk_end && !(*it == '}' && (it + 1) < chunk_end && it[1] == '}')) ++it;
 
@@ -701,12 +747,14 @@ public:
 
                     if(end) {
                         if(it > value_start){
-
-                            // Handle attribute values
-
                             std::string_view value = std::string_view(value_start, it - value_start);
 
-                            if(flag_appendToClass) {
+                            if (ls_template_tag) {
+                                if (ls_template_attr_name == "id") {
+                                    ls_template_id = std::string(value);
+                                }
+                                ls_template_attr_name.clear();
+                            } else if(flag_appendToClass) {
                                 if(!class_buffer.empty()) {
                                     class_buffer.append(" ");
                                 }
@@ -774,7 +822,7 @@ public:
                                 FileCache& templateCacheEntry = fromFile(templateFile, userData, rootPath);
                                 restorePosition(originalPosition);
                                 cacheEntry->templateLastModified = templateCacheEntry.lastModified;
-                                cacheEntry->templateCache = &templateCacheEntry;
+                                cacheEntry->templateCache = fileCache[templateCacheEntry.path];
                             } catch (const std::filesystem::filesystem_error& e) {
                                 std::cerr << "Error accessing template file: " << e.what() << std::endl;
                             }
@@ -860,7 +908,7 @@ private:
     std::string_view buffer;
     std::string rootPath;
 
-    FileCache* cacheEntry = nullptr;
+    std::shared_ptr<FileCache> cacheEntry = nullptr;
 
     void pushText(std::string& buffer) {
         if(options.onText && !(it - value_start == 0)){
@@ -880,10 +928,26 @@ private:
 
     HTMLParserOptions& options;
 
+    bool ls_template_tag = false;
+    bool ls_template_capture = false;
+    std::string ls_template_id;
+    std::string ls_template_attr_name;
+    std::string ls_template_buffer;
+    std::string ls_inline_script;
+
     void _endTag() {
         state = is_raw? RAW_ELEMENT: TEXT;
 
-        if(is_template) {
+        if (ls_template_tag) {
+            ls_template_tag = false;
+            ls_template_capture = true;
+            is_template = false;
+            template_scope = std::string_view();
+            value_start = it + 1;
+            return;
+        }
+
+        if (is_template) {
             // TODO: This is temporary
             std::string_view current_template_scope = this->template_scope;
             template_scope = std::string_view();
@@ -896,7 +960,6 @@ private:
                 // TODO:
                 output->append("#template ").append(current_template_scope).append("\n");
             }
-
             return;
         }
 
@@ -948,11 +1011,15 @@ private:
         template_scope = std::string_view();
         inside_head = false;
 
+        ls_template_tag = false;
+        ls_template_capture = false;
+        ls_template_id.clear();
+        ls_template_attr_name.clear();
+        ls_template_buffer.clear();
+        ls_inline_script.clear();
         reset = true;
     }
 
-    // Just used to keep the current buffer alive
-    // std::shared_ptr<std::vector<char>> currentBuffer = nullptr;
 
     HTMLParsingPosition storePosition() {
         return HTMLParsingPosition(it, chunk_end, value_start, output, cacheEntry);
@@ -964,5 +1031,227 @@ private:
         value_start = pos.value_start;
         output = pos.output;
         cacheEntry = pos.cacheEntry;
+    }
+
+    std::string jsEscape(std::string_view s) {
+        std::string out;
+        out.reserve(s.size() + 8);
+        for (char c : s) {
+            switch (c) {
+                case '\\': out += "\\\\"; break;
+                case '"':  out += "\\\""; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default: out += c; break;
+            }
+        }
+        return out;
+    }
+
+    std::string normalizeDataExpr(std::string_view s) {
+        std::string_view t = trim(s);
+        if (t.empty()) return "data";
+        if (t.rfind("data.", 0) == 0 || t.find_first_of(".(") != std::string_view::npos) {
+            return std::string(t);
+        }
+        return "data." + std::string(t);
+    }
+
+    std::string buildLsTemplateFunction(const std::string& id, std::string_view content) {
+        if (id.empty()) return "";
+
+        std::string js = "function " + id + "(data){\n";
+        int idx = 0;
+        std::string rootVar;
+        std::vector<std::string> stack;
+        std::vector<std::pair<std::string, std::string>> exports;
+
+        auto appendToParent = [&](const std::string& var) {
+            if (!stack.empty()) {
+                js += stack.back() + ".appendChild(" + var + ");\n";
+            } else if (rootVar.empty()) {
+                rootVar = var;
+            }
+        };
+
+        auto emitTextNode = [&](std::string_view txt) {
+            if (txt.empty()) return;
+            bool all_ws = true;
+            for (char c : txt) { if (!std::isspace(static_cast<unsigned char>(c))) { all_ws = false; break; } }
+            if (all_ws) return;
+
+            std::string v = "e" + std::to_string(idx++);
+            js += "var " + v + "=document.createTextNode(\"" + jsEscape(txt) + "\");\n";
+            appendToParent(v);
+        };
+
+        auto emitDynamic = [&](std::string_view expr) {
+            if (stack.empty()) return;
+            js += stack.back() + ".appendChild(LS.__dynamicInnerToNode(" + normalizeDataExpr(expr) + "));\n";
+        };
+
+        auto emitReactive = [&](std::string_view expr) {
+            if (stack.empty()) return;
+            std::string v = "e" + std::to_string(idx++);
+            std::string name = std::string(trim(expr));
+            js += "var " + v + "=document.createElement(\"span\");\n";
+            js += "LS.Reactive.bindElement(" + v + ", \"" + jsEscape(name) + "\");\n";
+            appendToParent(v);
+        };
+
+        auto emitText = [&](std::string_view txt) {
+            size_t p = 0;
+            while (p < txt.size()) {
+                size_t open = txt.find("{{", p);
+                if (open == std::string_view::npos) {
+                    emitTextNode(txt.substr(p));
+                    break;
+                }
+                bool hash = (open > 0 && txt[open - 1] == '#');
+                size_t plain_end = hash ? open - 1 : open;
+                if (plain_end > p) {
+                    emitTextNode(txt.substr(p, plain_end - p));
+                }
+                size_t close = txt.find("}}", open + 2);
+                if (close == std::string_view::npos) {
+                    emitTextNode(txt.substr(open));
+                    break;
+                }
+                std::string_view expr = txt.substr(open + 2, close - (open + 2));
+                if (hash) {
+                    emitDynamic(expr);
+                } else {
+                    emitReactive(expr);
+                }
+                p = close + 2;
+            }
+        };
+
+        size_t i = 0;
+        while (i < content.size()) {
+            if (content[i] != '<') {
+                size_t next = content.find('<', i);
+                if (next == std::string_view::npos) next = content.size();
+                emitText(content.substr(i, next - i));
+                i = next;
+                continue;
+            }
+
+            if (content.compare(i, 4, "<!--") == 0) {
+                size_t end = content.find("-->", i + 4);
+                i = (end == std::string_view::npos) ? content.size() : end + 3;
+                continue;
+            }
+
+            if (i + 1 < content.size() && content[i + 1] == '/') {
+                size_t end = content.find('>', i + 2);
+                if (end == std::string_view::npos) break;
+                if (!stack.empty()) stack.pop_back();
+                i = end + 1;
+                continue;
+            }
+
+            size_t name_start = i + 1;
+            size_t name_end = name_start;
+            while (name_end < content.size() && !std::isspace(static_cast<unsigned char>(content[name_end])) && content[name_end] != '>' && content[name_end] != '/') {
+                ++name_end;
+            }
+            std::string tag = std::string(content.substr(name_start, name_end - name_start));
+
+            std::string idAttr;
+            std::string className;
+            std::string exportName;
+            std::vector<std::pair<std::string, std::string>> attrs;
+
+            size_t p = name_end;
+            bool selfClosing = false;
+
+            while (p < content.size()) {
+                while (p < content.size() && std::isspace(static_cast<unsigned char>(content[p]))) ++p;
+                if (p >= content.size()) break;
+                if (content[p] == '>') { ++p; break; }
+                if (content[p] == '/' && p + 1 < content.size() && content[p + 1] == '>') {
+                    selfClosing = true; p += 2; break;
+                }
+
+                if (content[p] == '.' || content[p] == '#') {
+                    char kind = content[p++];
+                    size_t start = p;
+                    while (p < content.size() && !std::isspace(static_cast<unsigned char>(content[p])) && content[p] != '>' && content[p] != '/') ++p;
+                    std::string token = std::string(content.substr(start, p - start));
+                    if (kind == '.') {
+                        std::replace(token.begin(), token.end(), '.', ' ');
+                        if (!className.empty()) className += " ";
+                        className += token;
+                    } else {
+                        idAttr = token;
+                    }
+                    continue;
+                }
+
+                size_t attr_start = p;
+                while (p < content.size() && !std::isspace(static_cast<unsigned char>(content[p])) && content[p] != '=' && content[p] != '>' && content[p] != '/') ++p;
+                std::string attrName = std::string(content.substr(attr_start, p - attr_start));
+
+                while (p < content.size() && std::isspace(static_cast<unsigned char>(content[p]))) ++p;
+                std::string attrValue;
+                if (p < content.size() && content[p] == '=') {
+                    ++p;
+                    while (p < content.size() && std::isspace(static_cast<unsigned char>(content[p]))) ++p;
+                    if (p < content.size() && (content[p] == '"' || content[p] == '\'')) {
+                        char q = content[p++];
+                        size_t vstart = p;
+                        while (p < content.size() && content[p] != q) ++p;
+                        attrValue = std::string(content.substr(vstart, p - vstart));
+                        if (p < content.size()) ++p;
+                    } else {
+                        size_t vstart = p;
+                        while (p < content.size() && !std::isspace(static_cast<unsigned char>(content[p])) && content[p] != '>' && content[p] != '/') ++p;
+                        attrValue = std::string(content.substr(vstart, p - vstart));
+                    }
+                }
+
+                if (attrName == "class") {
+                    if (!className.empty()) className += " ";
+                    className += attrValue;
+                } else if (attrName == "id") {
+                    idAttr = attrValue;
+                } else if (attrName == "export") {
+                    exportName = attrValue;
+                } else if (!attrName.empty()) {
+                    attrs.emplace_back(attrName, attrValue);
+                }
+            }
+
+            std::string var = "e" + std::to_string(idx++);
+            js += "var " + var + "=document.createElement(\"" + jsEscape(tag) + "\");";
+            if (!idAttr.empty()) {
+                js += var + ".id=\"" + jsEscape(idAttr) + "\";";
+            }
+            if (!className.empty()) {
+                js += var + ".className=\"" + jsEscape(className) + "\";";
+            }
+            for (auto& kv : attrs) {
+                js += var + ".setAttribute(\"" + jsEscape(kv.first) + "\", \"" + jsEscape(kv.second) + "\");";
+            }
+
+            appendToParent(var);
+            if (!exportName.empty()) {
+                exports.emplace_back(exportName, var);
+            }
+            if (!selfClosing) {
+                stack.push_back(var);
+            }
+            i = p;
+        }
+
+        if (rootVar.empty()) rootVar = "null";
+        js += "var __rootValue = " + rootVar + ";\nreturn { root: __rootValue";
+        for (auto& ex : exports) {
+            js += ", " + ex.first + ": " + ex.second;
+        }
+        js += " };\n}\n";
+        return js;
     }
 };

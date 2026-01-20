@@ -294,6 +294,93 @@ class Version {
                 throw new Error(`Invalid operator: ${operator}`);
         }
     }
+
+    static isValid(versionString){
+        if(typeof versionString !== 'string' || versionString.length === 0){
+            return false;
+        }
+
+        let i = 0;
+        const len = versionString.length;
+        let dotCount = 0;
+        let hasDigitInSegment = false;
+
+        while(i < len){
+            const char = versionString.charCodeAt(i);
+            
+            if(char >= 48 && char <= 57){ // 0-9
+                hasDigitInSegment = true;
+                i++;
+            } else if(char === 46){ // .
+                if(!hasDigitInSegment || dotCount >= 2){
+                    return false;
+                }
+                dotCount++;
+                hasDigitInSegment = false;
+                i++;
+            } else if(char === 45 || char === 43){ // - or +
+                break; // Start of pre-release or build metadata
+            } else if((char === 120 || char === 88) && !hasDigitInSegment){ // x or X (wildcard)
+                hasDigitInSegment = true;
+                i++;
+            } else if(char === 42){ // * (wildcard)
+                hasDigitInSegment = true;
+                i++;
+            } else {
+                return false;
+            }
+        }
+
+        if(!hasDigitInSegment){
+            return false;
+        }
+
+        if(i < len && versionString.charCodeAt(i) === 45){
+            i++;
+            if(i >= len) return false;
+            
+            hasDigitInSegment = false;
+            while(i < len){
+                const char = versionString.charCodeAt(i);
+                if((char >= 48 && char <= 57) || // 0-9
+                   (char >= 65 && char <= 90) || // A-Z
+                   (char >= 97 && char <= 122) || // a-z
+                   char === 45 || char === 46){ // - or .
+                    hasDigitInSegment = true;
+                    i++;
+                } else if(char === 43){ // +
+                    break;
+                } else {
+                    return false;
+                }
+            }
+            
+            if(!hasDigitInSegment) return false;
+        }
+
+        if(i < len && versionString.charCodeAt(i) === 43){
+            i++;
+            if(i >= len) return false;
+            
+            hasDigitInSegment = false;
+            while(i < len){
+                const char = versionString.charCodeAt(i);
+                if((char >= 48 && char <= 57) || // 0-9
+                   (char >= 65 && char <= 90) || // A-Z
+                   (char >= 97 && char <= 122) || // a-z
+                   char === 45 || char === 46){ // - or .
+                    hasDigitInSegment = true;
+                    i++;
+                } else {
+                    return false;
+                }
+            }
+            
+            if(!hasDigitInSegment) return false;
+        }
+
+        return i === len;
+    }
 }
 
 class IndexedEnum {
@@ -353,6 +440,12 @@ const Manager = {
         backendInstance.name = "core";
         backendInstance.id = "akeno";
 
+        new EventHandler(backendInstance);
+        backendInstance.buildHookEvref = backendInstance._events.prepareEvent("build-hook", {
+            await: true,
+            results: true
+        });
+
         backend = backendInstance;
         module.exports.backend = backend;
 
@@ -360,7 +453,7 @@ const Manager = {
     },
 
     refreshAddons(){
-        const paths = [backend.PATH + "./addons", ...(backend.config.getBlock("server").get("modules") || [])];
+        const paths = [backend.PATH + "./addons", ...(backend.config.getBlock("server").get("modules", Array) || [])];
 
         allow_unrestricted_execution = backend.config.getBlock("modules").get("allow_unrestricted_execution", Boolean, false);
 
@@ -369,17 +462,20 @@ const Manager = {
         }
 
         for (const path of paths) {
-            backend.verbose("Scanning for addons: " + path);
+            // First try to treat the path itself as an addon, then scan for addons inside
+            if(Manager.loadAddon(path) === null){
+                backend.verbose("Scanning for addons: " + path);
 
-            const directories = fs.readdirSync(path, { withFileTypes: true })
-                .filter(dirent => dirent.isDirectory())
-                .map(dirent => dirent.name);
+                const directories = fs.readdirSync(path, { withFileTypes: true })
+                    .filter(dirent => dirent.isDirectory())
+                    .map(dirent => dirent.name);
 
-            for (const dir of directories) {
-                try {
-                    Manager.loadAddon(path + "/" + dir);
-                } catch (error) {
-                    backend.error(`Failed to load addon ${dir} from ${path}:`, error);
+                for (const dir of directories) {
+                    try {
+                        Manager.loadAddon(path + "/" + dir);
+                    } catch (error) {
+                        backend.error(`Failed to load addon ${dir} from ${path}:`, error);
+                    }
                 }
             }
         }
@@ -461,6 +557,7 @@ const Manager = {
             }
             return addon;
         }
+        return null;
     },
 
     loadModule(path) {
@@ -518,6 +615,8 @@ class Unit {
             this.version = (options.version instanceof Version)? options.version: new Version(options.version);
         }
     }
+
+    destroy(){ }
 
     start(){ }
     stop(){ }
@@ -749,4 +848,424 @@ class External extends Unit {
     }
 }
 
-module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, Server, backend };
+class EventHandler {
+    static REMOVE_LISTENER = Symbol("event-remove");
+    static optimize = true;
+
+    static EventObject = class EventObject {
+        compiled = null;
+        listeners = [];
+        free = [];
+        aliases = null;
+        completed = false;
+        warned = false;
+        data = null;
+
+        break = false;
+        results = false;
+        async = false;
+        await = false;
+        deopt = false;
+
+        _isEvent = true;
+
+        remove(index) {
+            const listeners = this.listeners;
+            if (listeners[index] == null) return;
+            this.compiled = null;
+
+            if(listeners.length === 1 || listeners.length === this.free.length + 1) { listeners.length = 0; this.free.length = 0; return; }
+
+            listeners[index] = null;
+            this.free.push(index);
+        }
+
+        emit(data) {
+            return EventHandler.emit(this, data);
+        }
+
+        /**
+         * Recompile the event's internal emit function for performance.
+         * Compilation may get skipped in which case the normal emit loop is used.
+         */
+        recompile() {
+            const listeners = this.listeners;
+            const listenersCount = listeners.length;
+
+            // TODO: Unroll for large amounts of listeners
+            if (listenersCount < 2 || listenersCount >= 950 || EventHandler.optimize === false || this.deopt === true) return;
+
+            const collectResults = this.results === true;
+            const breakOnFalse = this.break === true;
+
+            // if(this.last_compile_count === listenersCount && this.factory) {
+            //     this.compiled = this.factory(EventHandler.REMOVE_LISTENER, listeners, this);
+            //     return;
+            // }
+
+            const parts = [];
+            parts.push("(function(RL,listeners,event){var l=listeners;");
+            for (let i = 0; i < listenersCount; i++) {
+                const li = listeners[i];
+                if (li === null) continue;
+                parts.push("var f", i, "=l[", i, "].callback;");
+            }
+
+            if(this.await === true) {
+                parts.push("l=undefined;return(async function(a,b,c,d,e){var v");
+            } else {
+                parts.push("l=undefined;return(function(a,b,c,d,e){var v");
+            }
+
+            if (collectResults) parts.push(",r=[]");
+            parts.push(";");
+
+            // Main call loop
+            for (let i = 0; i < listenersCount; i++) {
+                const li = listeners[i];
+                if (li === null) continue;
+
+                parts.push("v=");
+
+                if(this.await === true) {
+                    parts.push("await f");
+                } else {
+                    parts.push("f");
+                }
+
+                parts.push(i, "(a,b,c,d,e);");
+
+                // Optional break behavior
+                if (breakOnFalse) {
+                    parts.push("if(v===false)return", collectResults ? " r" : "", ";");
+                }
+
+                if (li.once) {
+                    if (collectResults) {
+                        parts.push("if(v!==RL)r.push(v);");
+                    }
+                    parts.push("event.remove(", i, ");");
+                } else {
+                    if (collectResults) {
+                        parts.push("if(v===RL){event.remove(", i, ")}else{r.push(v)};");
+                    } else {
+                        parts.push("if(v===RL){event.remove(", i, ")};");
+                    }
+                }
+            }
+
+            if (collectResults) parts.push("return r;");
+            parts.push("})})");
+
+            const factory = eval(parts.join(""));
+            this.compiled = factory(EventHandler.REMOVE_LISTENER, listeners, this);
+        }
+    }
+
+    /**
+     * @param {object} target Possibly deprecated; Binds the event handler methods to a target object.
+     * @param {object} options Event handler options.
+     */
+    constructor(target, options = {}) {
+        EventHandler.prepareHandler(this, options);
+        if(target){
+            target._events = this;
+
+            ["emit", "quickEmit", "on", "once", "off"].forEach(method => {
+                if (!target.hasOwnProperty(method)) target[method] = this[method].bind(this);
+            });
+
+            this.target = target;
+        }
+    }
+
+    static prepareHandler(target, options = {}){
+        target.events = new Map();
+        if(options) target.eventOptions = options;
+    }
+
+    /**
+     * Prepare or update an event object with given name and options.
+     * @param {string|symbol} name Name of the event.
+     * @param {object} options Event options.
+     * @returns {EventObject} Prepared event object.
+     * 
+     * @warning If you are going to use the event reference, remember to dispose of it properly to avoid memory leaks.
+     */
+    prepareEvent(name, options = undefined){
+        let event = this.events.get(name);
+
+        if(!event) {
+            event = new EventHandler.EventObject();
+            this.events.set(name, event);
+        }
+
+        if(options){
+            if(options.completed !== undefined) {
+                event.completed = options.completed;
+                if(!event.completed) event.data = null;
+            }
+
+            if(options.break !== undefined) event.break = !!options.break;
+            if(options.results !== undefined) event.results = !!options.results;
+            if(options.async !== undefined) event.async = !!options.async;
+            if(options.await !== undefined) {
+                event.await = !!options.await;
+                this.compiled = null; // Need to recompile
+            }
+            if(options.deopt !== undefined) {
+                event.deopt = !!options.deopt;
+                this.compiled = null; // Remove compiled function
+            }
+
+            if(options.data !== undefined) event.data = options.data;
+        }
+
+        return event;
+    }
+
+    on(name, callback, options){
+        const event = name._isEvent? name: (this.events.get(name) || this.prepareEvent(name));
+        if(event.completed) {
+            if(event.data) Array.isArray(event.data) ? callback.apply(null, event.data) : callback(event.data); else callback();
+            if(options && options.once) return;
+        }
+
+        options ||= {};
+        options.callback = callback;
+
+        const free = event.free;
+        if (free.length > 0) {
+            event.listeners[free.pop()] = options;
+        } else {
+            const amount = event.listeners.push(options);
+            if(amount > (this.eventOptions?.maxListeners || 1000) && !event.warned) {
+                console.warn(`EventHandler: Possible memory leak detected. ${event.listeners.length} listeners added for event '${name.toString()}'.`);
+                event.warned = true;
+            }
+        }
+
+        event.compiled = null; // Invalidate compiled function
+    }
+
+    off(name, callback){
+        const event = (name._isEvent? name: this.events.get(name));
+        if(!event) return;
+
+        const listeners = event.listeners;
+
+        for(let i = 0; i < listeners.length; i++){
+            const listener = listeners[i];
+            if(!listener) continue;
+
+            if(listener.callback === callback){
+                event.remove(i);
+            }
+        }
+    }
+
+    once(name, callback, options){
+        options ??= {};
+        options.once = true;
+        return this.on(name, callback, options);
+    }
+
+    /**
+     * Emit an event with the given name and data.
+     * @param {string|object} name Name of the event to emit or it's reference
+     * @param {Array} data Array of values to pass
+     * @param {object} event Optional emit options override
+     * @returns {null|Array|Promise<null|Array>} Array of results (if options.results is true) or null. If event.await is true, returns a Promise.
+     */
+    emit(name, data) {
+        const event = name._isEvent ? name : this.events.get(name);
+        if (!event || event.listeners.length === 0) return event && event.await ? Promise.resolve(null) : null;
+
+        const listeners = event.listeners;
+        const listenerCount = listeners.length;
+
+        const collectResults = event.results === true;
+
+        const isArray = data && Array.isArray(data);
+        if(!isArray) data = [data];
+        const dataLen = isArray ? data.length : 0;
+
+        let a = undefined, b = undefined, c = undefined, d = undefined, e = undefined;
+
+        if (dataLen > 0) a = data[0];
+        if (dataLen > 1) b = data[1];
+        if (dataLen > 2) c = data[2];
+        if (dataLen > 3) d = data[3];
+        if (dataLen > 4) e = data[4];
+
+        // Awaiting path
+        if (event.await === true) {
+            if(!event.compiled) {
+                event.recompile();
+            }
+
+            if(event.compiled) {
+                return event.compiled(a, b, c, d, e);
+            }
+
+            const breakOnFalse = event.break === true;
+            const returnData = collectResults ? [] : null;
+
+            return (async () => {
+                for (let i = 0; i < listeners.length; i++) {
+                    const listener = listeners[i];
+                    if (listener === null) continue;
+
+                    let result = (dataLen < 6)? listener.callback(a, b, c, d, e): listener.callback.apply(null, data);
+                    if (result && typeof result.then === 'function') {
+                        result = await result;
+                    }
+
+                    if (collectResults) returnData.push(result);
+
+                    if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                        event.remove(i);
+                    }
+
+                    if (breakOnFalse && result === false) break;
+                }
+                return returnData;
+            })();
+        }
+
+        if(listenerCount === 1) {
+            const listener = listeners[0];
+            if (listener === null) return null;
+
+            let result = listener.callback(a, b, c, d, e);
+
+            if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                event.remove(0);
+            }
+
+            return collectResults? [result]: null;
+        }
+
+        if(!event.compiled) {
+            event.recompile();
+        }
+
+        if(event.compiled) {
+            return event.compiled(a, b, c, d, e);
+        }
+
+        const breakOnFalse = event.break === true;
+        const returnData = collectResults ? [] : null;
+
+        if(dataLen < 6){
+            for (let i = 0; i < listeners.length; i++) {
+                const listener = listeners[i];
+                if (listener === null) continue;
+
+                let result = listener.callback(a, b, c, d, e);
+                if (collectResults) returnData.push(result);
+
+                if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                    event.remove(i);
+                }
+
+                if (breakOnFalse && result === false) break;
+            }
+        } else {
+            for (let i = 0; i < listeners.length; i++) {
+                const listener = listeners[i];
+                if (listener === null) continue;
+
+                let result = listener.callback.apply(null, data);
+                if (collectResults) returnData.push(result);
+
+                if (listener.once || result === EventHandler.REMOVE_LISTENER) {
+                    event.remove(i);
+                }
+
+                if (breakOnFalse && result === false) break;
+            }
+        }
+
+        return returnData;
+    }
+
+    /**
+     * Faster emit, without checking or collecting return values. Limited to 5 arguments.
+     * @warning This does not guarantee EventHandler.REMOVE_LISTENER or any other return value functionality. Async events are not supported with quickEmit.
+     * @param {string|object} event Event name or reference.
+     * @param {*} a First argument.
+     * @param {*} b Second argument.
+     * @param {*} c Third argument.
+     * @param {*} d Fourth argument.
+     * @param {*} e Fifth argument.
+     */
+    quickEmit(name, a, b, c, d, e){
+        const event = name._isEvent ? name : this.events.get(name);
+        if (!event || event.listeners.length === 0) return false;
+
+        if(event.await === true) {
+            throw new Error("quickEmit cannot be used with async/await events.");
+        }
+
+        if(event.listeners.length === 1) {
+            const listener = event.listeners[0];
+            listener.callback(a, b, c, d, e);
+            if (listener.once) {
+                event.remove(0);
+            }
+            return;
+        }
+
+        if(!event.compiled) {
+            event.recompile();
+        }
+
+        if(event.compiled) {
+            event.compiled(a, b, c, d, e);
+            return;
+        }
+
+        const listeners = event.listeners;
+        for(let i = 0, len = listeners.length; i < len; i++){
+            const listener = listeners[i];
+            if(listener === null) continue;
+
+            if(listener.once) {
+                event.remove(i);
+            }
+
+            listener.callback(a, b, c, d, e);
+        }
+    }
+
+    flush(){
+        this.events.clear();
+    }
+
+    /**
+     * Create an alias for an existing event.
+     * They will become identical and share listeners.
+     * @param {*} name Original event name.
+     * @param {*} alias Alias name.
+     */
+    alias(name, alias){
+        const event = (name._isEvent? name: this.events.get(name)) || this.prepareEvent(name);
+        event.aliases ??= [];
+
+        if(!event.aliases.includes(alias)) event.aliases.push(alias);
+        this.events.set(alias, event);
+    }
+
+    completed(name, data = undefined, options = null){
+        this.emit(name, data);
+
+        options ??= {};
+        options.completed = true;
+        options.data = data;
+
+        this.prepareEvent(name, options);
+    }
+}
+
+module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, Server, EventHandler, backend };
