@@ -294,6 +294,93 @@ class Version {
                 throw new Error(`Invalid operator: ${operator}`);
         }
     }
+
+    static isValid(versionString){
+        if(typeof versionString !== 'string' || versionString.length === 0){
+            return false;
+        }
+
+        let i = 0;
+        const len = versionString.length;
+        let dotCount = 0;
+        let hasDigitInSegment = false;
+
+        while(i < len){
+            const char = versionString.charCodeAt(i);
+            
+            if(char >= 48 && char <= 57){ // 0-9
+                hasDigitInSegment = true;
+                i++;
+            } else if(char === 46){ // .
+                if(!hasDigitInSegment || dotCount >= 2){
+                    return false;
+                }
+                dotCount++;
+                hasDigitInSegment = false;
+                i++;
+            } else if(char === 45 || char === 43){ // - or +
+                break; // Start of pre-release or build metadata
+            } else if((char === 120 || char === 88) && !hasDigitInSegment){ // x or X (wildcard)
+                hasDigitInSegment = true;
+                i++;
+            } else if(char === 42){ // * (wildcard)
+                hasDigitInSegment = true;
+                i++;
+            } else {
+                return false;
+            }
+        }
+
+        if(!hasDigitInSegment){
+            return false;
+        }
+
+        if(i < len && versionString.charCodeAt(i) === 45){
+            i++;
+            if(i >= len) return false;
+            
+            hasDigitInSegment = false;
+            while(i < len){
+                const char = versionString.charCodeAt(i);
+                if((char >= 48 && char <= 57) || // 0-9
+                   (char >= 65 && char <= 90) || // A-Z
+                   (char >= 97 && char <= 122) || // a-z
+                   char === 45 || char === 46){ // - or .
+                    hasDigitInSegment = true;
+                    i++;
+                } else if(char === 43){ // +
+                    break;
+                } else {
+                    return false;
+                }
+            }
+            
+            if(!hasDigitInSegment) return false;
+        }
+
+        if(i < len && versionString.charCodeAt(i) === 43){
+            i++;
+            if(i >= len) return false;
+            
+            hasDigitInSegment = false;
+            while(i < len){
+                const char = versionString.charCodeAt(i);
+                if((char >= 48 && char <= 57) || // 0-9
+                   (char >= 65 && char <= 90) || // A-Z
+                   (char >= 97 && char <= 122) || // a-z
+                   char === 45 || char === 46){ // - or .
+                    hasDigitInSegment = true;
+                    i++;
+                } else {
+                    return false;
+                }
+            }
+            
+            if(!hasDigitInSegment) return false;
+        }
+
+        return i === len;
+    }
 }
 
 class IndexedEnum {
@@ -366,7 +453,7 @@ const Manager = {
     },
 
     refreshAddons(){
-        const paths = [backend.PATH + "./addons", ...(backend.config.getBlock("server").get("modules") || [])];
+        const paths = [backend.PATH + "./addons", ...(backend.config.getBlock("server").get("modules", Array) || [])];
 
         allow_unrestricted_execution = backend.config.getBlock("modules").get("allow_unrestricted_execution", Boolean, false);
 
@@ -375,17 +462,20 @@ const Manager = {
         }
 
         for (const path of paths) {
-            backend.verbose("Scanning for addons: " + path);
+            // First try to treat the path itself as an addon, then scan for addons inside
+            if(Manager.loadAddon(path) === null){
+                backend.verbose("Scanning for addons: " + path);
 
-            const directories = fs.readdirSync(path, { withFileTypes: true })
-                .filter(dirent => dirent.isDirectory())
-                .map(dirent => dirent.name);
+                const directories = fs.readdirSync(path, { withFileTypes: true })
+                    .filter(dirent => dirent.isDirectory())
+                    .map(dirent => dirent.name);
 
-            for (const dir of directories) {
-                try {
-                    Manager.loadAddon(path + "/" + dir);
-                } catch (error) {
-                    backend.error(`Failed to load addon ${dir} from ${path}:`, error);
+                for (const dir of directories) {
+                    try {
+                        Manager.loadAddon(path + "/" + dir);
+                    } catch (error) {
+                        backend.error(`Failed to load addon ${dir} from ${path}:`, error);
+                    }
                 }
             }
         }
@@ -467,6 +557,7 @@ const Manager = {
             }
             return addon;
         }
+        return null;
     },
 
     loadModule(path) {
