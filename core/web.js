@@ -296,6 +296,11 @@ class WebApp extends Units.App {
             this.ratelimit = new backend.helper.RateLimiter(limit, interval);
         } else delete this.ratelimit;
 
+        if (this.config.data.has("esbuild")) {
+            const targets = this.config.getBlock("esbuild").get("targets", Array, []);
+            this.esbuildTargets = targets.length > 0 && targets;
+        } else delete this.esbuildTargets;
+
         for (let api of this.config.getBlocks("module")) {
             // TODO: Proper module system
             const name = api.attributes;

@@ -91,7 +91,7 @@ class ContentProcessor {
         }
 
         if(options.ext === "mjs" || options.ext === "cjs") {
-            if(!options.format) options.format = options.ext === "mjs"? 'esm' : options.ext === "cjs" ? 'cjs' : 'iife';
+            if(!options.format) options.format = options.ext === "mjs"? 'esm' : 'cjs';
             options.ext = 'js';
         }
 
@@ -100,7 +100,7 @@ class ContentProcessor {
                 const result = await esbuild.transform(options.content, {
                     loader: options.ext,
                     target: options.targets || defaultTargets,
-                    format: options.ext === 'css' ? undefined : options.format,
+                    format: options.format || 'iife',
                     minify: backend.mode !== backend.modes.DEVELOPMENT
                 });
                 return { result: options.asBuffer ? Buffer.from(result.code) : result.code, success: true };
@@ -414,7 +414,7 @@ class CacheManager extends Units.Server {
      */
     async transpile(content, ext, filePath, app) {
         if (!this.esbuildEnabled) return { result: content, success: false };
-        return await ContentProcessor.build({ content, ext, targets: this.esbuildTargets, asBuffer: true, filePath, app });
+        return await ContentProcessor.build({ content, ext, targets: (app && app.esbuildTargets) || this.esbuildTargets, asBuffer: true, filePath, app });
     }
 }
 
