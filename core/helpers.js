@@ -47,7 +47,10 @@ const nullStringBuffer = Buffer.from("null");
 
 // Brings support for old browsers
 let esbuild;
+
 const TRANSPILE_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css', 'html', 'ls.html']);
+const JAVASCRIPT_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs']);
+
 try {
     esbuild = require("esbuild");
 } catch (e) {
@@ -88,6 +91,7 @@ class ContentProcessor {
         }
 
         if(options.ext === "mjs" || options.ext === "cjs") {
+            if(!options.format) options.format = options.ext === "mjs"? 'esm' : options.ext === "cjs" ? 'cjs' : 'iife';
             options.ext = 'js';
         }
 
@@ -96,7 +100,7 @@ class ContentProcessor {
                 const result = await esbuild.transform(options.content, {
                     loader: options.ext,
                     target: options.targets || defaultTargets,
-                    format: 'iife',
+                    format: options.ext === 'css' ? undefined : options.format,
                     minify: backend.mode !== backend.modes.DEVELOPMENT
                 });
                 return { result: options.asBuffer ? Buffer.from(result.code) : result.code, success: true };
@@ -370,7 +374,7 @@ class CacheManager extends Units.Server {
                 if(result.success) {
                     content = result.result;
 
-                    if (['ts', 'tsx', 'jsx'].includes(entry[0][5])) {
+                    if (JAVASCRIPT_EXTENSIONS.has(entry[0][5])) {
                         mimeType = 'text/javascript';
                     } else if (['scss', 'sass'].includes(entry[0][5])) {
                         mimeType = 'text/css';
@@ -547,7 +551,7 @@ class FileServer extends CacheManager {
             if(result.success) {
                 content = result.result;
 
-                if (['ts', 'tsx', 'jsx'].includes(ext)) {
+                if (JAVASCRIPT_EXTENSIONS.has(ext)) {
                     mimeType = 'text/javascript';
                 } else if (['scss', 'sass'].includes(ext)) {
                     mimeType = 'text/css';
