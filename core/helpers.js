@@ -563,7 +563,7 @@ class FileServer extends CacheManager {
 
         // store core
         file[0][0] = content;
-        file[0][1] = headers || {};
+        file[0][1] = headers || file[0][1] || {};
         file[0][1].ETag = `"${stats.mtimeMs.toString(36)}"`;
         if (!file[0][1]['Cache-Control']) {
             file[0][1]['Cache-Control'] =
