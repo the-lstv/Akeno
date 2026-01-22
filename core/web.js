@@ -879,6 +879,8 @@ const ls_components = {
     "js": [
         "animation",
         "automationgraph",
+        "color",
+        "compiletemplate",
         "dragdrop",
         "gl",
         "imagecropper",
@@ -890,16 +892,17 @@ const ls_components = {
         "patcher",
         "reactive",
         "resize",
+        "shortcutmanager",
         "tabs",
         "timeline",
         "toast",
         "tooltips",
-        "tree",
-        "v4compat"
+        "tree"
     ],
     "css": [
         "flat",
-        "knob"
+        "knob",
+        "timeline"
     ]
 };
 
