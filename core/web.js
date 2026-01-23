@@ -878,6 +878,7 @@ const latest_ls_version = fs.existsSync(ls_path + "/version") ? fs.readFileSync(
 const ls_components = {
     "js": [
         "animation",
+        "animation2",
         "automationgraph",
         "color",
         "compiletemplate",
