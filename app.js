@@ -520,13 +520,15 @@ const backend = {
 
                 const key = backend.config.getBlock("ssl").get("key", String, null);
                 const cert = backend.config.getBlock("ssl").get("cert", String, null);
+                console.log(key, cert);
+                
 
                 this.server = uws.H3App({
                     key_file_name: key,
                     cert_file_name: cert
                 });
 
-                // this.server.any("/*", this.defaultResolver);
+                this.server.any("/*", this.defaultResolver);
             }
         },
 

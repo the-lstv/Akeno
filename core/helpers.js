@@ -47,7 +47,10 @@ const nullStringBuffer = Buffer.from("null");
 
 // Brings support for old browsers
 let esbuild;
+
 const TRANSPILE_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs', 'css', 'html', 'ls.html']);
+const JAVASCRIPT_EXTENSIONS = new Set(['ts', 'tsx', 'jsx', 'js', 'mjs', 'cjs']);
+
 try {
     esbuild = require("esbuild");
 } catch (e) {
@@ -88,6 +91,7 @@ class ContentProcessor {
         }
 
         if(options.ext === "mjs" || options.ext === "cjs") {
+            if(!options.format) options.format = options.ext === "mjs"? 'esm' : 'cjs';
             options.ext = 'js';
         }
 
@@ -96,7 +100,7 @@ class ContentProcessor {
                 const result = await esbuild.transform(options.content, {
                     loader: options.ext,
                     target: options.targets || defaultTargets,
-                    format: 'iife',
+                    format: options.format || 'iife',
                     minify: backend.mode !== backend.modes.DEVELOPMENT
                 });
                 return { result: options.asBuffer ? Buffer.from(result.code) : result.code, success: true };
@@ -370,7 +374,7 @@ class CacheManager extends Units.Server {
                 if(result.success) {
                     content = result.result;
 
-                    if (['ts', 'tsx', 'jsx'].includes(entry[0][5])) {
+                    if (JAVASCRIPT_EXTENSIONS.has(entry[0][5])) {
                         mimeType = 'text/javascript';
                     } else if (['scss', 'sass'].includes(entry[0][5])) {
                         mimeType = 'text/css';
@@ -410,7 +414,7 @@ class CacheManager extends Units.Server {
      */
     async transpile(content, ext, filePath, app) {
         if (!this.esbuildEnabled) return { result: content, success: false };
-        return await ContentProcessor.build({ content, ext, targets: this.esbuildTargets, asBuffer: true, filePath, app });
+        return await ContentProcessor.build({ content, ext, targets: (app && app.esbuildTargets) || this.esbuildTargets, asBuffer: true, filePath, app });
     }
 }
 
@@ -547,7 +551,7 @@ class FileServer extends CacheManager {
             if(result.success) {
                 content = result.result;
 
-                if (['ts', 'tsx', 'jsx'].includes(ext)) {
+                if (JAVASCRIPT_EXTENSIONS.has(ext)) {
                     mimeType = 'text/javascript';
                 } else if (['scss', 'sass'].includes(ext)) {
                     mimeType = 'text/css';
@@ -559,7 +563,7 @@ class FileServer extends CacheManager {
 
         // store core
         file[0][0] = content;
-        file[0][1] = headers || {};
+        file[0][1] = headers || file[0][1] || {};
         file[0][1].ETag = `"${stats.mtimeMs.toString(36)}"`;
         if (!file[0][1]['Cache-Control']) {
             file[0][1]['Cache-Control'] =
@@ -780,7 +784,7 @@ module.exports = {
         ];
     },
 
-    sendErrorPage(req, res, status, message){
+    sendErrorPage(req, res, status, message, title = null){
         if(req.abort) return;
 
         if(typeof status !== "string") {
@@ -788,7 +792,7 @@ module.exports = {
         }
 
         res.cork(() => {
-            const messageData = `<h2>${status || "Error"}</h2><p>${message || (status === "404"? "The requested page could not be found on this server." : "Internal Server Error")}</p>`;
+            const messageData = `<h2>${title || status || "Error"}</h2><p>${message || (status === "404"? "The requested page could not be found on this server." : "Internal Server Error")}</p>`;
             const cl = this.errorPageBuffers[0].length + this.errorPageBuffers[1].length + messageData.length;
 
             res.writeStatus(status).writeHeader('Content-Length', String(cl)).writeHeader('Content-Type', 'text/html');
