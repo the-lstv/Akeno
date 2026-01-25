@@ -1020,6 +1020,8 @@ function initParser(header) {
                             components = [singularJSComponent];
                         }
 
+                        // Bypass CDN for beta versions
+                        const CDN_ORIGIN = version === "beta" ? server.etc.EXTRAGON_CDN.replace("cdn.", "cdn-origin.") : server.etc.EXTRAGON_CDN;
                         
                         if (is_merged || attrib === "ls.css" || singularCSSComponent) {
                             const cssComponents = is_merged ? components.filter(value => ls_components.css.includes(value)) : components;
@@ -1027,7 +1029,7 @@ function initParser(header) {
                             components_string = cssComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<link rel=stylesheet href="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_css ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
+                                this.write(`<link rel=stylesheet href="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_css ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
                                 this.data.using_ls_css = true;
                             }
                         }
@@ -1038,7 +1040,7 @@ function initParser(header) {
                             components_string = jsComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
+                                this.write(`<script src="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
                                 this.data.using_ls_js = true;
                             }
                         }
