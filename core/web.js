@@ -184,7 +184,7 @@ class WebApp extends Units.App {
 
                 if (blocks.length <= 1) {
                     this.config.data.set(targetName, [override]);
-                    return;
+                    continue;
                 }
 
                 this.error(`case_override: Block "${targetName}" has multiple instances; cannot override (App ${this.path})`);
