@@ -378,7 +378,7 @@ class WebApp extends Units.App {
             }
         }
 
-        this._browserRequirements = this.config.getBlock("browserSupport");
+        this._browserRequirements = this.config.getBlock("browserSupport")?.properties || null;
 
         const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String);
         this._404 = _404 ? this.resolvePath(_404) : null;
@@ -444,11 +444,10 @@ const server = new class WebServer extends Units.Module {
             }
 
             // Check if the client version is supported
-            if (this._browserRequirements) {
-                if (!checkSupportedBrowser(req.getHeader('user-agent'), this._browserRequirements.properties)) {
-                    res.cork(() => {
-                        res.writeHeader('Content-Type', this._browserRequirements.get("contentType", String, 'text/html')).writeStatus('403 Forbidden').end(this._browserRequirements.get("message", String, `<h2>Your browser version is not supported.<br>Please update your web browser.</h2><br>Minimum requirement for this website: Chrome ${this._browserRequirements.chrome && this._browserRequirements.chrome} and up, Firefox ${this._browserRequirements.firefox && this._browserRequirements.firefox} and up.`))
-                    })
+            if (app._browserRequirements) {
+
+                if (!checkSupportedBrowser(req.getHeader('user-agent'), app._browserRequirements)) {
+                    backend.helper.sendErrorPage(req, res, "403", app._browserRequirements.message || `Your browser version is not supported - please update your web browser!<br>Minimum requirement to access this website: Chrome ${app._browserRequirements.chrome && app._browserRequirements.chrome} and up, Firefox ${app._browserRequirements.firefox && app._browserRequirements.firefox} and up.<br><br><strong><a href="https://browser-update.org/update-browser.html" target="_blank">Learn more</a></strong>`, "Outdated Browser");
                     return;
                 }
             }

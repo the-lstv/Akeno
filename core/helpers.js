@@ -784,7 +784,7 @@ module.exports = {
         ];
     },
 
-    sendErrorPage(req, res, status, message){
+    sendErrorPage(req, res, status, message, title = null){
         if(req.abort) return;
 
         if(typeof status !== "string") {
@@ -792,7 +792,7 @@ module.exports = {
         }
 
         res.cork(() => {
-            const messageData = `<h2>${status || "Error"}</h2><p>${message || (status === "404"? "The requested page could not be found on this server." : "Internal Server Error")}</p>`;
+            const messageData = `<h2>${title || status || "Error"}</h2><p>${message || (status === "404"? "The requested page could not be found on this server." : "Internal Server Error")}</p>`;
             const cl = this.errorPageBuffers[0].length + this.errorPageBuffers[1].length + messageData.length;
 
             res.writeStatus(status).writeHeader('Content-Length', String(cl)).writeHeader('Content-Type', 'text/html');
