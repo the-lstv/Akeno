@@ -103,7 +103,7 @@ class FileBucket {
 
     async get(key, readFromFile = true) {
         const data = await this.db.get(key);
-        if (data instanceof Buffer) return data;
+        if (Buffer.isBuffer(data)) return Buffer.from(data); // TODO: This is worth checking; copying shouldn't be necessary (since we are calling get() which shouldn't reuse), but I did observe "use-after-free" issues at random times, so better safe than sorry
         if (typeof data === 'string' && this.storage) {
             if(!readFromFile) return this.storage.path + "/" + data;
 
