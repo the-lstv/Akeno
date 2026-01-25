@@ -227,6 +227,8 @@ class WebApp extends Units.App {
     }
 
     reload(options, checkConfig = true) {
+        options ??= {};
+
         if(options.config) {
             if(typeof options.config === "object" && !options.config.data) {
                 // Config is possibly JSON, will need to parse
