@@ -117,6 +117,85 @@ class WebApp extends Units.App {
         return { full, relative: relativeForLink, useRootPath };
     }
 
+    #applyCaseOverrides() {
+        if (!this.config) return;
+
+        const caseEntries = this.config.getBlocks("case_override");
+        if (!caseEntries || caseEntries.length === 0) return;
+
+        this.warn("case_override is an experimental feature");
+
+        for (const entry of caseEntries) {
+            if (!entry || !Array.isArray(entry.attributes) || entry.attributes.length === 0) continue;
+
+            let match = false;
+            for (const attr of entry.attributes) {
+                const compare = this.#resolveCaseField(attr.name);
+                if (compare && Array.isArray(attr.values) && attr.values.some((value) => compare === value)) {
+                    match = true;
+                    break;
+                }
+            }
+
+            if (!match) continue;
+            this.#applyOverride(entry);
+        }
+    }
+
+    #resolveCaseField(name) {
+        switch (name) {
+            case "basename":
+                return this.basename;
+            case "path":
+                return this.path;
+            case "name":
+                return this.name;
+            case "root":
+                return this.root;
+            case "dir": case "dirname":
+                return nodePath.dirname(this.path);
+            case "mode":
+                return backend.modes[backend.mode];
+            default:
+                if (name.startsWith("env.")) {
+                    const envKey = name.slice(4);
+                    return process.env ? process.env[envKey] : undefined;
+                }
+
+                if (Object.prototype.hasOwnProperty.call(this, name) && typeof this[name] !== "function") {
+                    return this[name];
+                }
+
+                return undefined;
+        }
+    }
+
+    #applyOverride(entry) {
+        if (!entry.properties || typeof entry.properties !== "object") return;
+
+        for (const blockName of Object.keys(entry.properties)) {
+            const override = entry.properties[blockName];
+            if (!override) continue;
+
+            // Only overrides blocks; properties aren't supported at the top level (yet)
+            if (this.#isConfigBlock(override)) {
+                const targetName = override.name || blockName;
+                const blocks = this.config.data.get(targetName) || [];
+
+                if (blocks.length <= 1) {
+                    this.config.data.set(targetName, [override]);
+                    return;
+                }
+
+                this.error(`case_override: Block "${targetName}" has multiple instances; cannot override (App ${this.path})`);
+            }
+        }
+    }
+
+    #isConfigBlock(value) {
+        return value && typeof value === "object" && typeof value.get === "function" && typeof value.getBlock === "function";
+    }
+
     fileHasChangedSince(path, ms) {
         const file = this.resolvePath(path).full;
         try {
@@ -188,6 +267,8 @@ class WebApp extends Units.App {
 
             if (!this.config) throw "Invalid or missing config";
         }
+
+        this.#applyCaseOverrides();
 
         if (this.loaded) this.verbose("Hot-reloading");
 
@@ -300,6 +381,11 @@ class WebApp extends Units.App {
             const targets = this.config.getBlock("esbuild").get("targets", Array, []);
             this.esbuildTargets = targets.length > 0 && targets;
         } else delete this.esbuildTargets;
+
+        if (this.config.data.has("ls")) {
+            const version = this.config.getBlock("ls").get("version", String, null);
+            this.lsVersion = version;
+        } else delete this.lsVersion;
 
         for (let api of this.config.getBlocks("module")) {
             // TODO: Proper module system
@@ -994,10 +1080,12 @@ function initParser(header) {
 
                     if (attrib === "ls" || attrib.startsWith("ls.")) {
                         if (!version) {
-                            if (this.data.ls_version) {
-                                version = this.data.ls_version;
+                            if (this.data.app && this.data.app.lsVersion) {
+                                version = this.data.app.lsVersion;
+                            } else if (this.data.ls_version) {
+                                version = this.data.ls_version; // Use previously specified version (outdated fallback)
                             } else {
-                                console.error(`Error in app "${this.data.path}": No version was specified for LS in your app. This is no longer supported - you must specify a version, for example ${attrib}:${latest_ls_version}. To enforce the latest version, use ${attrib}:latest`);
+                                console.error(`Error in app "${this.data.path}": No version was specified for LS in your app. This is no longer supported - you need to specify a version, for example ${attrib}:${latest_ls_version}. To get the latest version, use ${attrib}:latest, but this is not recommended for production environments.`);
                                 break;
                             }
                         }
