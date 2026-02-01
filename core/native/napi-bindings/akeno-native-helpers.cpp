@@ -141,6 +141,10 @@ ParserWrapper::ParserWrapper(const Napi::CallbackInfo& info)
             parserOptions.vanilla = opts.Get("vanilla").ToBoolean();
         }
 
+        if (opts.Has("enableImport")) {
+            parserOptions.enableImport = opts.Get("enableImport").ToBoolean();
+        }
+
         if (opts.Has("header")) {
             parserOptions.header = opts.Get("header").ToString().Utf8Value();
         }

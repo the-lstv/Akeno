@@ -1005,7 +1005,7 @@ function initParser(header) {
             
             // Inline script compression
             // TODO: Handle script type
-            if(parent === "script") {
+            if (parent === "script") {
                 if(!backend.compression.codeEnabled) {
                     return true;
                 }
