@@ -53,6 +53,18 @@ std::unordered_set<std::string> rawElements = {
     "script", "style", "xmp", "textarea", "title"
 };
 
+// Elements allowed when sanitize_html is enabled
+std::unordered_set<std::string> allowedTags = {
+    "a", "b", "blockquote", "br", "caption", "code", "col", "colgroup", "div", "em", "h1", "h2", "h3", "h4", "h5", "h6",
+    "hr", "i", "img", "li", "ol", "p", "pre", "q", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody", "td",
+    "tfoot", "th", "thead", "tr", "u", "ul"
+};
+
+// Attributes allowed when sanitize_html is enabled
+std::unordered_set<std::string> allowedAttributes = {
+    "align", "alt", "border", "cellpadding", "cellspacing", "class", "colspan", "dir", "height", "href", "id", "lang", "rowspan", "src", "title", "width"
+};
+
 enum HTMLParserState {
     TEXT,
     TAGNAME,
@@ -181,6 +193,12 @@ public:
         : output(nullptr), it(nullptr), chunk_end(nullptr), value_start(nullptr), options(options) {
              md_list_stack.reserve(8);
         }
+
+    bool enable_html = true;
+    bool sanitize_html = false;
+
+    // This is exposed so that bindings can set it
+    bool in_markdown = false;
 
     void write(std::string_view buf, std::string* _output = nullptr, void* userData = nullptr, std::string rootPath = "") {
         if (options.buffer && _output == nullptr) {
@@ -410,16 +428,29 @@ public:
         ctx.resetState();
         ctx.in_markdown = true;
         ctx.enable_html = enableHTML;
-        ctx.templateEnabled = false;
+        ctx.sanitize_html = false;
+        ctx.template_enabled = false;
 
         return ctx.parse(buf);
     }
 
-    bool enable_html = true;
+    static std::string parseMixedMarkdown(std::string_view buf, bool sanitizeHTML = true) {
+        HTMLParserOptions opts(true);
+        opts.vanilla = false;
+        opts.compact = false;
+
+        HTMLParsingContext ctx(opts);
+        ctx.resetState();
+        ctx.in_markdown = true;
+        ctx.sanitize_html = sanitizeHTML;
+        ctx.template_enabled = false;
+
+        return ctx.parse(buf);
+    }
 
     void resume() {
         // If top of the file
-        if(reset && !in_markdown) {
+        if(reset && !in_markdown && !sanitize_html) {
             if (*it == '#') {
                 state = SPECIAL_MODIFIER;
                 value_start = it + 1;
@@ -514,6 +545,14 @@ public:
                             ++it;
                         }
 
+                        continue;
+                    }
+
+                    // Escape HTML if disabled and not in markdown (markdown handles its own escaping)
+                    if (!enable_html && !in_markdown && *it == '<') {
+                        pushText(*output);
+                        output->append("&lt;");
+                        value_start = it + 1;
                         continue;
                     }
 
@@ -1108,6 +1147,14 @@ public:
 
                             render_element = !is_template && tag != "html" && tag != "!DOCTYPE" && !ls_template_tag && tag != "markdown";
 
+                            if (sanitize_html && render_element) {
+                                std::string tagNameStr = std::string(tag);
+                                std::transform(tagNameStr.begin(), tagNameStr.end(), tagNameStr.begin(), ::tolower);
+                                if (allowedTags.find(tagNameStr) == allowedTags.end()) {
+                                    render_element = false;
+                                }
+                            }
+
                             if (options.onOpeningTag && render_element) {
                                 options.onOpeningTag(*output, tagStack, tag, userData);
                             }
@@ -1214,6 +1261,10 @@ public:
                             _endTag();
                             continue;
                         }
+                        
+                        // Skip disallowed attributes/tags completely
+                        value_start = it + 1;
+                        if (*it == '=') state = ATTRIBUTE_VALUE;
                         continue;
                     }
 
@@ -1223,6 +1274,18 @@ public:
                     if(*it == '=' || *it == '>' || *it == '/' || std::isspace(static_cast<unsigned char>(*it)) || isInline) {
                         if(it > value_start){
                             std::string_view attribute_view(value_start, it - value_start);
+                            current_attr_name = std::string(attribute_view);
+
+                            bool allowed = true;
+                            if (sanitize_html) {
+                                std::string attrLower = current_attr_name;
+                                std::transform(attrLower.begin(), attrLower.end(), attrLower.begin(), ::tolower);
+                                if (allowedAttributes.find(attrLower) == allowedAttributes.end()) {
+                                    allowed = false;
+                                }
+                            }
+                            current_attr_allowed = allowed;
+
                             if(attribute_view == "markdown") {
                                 in_markdown = true;
                                 pending_markdown_attr = true;
@@ -1244,8 +1307,8 @@ public:
                                 } else {
                                     ls_template_attr_name = std::string(attribute_view);
                                 }
-                            } else if(options.buffer){
-                               // Handle attributes
+                            } else if(options.buffer && allowed){
+                                // Handle attributes
                                 if (attribute_view[0] == '#') {
                                     output->append(" id=\"");
                                     output->append(attribute_view.substr(1));
@@ -1461,7 +1524,7 @@ public:
                         value_start = it + 1;
 
                         if(special_modifier_type == "template") {
-                            if (templateEnabled && !modifierValue.empty() && cacheEntry) {
+                            if (template_enabled && !modifierValue.empty() && cacheEntry) {
                                 std::string templateFile = rootPath + std::string(modifierValue);
     
                                 try {
@@ -1539,7 +1602,7 @@ public:
 
     std::string body_attributes;
     bool inside_head = false;
-    bool templateEnabled = false;
+    bool template_enabled = false;
 
     std::string* output;
 
@@ -1582,6 +1645,9 @@ private:
     std::string ls_inline_script;
     std::string pending_import_file;
 
+    std::string current_attr_name;
+    bool current_attr_allowed = false;
+
     void resetState() {
         end_tag = false;
         space_broken = false;
@@ -1593,6 +1659,8 @@ private:
         string_char = 0;
         class_buffer.clear();
         body_attributes.clear();
+        current_attr_name.clear();
+        current_attr_allowed = false;
         tagStack = std::stack<std::string_view>();
         markdownStack = std::stack<bool>();
         template_scope = std::string_view();
@@ -1613,7 +1681,6 @@ private:
         reset = true;
     }
 
-    bool in_markdown = false;
     bool md_in_quote = false;
     bool md_table_header = false;
     bool md_fmt_bold = false; 
@@ -1636,7 +1703,7 @@ private:
         std::stack<bool> markdownStack;
         std::string body_attributes;
         bool inside_head;
-        bool templateEnabled;
+        bool template_enabled;
         
         bool in_markdown;
         bool md_in_quote;
@@ -1658,7 +1725,7 @@ private:
     
     ParsingState captureState() {
         return {
-            tagStack, markdownStack, body_attributes, inside_head, templateEnabled,
+            tagStack, markdownStack, body_attributes, inside_head, template_enabled,
             in_markdown, md_in_quote, md_table_header,
             md_fmt_bold, md_fmt_italic, md_fmt_code, md_fmt_underline, md_fmt_strikethrough,
             md_heading_level, pending_markdown_attr, pending_import_attr, md_base_indent, md_state,
@@ -1671,7 +1738,7 @@ private:
         markdownStack = s.markdownStack;
         body_attributes = s.body_attributes;
         inside_head = s.inside_head;
-        templateEnabled = s.templateEnabled;
+        template_enabled = s.template_enabled;
         
         in_markdown = s.in_markdown;
         md_in_quote = s.md_in_quote;

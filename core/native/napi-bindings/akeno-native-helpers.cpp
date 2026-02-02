@@ -21,7 +21,6 @@ void ParserContext::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("onText", &ParserContext::write), // Special case
         InstanceMethod("getTagName", &ParserContext::getTagName),
         InstanceMethod("setBodyAttributes", &ParserContext::setBodyAttributes),
-        // InstanceMethod("writeHead", &ParserContext::writeHead),
         InstanceMethod("import", &ParserContext::import),
     });
 
@@ -82,15 +81,6 @@ void ParserContext::setBodyAttributes(const Napi::CallbackInfo& info) {
     parser->ctx.body_attributes = info[0].As<Napi::String>().Utf8Value();
 }
 
-// void ParserContext::writeHead(const Napi::CallbackInfo& info) {
-//     if (info.Length() < 1 || !info[0].IsString()) {
-//         Napi::TypeError::New(info.Env(), "Expected a string").ThrowAsJavaScriptException();
-//         return;
-//     }
-
-//     *result += info[0].As<Napi::String>().Utf8Value();
-// }
-
 void ParserContext::import(const Napi::CallbackInfo& info) {
     if (info.Length() < 1 || !info[0].IsString()) {
         Napi::TypeError::New(info.Env(), "Expected a string").ThrowAsJavaScriptException();
@@ -119,6 +109,8 @@ Napi::Object ParserWrapper::Init(Napi::Env env, Napi::Object exports) {
     exports.Set("parser", DefineClass(env, "ParserWrapper", {
         InstanceMethod("fromString", &ParserWrapper::fromString),
         InstanceMethod("fromFile", &ParserWrapper::fromFile),
+        InstanceMethod("fromMarkdownString", &ParserWrapper::fromMarkdownString),
+        InstanceMethod("fromMarkdownFile", &ParserWrapper::fromMarkdownFile),
         InstanceMethod("createContext", &ParserWrapper::createContext),
         InstanceMethod("needsUpdate", &ParserWrapper::needsUpdate)
     }));
@@ -283,7 +275,8 @@ Napi::Value ParserWrapper::createContext(const Napi::CallbackInfo& info) {
     return ParserContext::constructor.New({ Napi::External<ParserWrapper>::New(env_, this), dataArg });
 }
 
-Napi::Value ParserWrapper::fromString(const Napi::CallbackInfo& info) {
+// Internal helper for string parsing
+Napi::Value ParserWrapper::fromStringInternal(const Napi::CallbackInfo& info, bool isMarkdown) {
     if (info.Length() < 2 || !info[0].IsString() || !info[1].IsObject()) {
         Napi::TypeError::New(info.Env(), "Expected a string and a ParserContext instance").ThrowAsJavaScriptException();
         return info.Env().Undefined();
@@ -300,14 +293,16 @@ Napi::Value ParserWrapper::fromString(const Napi::CallbackInfo& info) {
     return Napi::Buffer<char>::Copy(info.Env(), result.data(), result.size());
 }
 
-Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
-    if (info.Length() < 2 || !info[0].IsString() || !info[1].IsObject()) {
+// Internal helper for file parsing
+Napi::Value ParserWrapper::fromFileInternal(const Napi::CallbackInfo& info, bool isMarkdown) {
+    size_t attrLength = info.Length();
+
+    if (attrLength < 2 || !info[0].IsString() || !info[1].IsObject()) {
         Napi::TypeError::New(info.Env(), "Expected a string and a ParserContext instance").ThrowAsJavaScriptException();
         return info.Env().Undefined();
     }
 
     std::string filePath = info[0].As<Napi::String>().Utf8Value();
-
     Napi::Object ctxObj = info[1].As<Napi::Object>();
 
     std::string appPath;
@@ -321,7 +316,12 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
         }
     }
 
-    ctx.templateEnabled = info.Length() > 2 && info[2].IsBoolean() ? info[2].As<Napi::Boolean>().Value() : false;
+    if(isMarkdown) {
+        ctx.in_markdown = true;
+    }
+
+    ctx.sanitize_html = attrLength > 3 && info[3].IsBoolean() ? info[3].As<Napi::Boolean>().Value() : false;
+    ctx.template_enabled = attrLength > 2 && info[2].IsBoolean() ? info[2].As<Napi::Boolean>().Value() : false;
 
     FileCache& result = ctx.fromFile(filePath, &ctxObj, appPath);
 
@@ -344,6 +344,24 @@ Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
     return data;
 }
 
+
+
+Napi::Value ParserWrapper::fromString(const Napi::CallbackInfo& info) {
+    return fromStringInternal(info, false);
+}
+
+Napi::Value ParserWrapper::fromMarkdownString(const Napi::CallbackInfo& info) {
+    return fromStringInternal(info, true);
+}
+
+Napi::Value ParserWrapper::fromFile(const Napi::CallbackInfo& info) {
+    return fromFileInternal(info, false);
+}
+
+Napi::Value ParserWrapper::fromMarkdownFile(const Napi::CallbackInfo& info) {
+    return fromFileInternal(info, true);
+}
+
 Napi::Value ParserWrapper::needsUpdate(const Napi::CallbackInfo& info) {
     if (info.Length() < 1 || !info[0].IsString()) {
         Napi::TypeError::New(info.Env(), "Expected a string").ThrowAsJavaScriptException();
@@ -355,6 +373,7 @@ Napi::Value ParserWrapper::needsUpdate(const Napi::CallbackInfo& info) {
     bool needsUpdate = ctx.needsUpdate(filePath);
     return Napi::Boolean::New(info.Env(), needsUpdate);
 }
+
 
 
 enum LogLevel {

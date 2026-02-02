@@ -661,11 +661,24 @@ const server = new class WebServer extends Units.Module {
                 // By default, the server will get its own content
                 let content = null;
 
-                if (extension === "html") {
+                if (extension === "html" || extension === "md" || extension === "htm") {
                     const directory = nodePath.dirname(resolvedPath.relative);
 
-                    parserContext.data = { url, directory, path: app.path, root: app.root, file, app, secure: req.secure };
-                    content = parser.fromFile(file, parserContext, true);
+                    // Prepare parser context data (what the callbacks should see)
+                    parserContext.data.url = url;
+                    parserContext.data.directory = directory;
+                    parserContext.data.path = app.path;
+                    parserContext.data.root = app.root;
+                    parserContext.data.file = file;
+                    parserContext.data.app = app;
+                    parserContext.data.secure = req.secure;
+
+                    // file, parserContext, sanitize_html, template_enabled
+                    if(extension === "md") {
+                        content = parser.fromMarkdownFile(file, parserContext, false, true);
+                    } else {
+                        content = parser.fromFile(file, parserContext, false, true);
+                    }
                 }
 
                 if (cacheEntry) {
@@ -1036,7 +1049,9 @@ function initParser(header) {
         // }
     });
 
+    // parserContext is an internal JS object that is passed around to callbacks.
     parserContext = parser.createContext();
+    parserContext.data = {};
 
     backend.native.context.prototype.onBlock = function (block) {
         const parent = this.getTagName();
