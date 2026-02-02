@@ -674,8 +674,9 @@ const server = new class WebServer extends Units.Module {
                     parserContext.data.secure = req.secure;
 
                     // file, parserContext, sanitize_html, template_enabled
+                    // TODO: Allow to enable/disable templates and sanitization per-path or per-app
                     if(extension === "md") {
-                        content = parser.fromMarkdownFile(file, parserContext, false, true);
+                        content = parser.fromMarkdownFile(file, parserContext, false, false);
                     } else {
                         content = parser.fromFile(file, parserContext, false, true);
                     }
@@ -1188,7 +1189,7 @@ function initParser(header) {
                             break;
 
                         case "marked":
-                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "16.2.1"}/lib/marked.umd.min.js"${scriptAttributes}></script>`);
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "17.0.1"}/lib/marked.umd.min.js"${scriptAttributes}></script>`);
                             break;
 
                         case "google-fonts":

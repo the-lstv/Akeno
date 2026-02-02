@@ -320,8 +320,8 @@ Napi::Value ParserWrapper::fromFileInternal(const Napi::CallbackInfo& info, bool
         ctx.in_markdown = true;
     }
 
-    ctx.sanitize_html = attrLength > 3 && info[3].IsBoolean() ? info[3].As<Napi::Boolean>().Value() : false;
-    ctx.template_enabled = attrLength > 2 && info[2].IsBoolean() ? info[2].As<Napi::Boolean>().Value() : false;
+    ctx.sanitize_html = attrLength > 2 && info[2].IsBoolean() ? info[2].As<Napi::Boolean>().Value() : false;
+    ctx.template_enabled = attrLength > 3 && info[3].IsBoolean() ? info[3].As<Napi::Boolean>().Value() : false;
 
     FileCache& result = ctx.fromFile(filePath, &ctxObj, appPath);
 
@@ -460,7 +460,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     ParserWrapper::Init(env, exports);
     ParserContext::Init(env, exports);
 
-    exports.Set("version", Napi::String::New(env, "1.1.0"));
+    exports.Set("version", Napi::String::New(env, "1.2.0"));
     exports.Set("writeLog", Napi::Function::New(env, WriteLog));
 
     return exports;

@@ -32,4 +32,6 @@ private:
     Napi::Value fromFile(const Napi::CallbackInfo& info);
     Napi::Value fromMarkdownFile(const Napi::CallbackInfo& info);
     Napi::Value needsUpdate(const Napi::CallbackInfo& info);
+    Napi::Value fromStringInternal(const Napi::CallbackInfo& info, bool isMarkdown);
+    Napi::Value fromFileInternal(const Napi::CallbackInfo& info, bool isMarkdown);
 };

@@ -13,32 +13,64 @@
 
 /*
 
-    Copyright (c) 2025, TheLSTV (https://lstv.space)
+    Copyright (c) 2025-2026, TheLSTV (https://lstv.space)
     Built for Akeno and released under the open source GPL-v3 license.
     All rights reserved.
 
     This is the (experimental) native custom HTML and Markdown parser used by Akeno.
-    This parser does NOT fully respect the XML/HTML standard (nor is it particularly safe in that way...)!
+    This parser does NOT fully respect the XML/HTML standard - don't use it as a reference for spec correctness!
+
+    Main features:
+    - Sanitization support for both HTML and Markdown for safe rendering/stripping unsafe tags, links and attributes
+    - Customizable behavior via callbacks and options/state modifiers, built-in output building
+    - File caching with mtime checks
+    - Just one file and no external dependencies
+    - High performance single-pass parsing with zero-copy where possible (the input can be a stringview)
+    - Markdown support
+    - Template support
+    - The parser buffer can be written to while parsing for dynamic insertion
+    - Minification (compact option, experimental)
+    - Custom syntax (eg. {{ }}, shorthands (#id, .class), etc.)
 
     Note:
-    By default, this is not a pure HTML parser, it adds a custom syntax, eg. {{ }}, #id, .class, and markdown support.
-    While it can be customized to work like a HTML parser, be cautious when using it in environments outside of Akeno.
-
-    There are no external dependencies, it is one file, and it is a single-pass parser.
+    By default, this is not a pure HTML parser, it adds some custom syntax and markdown support.
+    While it can be customized to work like one (via the experimental "vanilla" option), as of now be cautious when using it in environments outside of Akeno.
 
     Technically, with a few modifications, this could be used as a drop-in replacement for the htmlparser2 library (without features like streaming though).
-    If someone has the time, feel free to test this out and make some benchmarks!
+    If someone has the time, feel free to test this out, extend it, or make benchmarks!
+
+    Example usage:
+    Parsing a HTML string into an output buffer
+    ```cpp
+    HTMLParserOptions options(true); // Enable buffer mode
+    HTMLParsingContext parser(options);
+
+    std::string result;
+    parser.write("<div>Hello, {{username}}!</div>", &result);
+    parser.end();
+    std::cout << result << std::endl;
+    ```
+
+    To use Markdown inside HTML, you can use one of:
+    - <markdown> tag (note that this tag is removed from the output)
+    - markdown attribute on any tag (eg. <div markdown>, value can be on|off to enable or disable)
+    - Globally in a HTML document (either via #markdown special modifier, or set "in_markdown" on the parser context)
+
+    Markdown string to HTML
+    ```cpp
+    std::string markdown = "# Hello, **world**!";
+
+    // Set second param to true to enable HTML inside Markdown
+    std::string html = HTMLParsingContext::parseMarkdown(markdown);
+    std::cout << html << std::endl;
+    ```
 
 */
 
 /*
 
     Known issues and bugs:
-    - Escape characters are left in the final output
-    - Attribute values are not disabled for special shorthand cases (eg. .classes, #ids), causing potential unexpected behavior
     - Safety and edge cases may not be fully covered
-
-    - Attribute parsing isn't implemented properly in the API yet (it otherwise works for building though)
 
 */
 
@@ -84,9 +116,6 @@ enum MarkdownState {
     MD_CODEBLOCK,
     MD_TABLE
 };
-
-
-void* empty = nullptr;
 
 const std::streamsize MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -419,7 +448,7 @@ public:
         return result;
     }
 
-    static std::string parseMarkdown(std::string_view buf, bool enableHTML = false) {
+    static std::string parseMarkdown(std::string_view buf, bool enableHTML = false, bool sanitizeHTML = true) {
         HTMLParserOptions opts(true);
         opts.vanilla = false;
         opts.compact = false;
@@ -428,7 +457,7 @@ public:
         ctx.resetState();
         ctx.in_markdown = true;
         ctx.enable_html = enableHTML;
-        ctx.sanitize_html = false;
+        ctx.sanitize_html = sanitizeHTML;
         ctx.template_enabled = false;
 
         return ctx.parse(buf);
@@ -450,7 +479,7 @@ public:
 
     void resume() {
         // If top of the file
-        if(reset && !in_markdown && !sanitize_html) {
+        if(reset && !in_markdown && !sanitize_html && !options.vanilla) {
             if (*it == '#') {
                 state = SPECIAL_MODIFIER;
                 value_start = it + 1;
@@ -556,7 +585,7 @@ public:
                         continue;
                     }
 
-                    if (enable_html && *it == '{' && (it + 1) < chunk_end && it[1] == '{' && (it == buffer.data() || it[-1] != '\\')) {
+                    if (!options.vanilla && enable_html && *it == '{' && (it + 1) < chunk_end && it[1] == '{' && (it == buffer.data() || it[-1] != '\\')) {
                         pushText(*output);
 
                         state = INLINE_VALUE;
@@ -761,7 +790,7 @@ public:
                                 
                                 output->append("<pre><code");
                                 if(!lang.empty()) {
-                                    output->append(" class=\"language-").append(std::string(lang)).append("\"");
+                                    output->append(" class=\"language-").append(escapeAttribute(lang)).append("\"");
                                 }
                                 output->append(">");
                                 
@@ -1063,15 +1092,19 @@ public:
                                          url = std::string(urlPart);
                                      }
                                  }
+
+                                 if (sanitize_html && !isSafeLink(url)) {
+                                     url = "#";
+                                 }
                                  
                                  if(isImage) {
-                                     output->append("<img src=\"").append(url).append("\" alt=\"").append(std::string(text)).append("\"");
-                                     if(!title.empty()) output->append(" title=\"").append(title).append("\"");
+                                     output->append("<img src=\"").append(escapeAttribute(url)).append("\" alt=\"").append(escapeAttribute(text)).append("\"");
+                                     if(!title.empty()) output->append(" title=\"").append(escapeAttribute(title)).append("\"");
                                      output->append(">");
                                  } else {
-                                     output->append("<a href=\"").append(url).append("\"");
-                                     if(!title.empty()) output->append(" title=\"").append(title).append("\"");
-                                     output->append(">").append(std::string(text)).append("</a>");
+                                     output->append("<a href=\"").append(escapeAttribute(url)).append("\"");
+                                     if(!title.empty()) output->append(" title=\"").append(escapeAttribute(title)).append("\"");
+                                     output->append(">").append(escapeAttribute(text)).append("</a>");
                                  }
 
                                  it = endParen;
@@ -1122,7 +1155,7 @@ public:
 
                 case TAGNAME:
                     // Templates
-                    if(!is_template && *it == ':' && (it + 1) < chunk_end && it[1] == ':') {
+                    if(!options.vanilla && !is_template && *it == ':' && (it + 1) < chunk_end && it[1] == ':') {
                         template_scope = std::string_view(value_start, it - value_start);
                         is_template = true;
 
@@ -1141,11 +1174,15 @@ public:
 
                             ls_template_tag = is_template && template_scope == "ls" && tag == "template";
 
-                            if(!in_markdown) {
+                            if(!in_markdown && !options.vanilla) {
                                 in_markdown = !ls_template_tag && tag == "markdown";
                             }
 
-                            render_element = !is_template && tag != "html" && tag != "!DOCTYPE" && !ls_template_tag && tag != "markdown";
+                            render_element = !is_template && !ls_template_tag;
+                            
+                            if(!options.vanilla) {
+                                render_element = render_element && tag != "html" && tag != "!DOCTYPE" && tag != "markdown";
+                            }
 
                             if (sanitize_html && render_element) {
                                 std::string tagNameStr = std::string(tag);
@@ -1286,19 +1323,19 @@ public:
                             }
                             current_attr_allowed = allowed;
 
-                            if(attribute_view == "markdown") {
-                                in_markdown = true;
-                                pending_markdown_attr = true;
-                            }
-
-                            if(attribute_view == "@import" && options.enableImport) {
-                                pending_import_attr = true;
-                            }
-
                             if(attribute_view.empty()) {
                                 value_start = it + 1;
                                 space_broken = false;
                                 break;
+                            }
+
+                            if(!options.vanilla && attribute_view == "markdown") {
+                                in_markdown = true;
+                                pending_markdown_attr = true;
+                            }
+
+                            if(!options.vanilla && attribute_view == "@import" && options.enableImport) {
+                                pending_import_attr = true;
                             }
 
                             if (ls_template_tag) {
@@ -1309,13 +1346,13 @@ public:
                                 }
                             } else if(options.buffer && allowed){
                                 // Handle attributes
-                                if (attribute_view[0] == '#') {
+                                if (!options.vanilla && attribute_view[0] == '#') {
                                     output->append(" id=\"");
                                     output->append(attribute_view.substr(1));
                                     output->append("\"");
-                                } else if (attribute_view == "markdown" || (attribute_view == "@import" && options.enableImport)) {
+                                } else if (!options.vanilla && (attribute_view == "markdown" || (attribute_view == "@import" && options.enableImport))) {
                                     // Do nothing
-                                } else if (attribute_view[0] == '.') {
+                                } else if (!options.vanilla && attribute_view[0] == '.') {
                                     if(!class_buffer.empty()) {
                                         class_buffer.append(" ");
                                     }
@@ -1323,7 +1360,7 @@ public:
                                     std::string attribute_str(attribute_view.substr(1));
                                     std::replace(attribute_str.begin(), attribute_str.end(), '.', ' ');
                                     class_buffer.append(attribute_str);
-                                } else if (attribute_view == "class") {
+                                } else if (!options.vanilla && attribute_view == "class") {
                                     flag_appendToClass = true;
                                 } else {
                                     output->append(" ");
@@ -1885,6 +1922,38 @@ private:
         return out;
     }
 
+    std::string escapeAttribute(std::string_view s) {
+        std::string buffer;
+        buffer.reserve(s.size());
+        for(char c : s) {
+            switch(c) {
+                case '&': buffer.append("&amp;"); break;
+                case '"': buffer.append("&quot;"); break;
+                case '\'': buffer.append("&#39;"); break;
+                case '<': buffer.append("&lt;"); break;
+                case '>': buffer.append("&gt;"); break;
+                default: buffer += c; break;
+            }
+        }
+        return buffer;
+    }
+
+    bool isSafeLink(std::string_view url) {
+        size_t colonPos = url.find(':');
+        if (colonPos == std::string_view::npos) return true;
+
+        std::string_view scheme = url.substr(0, colonPos);
+        std::string schemeLower; 
+        schemeLower.reserve(scheme.size());
+        for (char c : scheme) schemeLower += std::tolower((unsigned char)c);
+        
+        size_t start = 0;
+        while(start < schemeLower.size() && std::isspace(schemeLower[start])) start++;
+        if(start > 0) schemeLower = schemeLower.substr(start);
+
+        return schemeLower == "http" || schemeLower == "https";
+    }
+
     std::string normalizeDataExpr(std::string_view s) {
         std::string_view t = trim(s);
         if (t.empty()) return "data";
@@ -2040,7 +2109,7 @@ private:
                         char q = content[p++];
                         size_t vstart = p;
                         while (p < content.size() && content[p] != q) ++p;
-                        attrValue = std::string(content.substr(vstart, p - vstart));
+                                               attrValue = std::string(content.substr(vstart, p - vstart));
                         if (p < content.size()) ++p;
                     } else {
                         size_t vstart = p;
