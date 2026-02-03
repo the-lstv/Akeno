@@ -647,7 +647,6 @@ const server = new class WebServer extends Units.Module {
             }
 
             file = nodePath.normalize(file);
-
             const cacheEntry = server.fileServer.cache.get(file);
 
             // Because we can't read the accept-encoding header after generating async content....
@@ -665,13 +664,16 @@ const server = new class WebServer extends Units.Module {
                     const directory = nodePath.dirname(resolvedPath.relative);
 
                     // Prepare parser context data (what the callbacks should see)
-                    parserContext.data.url = url;
-                    parserContext.data.directory = directory;
-                    parserContext.data.path = app.path;
-                    parserContext.data.root = app.root;
-                    parserContext.data.file = file;
-                    parserContext.data.app = app;
-                    parserContext.data.secure = req.secure;
+                    // Shared object to reduce allocations (https://jsbm.dev/JeOxl30Y6fOj1)
+                    const data = parserContext.data;
+                    data.url = url;
+                    data.directory = directory;
+                    data.path = app.path;
+                    data.file = file;
+                    data.app = app;
+                    data.secure = req.secure;
+                    data.flags = 0;
+                    data.ls_version = null;
 
                     // file, parserContext, sanitize_html, template_enabled
                     // TODO: Allow to enable/disable templates and sanitization per-path or per-app
@@ -1008,6 +1010,15 @@ const ls_components = {
     ]
 };
 
+const PARSER_FLAGS = {
+    USING_LS_CSS: 1 << 0,
+    USING_LS_JS: 1 << 1,
+    USING_LS: 1 << 2,
+    GOOGLE_FONTS_PRECONNECT: 1 << 3,
+    SET_DEFAULT_CHARSET: 1 << 4,
+    SET_DEFAULT_VIEWPORT: 1 << 5
+};
+
 function initParser(header) {
     parser = new backend.native.parser({
         header,
@@ -1052,8 +1063,9 @@ function initParser(header) {
 
     // parserContext is an internal JS object that is passed around to callbacks.
     parserContext = parser.createContext();
-    parserContext.data = {};
+    parserContext.data = { flags: 0 };
 
+    // Block processor
     backend.native.context.prototype.onBlock = function (block) {
         const parent = this.getTagName();
 
@@ -1131,27 +1143,27 @@ function initParser(header) {
                         
                         if (is_merged || attrib === "ls.css" || singularCSSComponent) {
                             const cssComponents = is_merged ? components.filter(value => ls_components.css.includes(value)) : components;
-                            const useSingular = cssComponents.length === 1 && (this.data.using_ls_css || singularCSSComponent);
+                            const useSingular = cssComponents.length === 1 && ((this.data.flags & PARSER_FLAGS.USING_LS_CSS) || singularCSSComponent);
                             components_string = cssComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<link rel=stylesheet href="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_css ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
-                                this.data.using_ls_css = true;
+                                this.write(`<link rel=stylesheet href="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
+                                this.data.flags |= PARSER_FLAGS.USING_LS_CSS;
                             }
                         }
 
                         if (is_merged || attrib === "ls.js" || singularJSComponent) {
                             const jsComponents = is_merged ? components.filter(value => ls_components.js.includes(value)) : components;
-                            const useSingular = jsComponents.length === 1 && (this.data.using_ls_js || singularJSComponent);
+                            const useSingular = jsComponents.length === 1 && ((this.data.flags & PARSER_FLAGS.USING_LS_JS) || singularJSComponent);
                             components_string = jsComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<script src="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
-                                this.data.using_ls_js = true;
+                                this.write(`<script src="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: (this.data.flags & PARSER_FLAGS.USING_LS_JS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
+                                this.data.flags |= PARSER_FLAGS.USING_LS_JS;
                             }
                         }
 
-                        this.data.using_ls = true;
+                        this.data.flags |= PARSER_FLAGS.USING_LS;
                         continue;
                     }
 
@@ -1193,9 +1205,9 @@ function initParser(header) {
                             break;
 
                         case "google-fonts":
-                            if (!this.data.flag_google_fonts_preconnect) {
+                            if (!(this.data.flags & PARSER_FLAGS.GOOGLE_FONTS_PRECONNECT)) {
                                 this.write(`<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>`)
-                                this.data.flag_google_fonts_preconnect = true;
+                                this.data.flags |= PARSER_FLAGS.GOOGLE_FONTS_PRECONNECT;
                             }
 
                             if (components.length > 0) this.write(`<link rel=stylesheet href="https://fonts.googleapis.com/css2?${components.map(font => "family=" + font.replaceAll(" ", "+")).join("&")}&display=swap">`)
@@ -1250,8 +1262,8 @@ function initParser(header) {
                 if (block.properties.charset) {
                     this.write(`<meta charset="${block.properties.charset}">`);
                 } else {
-                    if (!this.data._setDefaultCharset) {
-                        this.data._setDefaultCharset = true;
+                    if (!(this.data.flags & PARSER_FLAGS.SET_DEFAULT_CHARSET)) {
+                        this.data.flags |= PARSER_FLAGS.SET_DEFAULT_CHARSET;
                         this.write(`<meta charset="utf-8">`);
                     }
                 }
@@ -1287,15 +1299,15 @@ function initParser(header) {
                 if (block.properties.viewport) {
                     this.write(`<meta name="viewport" content="${block.properties.viewport}">`);
                 } else {
-                    if (!this.data._setDefaultViewport) {
-                        this.data._setDefaultViewport = true;
+                    if (!(this.data.flags & PARSER_FLAGS.SET_DEFAULT_VIEWPORT)) {
+                        this.data.flags |= PARSER_FLAGS.SET_DEFAULT_VIEWPORT;
                         this.write(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`);
                     }
                 }
 
-                let bodyAttributes = this.data.using_ls_css ? "ls" : "";
+                let bodyAttributes = (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? "ls" : "";
 
-                if (this.data.using_ls_css) {
+                if (this.data.flags & PARSER_FLAGS.USING_LS_CSS) {
                     if (block.properties.theme) {
                         bodyAttributes += ` ls-theme="${block.properties.theme}"`;
                     }
@@ -1310,7 +1322,7 @@ function initParser(header) {
                 }
 
                 if (block.properties.font) {
-                    bodyAttributes += this.data.using_ls_css ? ` style="--font:${block.properties.font}"` : ` style="font-family:${block.properties.font}"`;
+                    bodyAttributes += (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? ` style="--font:${block.properties.font}"` : ` style="font-family:${block.properties.font}"`;
                 }
 
                 if (block.properties.favicon) {

@@ -105,19 +105,22 @@ function resolve(res, req, wsContext = null) {
         throw new TypeError("resolve() must be called with Units.Protocol as context");
     }
 
-    if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
-        req.begin = performance.now();
-    }
+    // if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
+    //     req.begin = performance.now();
+    // }
 
-    // Uppercased because of common convention, a lot of people expect methods to be uppercase
-    req.method = req.getMethod().toUpperCase();
-    req.secure = Boolean(this.requestFlags?.secure);
+    // Uppercased because of common convention, a lot of people sadly expect methods to be uppercase
+    req.method = req.getMethod().toUpperCase();    
     req.origin = req.getHeader('origin');
 
-    const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
-    req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
+    const flags = this.requestFlags;
+    req.secure = !!(flags && flags.secure);
 
-    if(req.domain.startsWith("www.") && backend.config.getBlock("web").get("redirect-www", Boolean, false)) {
+    const _host = req.getHeader("host") || "", _colon_index = _host.lastIndexOf(":");
+    req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
+    req.host = _host;
+
+    if(req.domain.startsWith("www.")) {
         res.writeStatus("301 Moved Permanently");
         res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
         res.end();
@@ -145,56 +148,66 @@ function resolve(res, req, wsContext = null) {
         req.abort = true;
     });
 
+    res.writeStatus("200 OK").end("pong");
+    return;
+
     resolveHandler(req, res, domainRouter.match(req.domain), wsContext);
 }
 
 function resolveHandler(req, res, handler, wsContext) {
+    const isWs = wsContext !== null;
+
     if(typeof handler === "function"){
-        if(wsContext) {
+        if(isWs) {
             if(handler.__includeWebSocketUpgrades) {
                 handler(req, res, wsContext);
-            } else {
-                res.writeStatus("400 Bad Request").end("400 Bad Request");
                 return;
             }
+
+            res.writeStatus("400 Bad Request").end("400 Bad Request");
+            return;
         }
 
         handler(req, res);
         return;
     }
 
-    if (typeof handler === "object") {
-        if (handler instanceof Router.PathMatcher) {
-            return resolveHandler(req, res, handler.match(req.path), wsContext);
-        }
+    while (handler && typeof handler === "object" && handler instanceof Router.PathMatcher) {
+        handler = handler.match(req.path);
+    }
 
-        if(wsContext){
-            if(typeof handler.websocket !== "object"){
+    if (typeof handler === "object") {
+        if (isWs) {
+            const ws = handler.websocket;
+            if (!ws || typeof ws !== "object") {
                 res.writeStatus("400 Bad Request").end("400 Bad Request");
                 return;
             }
 
-            if(typeof handler.websocket.upgrade === "function") {
-                handler.websocket.upgrade(req, res, wsContext);
-            } else {
-                const customData = {
-                    uuid: uuid(),
-                    url: req.path,
-                    query: req.getQuery(),
-                    domain: req.domain,
-                    host: req.host,
-                    ip: backend.helper.getRequestIP(res),
-                    handler: handler.websocket
-                };
+            if(typeof ws.upgrade === "function") {
+                ws.upgrade(req, res, wsContext);
+                return;
+            }
 
-                if(typeof handler.websocket.beforeUpgrade === "function") {
-                    if(handler.websocket.beforeUpgrade(req, res, wsContext, customData) === false) {
-                        return;
-                    }
+            const customData = {
+                uuid: uuid(),
+                url: req.path,
+                query: req.getQuery(),
+                domain: req.domain,
+                host: req.host,
+                ip: backend.helper.getRequestIP(res),
+                handler: ws
+            };
+
+            if(typeof ws.beforeUpgrade === "function") {
+                if(ws.beforeUpgrade(req, res, wsContext, customData) === false) {
+                    return;
                 }
+            }
 
+            if (!req.abort) {
                 try {
-                    if(!req.abort) res.upgrade(customData, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
+                    res.upgrade(customData, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
                 } catch (e) {
                     console.error("WebSocket upgrade error:", e);
                 }
@@ -205,7 +218,9 @@ function resolveHandler(req, res, handler, wsContext) {
         if(typeof handler.onRequest === "function"){
             handler.onRequest(req, res);
             return;
-        } else if(handler instanceof Units.App){
+        }
+
+        if(handler instanceof Units.App){
             backend.webServerHandler(req, res, handler);
             return;
         }
