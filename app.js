@@ -105,9 +105,9 @@ function resolve(res, req, wsContext = null) {
         throw new TypeError("resolve() must be called with Units.Protocol as context");
     }
 
-    // if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
-    //     req.begin = performance.now();
-    // }
+    if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
+        req.begin = performance.now();
+    }
 
     // Uppercased because of common convention, a lot of people sadly expect methods to be uppercase
     req.method = req.getMethod().toUpperCase();    
@@ -147,9 +147,6 @@ function resolve(res, req, wsContext = null) {
     res.onAborted(() => {
         req.abort = true;
     });
-
-    res.writeStatus("200 OK").end("pong");
-    return;
 
     resolveHandler(req, res, domainRouter.match(req.domain), wsContext);
 }
