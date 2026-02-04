@@ -29,12 +29,17 @@ let
     version = new Units.Version("1.6.8-beta")
 ;
 
+// This is temporary and will be removed in the future when Akeno-uWS is stable.
+const fs = require("node:fs");
+const TEMP_USING_AKENO_UWS = fs.existsSync('/www/content/akeno-uws/dist/uws.js');
+
 
 // Modules
 const
     // - Basic modules
-    fs = require("node:fs"),                              // File system
-    uws = require('uWebSockets.js'),                      // uWebSockets
+    // fs = require("node:fs"),                              // File system
+    // uws = require('uWebSockets.js'),                      // uWebSockets
+    uws = require(TEMP_USING_AKENO_UWS? '/www/content/akeno-uws/dist/uws' : 'uWebSockets.js'), // uWebSockets
     uuid = (require("uuid")).v4,                          // UUIDv4
     // fastJson = require("fast-json-stringify"),            // Fast JSON serializer
     { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),  // XXHash
@@ -61,6 +66,18 @@ const
 
     native = require(`./core/native/dist/akeno-native-${process.platform}-${process.arch}.node`)   // Native bindings
 ;
+
+if(TEMP_USING_AKENO_UWS) {
+    if(!uws.isAkeno) {
+        throw new Error("Invalid uWebSockets.js build detected, please use the Akeno-customized build provided with Akeno.");
+    }
+    
+    // if(!version.compare(uws.backendVersion)) {
+    //     throw new Error(`Incompatible Akeno-uWS build detected, expected ${uws.akenoCompatibility}, but is running ${version.toString()}.`);
+    // }
+
+    console.warn(`[system] Using experimental Akeno-uWS build`);
+}
 
 
 // Misc constants
@@ -101,6 +118,19 @@ const db = {
 */
 
 function resolve(res, req, wsContext = null) {
+    if(TEMP_USING_AKENO_UWS) {
+        // console.log(req, res, wsContext);
+        res.onAborted(() => {
+            req.abort = true;
+        });
+
+        console.log("[Akeno-uWS] Using experimental resolver");
+        
+
+        resolveHandler(req, res, domainRouter.match(req.domain), wsContext);
+        return;
+    }
+
     if(!(this instanceof Units.Protocol)) {
         throw new TypeError("resolve() must be called with Units.Protocol as context");
     }
@@ -109,8 +139,8 @@ function resolve(res, req, wsContext = null) {
         req.begin = performance.now();
     }
 
-    // Uppercased because of common convention, a lot of people sadly expect methods to be uppercase
-    req.method = req.getMethod().toUpperCase();    
+    // Method string; GET, POST, etc. - is case-sensitive, as per RFC standards. Thus we don't need to normalize (previously I was stupidly normalizing TWICE...).
+    req.method = req.getCaseSensitiveMethod();
     req.origin = req.getHeader('origin');
 
     const flags = this.requestFlags;
@@ -152,7 +182,11 @@ function resolve(res, req, wsContext = null) {
 }
 
 function resolveHandler(req, res, handler, wsContext) {
-    const isWs = wsContext !== null;
+    const isWs = wsContext !== null && typeof wsContext !== "undefined";
+
+    while (handler && typeof handler === "object" && handler instanceof Router.PathMatcher) {
+        handler = handler.match(req.path);
+    }
 
     if(typeof handler === "function"){
         if(isWs) {
@@ -167,10 +201,6 @@ function resolveHandler(req, res, handler, wsContext) {
 
         handler(req, res);
         return;
-    }
-
-    while (handler && typeof handler === "object" && handler instanceof Router.PathMatcher) {
-        handler = handler.match(req.path);
     }
 
     if (typeof handler === "object") {
@@ -948,7 +978,9 @@ const backend = {
 
     domainRouter,
 
-    uuid
+    uuid,
+
+    uws
 }
 
 

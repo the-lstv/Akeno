@@ -8,7 +8,7 @@ const nodePath = require("node:path");
 const fs = require("node:fs");
 const Units = require("./unit");
 
-const uws = require("uWebSockets.js");
+const uws = backend.uws;
 const { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash");
 
 let sharp;

@@ -13,7 +13,6 @@ let
     // Libraries
     fs = require("fs"),
     nodePath = require("path"),
-    uws = require('uWebSockets.js'),
 
     parser, // Will be defined later
     parserContext,
@@ -28,7 +27,8 @@ let
     applications = new Map,
 
     // Backend object
-    backend = require("akeno:backend")
+    backend = require("akeno:backend"),
+    uws = backend.uws
 ;
 
 /**
