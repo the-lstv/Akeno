@@ -31,15 +31,15 @@ let
 
 // This is temporary and will be removed in the future when Akeno-uWS is stable.
 const fs = require("node:fs");
-const TEMP_USING_AKENO_UWS = fs.existsSync('/www/content/akeno-uws/dist/uws.js');
-
+const TEMP_AKENO_UWS_PATH = fs.existsSync(__dirname + "/../akeno-uws/dist/uws.js") && __dirname + "/../akeno-uws/dist/uws.js";
+const TEMP_USING_AKENO_UWS = !!TEMP_AKENO_UWS_PATH;
 
 // Modules
 const
     // - Basic modules
     // fs = require("node:fs"),                              // File system
     // uws = require('uWebSockets.js'),                      // uWebSockets
-    uws = require(TEMP_USING_AKENO_UWS? '/www/content/akeno-uws/dist/uws' : 'uWebSockets.js'), // uWebSockets
+    uws = require(TEMP_USING_AKENO_UWS? TEMP_AKENO_UWS_PATH : 'uWebSockets.js'), // uWebSockets
     uuid = (require("uuid")).v4,                          // UUIDv4
     // fastJson = require("fast-json-stringify"),            // Fast JSON serializer
     { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),  // XXHash
@@ -71,10 +71,10 @@ if(TEMP_USING_AKENO_UWS) {
     if(!uws.isAkeno) {
         throw new Error("Invalid uWebSockets.js build detected, please use the Akeno-customized build provided with Akeno.");
     }
-    
-    // if(!version.compare(uws.backendVersion)) {
-    //     throw new Error(`Incompatible Akeno-uWS build detected, expected ${uws.akenoCompatibility}, but is running ${version.toString()}.`);
-    // }
+
+    if(!version.compare(uws.akenoCompatibility)) {
+        throw new Error(`Incompatible Akeno-uWS build detected, expected ${uws.akenoCompatibility}, but is running ${version.toString()}.`);
+    }
 
     console.warn(`[system] Using experimental Akeno-uWS build`);
 }
@@ -106,83 +106,87 @@ const db = {
 }
 
 
-/**
-* Global HTTP request resolver
-* Note: Do not call this function directly, define a protocol and then .bind it instead.
-* TODO: Move this to the C++ side
-* @param {HttpResponse} res
-* @param {HttpRequest} req
-* @example
-* const myHandler = backend.resolve.bind(myProtocol);
-* myHandler(res, req);
-*/
 
-function resolve(res, req, wsContext = null) {
-    if(TEMP_USING_AKENO_UWS) {
-        // console.log(req, res, wsContext);
+let resolve = resolveHandler; // Akeno-uWS skips the JS resolver
+if(!TEMP_USING_AKENO_UWS) {
+    /**
+    * Global HTTP request resolver
+    * Note: Do not call this function directly, define a protocol and then .bind it instead.
+    * TODO: Move this to the C++ side
+    * @param {HttpResponse} res
+    * @param {HttpRequest} req
+    * @example
+    * const myHandler = backend.resolve.bind(myProtocol);
+    * myHandler(res, req);
+    */
+    resolve = function (res, req, wsContext = null) {
+        if(!(this instanceof Units.Protocol)) {
+            throw new TypeError("resolve() must be called with Units.Protocol as context");
+        }
+
+        if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
+            req.begin = performance.now();
+        }
+
+        // Method string; GET, POST, etc. - is case-sensitive, as per RFC standards. Thus we don't need to normalize (previously I was stupidly normalizing TWICE...).
+        req.method = req.getCaseSensitiveMethod();
+        req.origin = req.getHeader('origin');
+
+        const flags = this.requestFlags;
+        req.secure = !!(flags && flags.secure);
+
+        const _host = req.getHeader("host") || "", _colon_index = _host.lastIndexOf(":");
+        req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
+        req.host = _host;
+
+        if(req.domain.startsWith("www.")) {
+            res.writeStatus("301 Moved Permanently");
+            res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
+            res.end();
+            return;
+        }
+
+        // TODO: More flexible CORS handling, though I don't know how to approach this yet, preflight requests are such a stupid idea.
+        if(req.method === "OPTIONS"){
+            backend.helper.corsHeaders(req, res);
+            res.writeHeader("Cache-Control", "max-age=1382400");
+            res.writeHeader("Access-Control-Max-Age", "1382400");
+            res.end();
+            return;
+        }
+
+        const url = req.getUrl();
+        req.path = url.indexOf("%") === -1? url: decodeURIComponent(url);
+
+        if(req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE") {
+            req.contentType = req.getHeader("content-type");
+            req.contentLength = req.getHeader("content-length");
+        }
+
         res.onAborted(() => {
             req.abort = true;
         });
 
-        console.log("[Akeno-uWS] Using experimental resolver");
-        
-
-        resolveHandler(req, res, domainRouter.match(req.domain), wsContext);
-        return;
+        resolveHandler(req, res, wsContext, domainRouter.match(req.domain));
     }
-
-    if(!(this instanceof Units.Protocol)) {
-        throw new TypeError("resolve() must be called with Units.Protocol as context");
-    }
-
-    if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
-        req.begin = performance.now();
-    }
-
-    // Method string; GET, POST, etc. - is case-sensitive, as per RFC standards. Thus we don't need to normalize (previously I was stupidly normalizing TWICE...).
-    req.method = req.getCaseSensitiveMethod();
-    req.origin = req.getHeader('origin');
-
-    const flags = this.requestFlags;
-    req.secure = !!(flags && flags.secure);
-
-    const _host = req.getHeader("host") || "", _colon_index = _host.lastIndexOf(":");
-    req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
-    req.host = _host;
-
-    if(req.domain.startsWith("www.")) {
-        res.writeStatus("301 Moved Permanently");
-        res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
-        res.end();
-        return;
-    }
-
-    // TODO: More flexible CORS handling, though I don't know how to approach this yet, preflight requests are such a stupid idea.
-    if(req.method === "OPTIONS"){
-        backend.helper.corsHeaders(req, res);
-        res.writeHeader("Cache-Control", "max-age=1382400");
-        res.writeHeader("Access-Control-Max-Age", "1382400");
-        res.end();
-        return;
-    }
-
-    const url = req.getUrl();
-    req.path = url.indexOf("%") === -1? url: decodeURIComponent(url);
-
-    if(req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE") {
-        req.contentType = req.getHeader("content-type");
-        req.contentLength = req.getHeader("content-length");
-    }
-
-    res.onAborted(() => {
-        req.abort = true;
-    });
-
-    resolveHandler(req, res, domainRouter.match(req.domain), wsContext);
 }
 
-function resolveHandler(req, res, handler, wsContext) {
+function resolveHandler(req, res, wsContext, handler = null) {
     const isWs = wsContext !== null && typeof wsContext !== "undefined";
+
+    if(!handler) {
+        // uWS passes arguments in reverse order ¯\_(ツ)_/¯
+        const _ = req;
+        req = res;
+        res = _;
+
+        // TODO:
+        res.onAborted(() => {
+            req.abort = true;
+        });
+
+        handler = domainRouter.match(req.domain);
+    }
 
     while (handler && typeof handler === "object" && handler instanceof Router.PathMatcher) {
         handler = handler.match(req.path);
@@ -255,7 +259,6 @@ function resolveHandler(req, res, handler, wsContext) {
 
     res.writeStatus("400 Bad Request").end("400 Bad Request");
 }
-
 
 // Central backend object
 const backend = {

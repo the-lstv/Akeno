@@ -8,6 +8,9 @@
 - Stop relying on napi and use v8 directly
 - Allow modules to extend the CLI help menu
 
+## New in 1.6.9-beta
+- Shifting to an experimental fork of uWebSockets.js
+
 ## New in 1.6.8-beta
 - A proper build pipeline and server events
 - Added a neat WebSocket authentication helper
