@@ -437,15 +437,7 @@ class WebApp extends Units.App {
 
             // This is possibly deprecated
             for (const handle of this.config.getBlocks("handle")) {
-                const target = handle.get("path", String);
-                const domain = handle.get("as", String);
-                if (!target || !domain) continue;
-
-                const handleObj = { handle: { target, domain, appendPath: handle.get("appendPath", Boolean) } };
-
-                for (const pattern of handle.attributes) {
-                    this.pathMatcher.add(pattern, handleObj);
-                }
+                server.error("The \"handle\" block is deprecated and should not be used, and it is not compatible with the new routing system. Please use domain-specific routing or addons instead. (App " + this.path + ")");
             }
 
             // Addons - Load addon, block the path
@@ -556,15 +548,6 @@ const server = new class WebServer extends Units.Module {
                     // Handle redirects
                     if (typeof attributes.redirect === "string") {
                         res.writeStatus('302 Found').writeHeader('Location', attributes.redirect).end();
-                        return;
-                    }
-
-                    // Handle external handles (redirects to a different handler based on domain)
-                    if (typeof attributes.handle === "object" && attributes.handle.domain) {
-                        const handler = backend.domainRouter.match(attributes.handle.domain);
-
-                        if (attributes.handle.target) req.path = attributes.handle.target + (attributes.handle.appendPath ? req.path : "");
-                        backend.resolveHandler(req, res, handler);
                         return;
                     }
 

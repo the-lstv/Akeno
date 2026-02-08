@@ -47,7 +47,11 @@ const
     MimeTypes = require("akeno:mime"),                    // MIME types
     Router = require("akeno:router"),                     // Router utilities
 
-    domainRouter = new Router.DomainRouter(),             // Global router instance
+    domainRouter = TEMP_USING_AKENO_UWS? {
+        add(pattern, handler) {
+            uws.routeDomain(pattern, handler);
+        }
+    }: new Router.DomainRouter(),             // Global router instance
 
     // - Authentication and security
     bcrypt = require("bcrypt"),                           // Secure hashing
@@ -107,17 +111,11 @@ const db = {
 
 
 
-let resolve = resolveHandler; // Akeno-uWS skips the JS resolver
+let resolve = resolveJS; // Akeno-uWS skips the JS resolver
 if(!TEMP_USING_AKENO_UWS) {
     /**
-    * Global HTTP request resolver
-    * Note: Do not call this function directly, define a protocol and then .bind it instead.
-    * TODO: Move this to the C++ side
-    * @param {HttpResponse} res
-    * @param {HttpRequest} req
-    * @example
-    * const myHandler = backend.resolve.bind(myProtocol);
-    * myHandler(res, req);
+    * This is the legacy JS resolver compatible with vanilla uWebSockets.js.
+    * Note that it uses the reversed order.
     */
     resolve = function (res, req, wsContext = null) {
         if(!(this instanceof Units.Protocol)) {
@@ -173,20 +171,6 @@ if(!TEMP_USING_AKENO_UWS) {
 
 function resolveHandler(req, res, wsContext, handler = null) {
     const isWs = wsContext !== null && typeof wsContext !== "undefined";
-
-    if(!handler) {
-        // uWS passes arguments in reverse order ¯\_(ツ)_/¯
-        const _ = req;
-        req = res;
-        res = _;
-
-        // TODO:
-        res.onAborted(() => {
-            req.abort = true;
-        });
-
-        handler = domainRouter.match(req.domain);
-    }
 
     while (handler && typeof handler === "object" && handler instanceof Router.PathMatcher) {
         handler = handler.match(req.path);
@@ -258,6 +242,12 @@ function resolveHandler(req, res, wsContext, handler = null) {
     }
 
     res.writeStatus("400 Bad Request").end("400 Bad Request");
+}
+
+// This one has the correct order.
+function resolveJS(req, res, target) {
+    res.onAborted(() => { });
+    resolveHandler(req, res, null, target);
 }
 
 // Central backend object
