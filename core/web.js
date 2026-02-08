@@ -13,7 +13,6 @@ let
     // Libraries
     fs = require("fs"),
     nodePath = require("path"),
-    uws = require('uWebSockets.js'),
 
     parser, // Will be defined later
     parserContext,
@@ -28,7 +27,8 @@ let
     applications = new Map,
 
     // Backend object
-    backend = require("akeno:backend")
+    backend = require("akeno:backend"),
+    uws = backend.uws
 ;
 
 /**
@@ -117,6 +117,85 @@ class WebApp extends Units.App {
         return { full, relative: relativeForLink, useRootPath };
     }
 
+    #applyCaseOverrides() {
+        if (!this.config) return;
+
+        const caseEntries = this.config.getBlocks("case_override");
+        if (!caseEntries || caseEntries.length === 0) return;
+
+        this.warn("case_override is an experimental feature");
+
+        for (const entry of caseEntries) {
+            if (!entry || !Array.isArray(entry.attributes) || entry.attributes.length === 0) continue;
+
+            let match = false;
+            for (const attr of entry.attributes) {
+                const compare = this.#resolveCaseField(attr.name);
+                if (compare && Array.isArray(attr.values) && attr.values.some((value) => compare === value)) {
+                    match = true;
+                    break;
+                }
+            }
+
+            if (!match) continue;
+            this.#applyOverride(entry);
+        }
+    }
+
+    #resolveCaseField(name) {
+        switch (name) {
+            case "basename":
+                return this.basename;
+            case "path":
+                return this.path;
+            case "name":
+                return this.name;
+            case "root":
+                return this.root;
+            case "dir": case "dirname":
+                return nodePath.dirname(this.path);
+            case "mode":
+                return backend.modes[backend.mode];
+            default:
+                if (name.startsWith("env.")) {
+                    const envKey = name.slice(4);
+                    return process.env ? process.env[envKey] : undefined;
+                }
+
+                if (Object.prototype.hasOwnProperty.call(this, name) && typeof this[name] !== "function") {
+                    return this[name];
+                }
+
+                return undefined;
+        }
+    }
+
+    #applyOverride(entry) {
+        if (!entry.properties || typeof entry.properties !== "object") return;
+
+        for (const blockName of Object.keys(entry.properties)) {
+            const override = entry.properties[blockName];
+            if (!override) continue;
+
+            // Only overrides blocks; properties aren't supported at the top level (yet)
+            if (this.#isConfigBlock(override)) {
+                const targetName = override.name || blockName;
+                const blocks = this.config.data.get(targetName) || [];
+
+                if (blocks.length <= 1) {
+                    this.config.data.set(targetName, [override]);
+                    continue;
+                }
+
+                this.error(`case_override: Block "${targetName}" has multiple instances; cannot override (App ${this.path})`);
+            }
+        }
+    }
+
+    #isConfigBlock(value) {
+        return value && typeof value === "object" && typeof value.get === "function" && typeof value.getBlock === "function";
+    }
+
     fileHasChangedSince(path, ms) {
         const file = this.resolvePath(path).full;
         try {
@@ -148,6 +227,8 @@ class WebApp extends Units.App {
     }
 
     reload(options, checkConfig = true) {
+        options ??= {};
+
         if(options.config) {
             if(typeof options.config === "object" && !options.config.data) {
                 // Config is possibly JSON, will need to parse
@@ -188,6 +269,8 @@ class WebApp extends Units.App {
 
             if (!this.config) throw "Invalid or missing config";
         }
+
+        this.#applyCaseOverrides();
 
         if (this.loaded) this.verbose("Hot-reloading");
 
@@ -301,6 +384,11 @@ class WebApp extends Units.App {
             this.esbuildTargets = targets.length > 0 && targets;
         } else delete this.esbuildTargets;
 
+        if (this.config.data.has("ls")) {
+            const version = this.config.getBlock("ls").get("version", String, null);
+            this.lsVersion = version;
+        } else delete this.lsVersion;
+
         for (let api of this.config.getBlocks("module")) {
             // TODO: Proper module system
             const name = api.attributes;
@@ -349,15 +437,7 @@ class WebApp extends Units.App {
 
             // This is possibly deprecated
             for (const handle of this.config.getBlocks("handle")) {
-                const target = handle.get("path", String);
-                const domain = handle.get("as", String);
-                if (!target || !domain) continue;
-
-                const handleObj = { handle: { target, domain, appendPath: handle.get("appendPath", Boolean) } };
-
-                for (const pattern of handle.attributes) {
-                    this.pathMatcher.add(pattern, handleObj);
-                }
+                server.error("The \"handle\" block is deprecated and should not be used, and it is not compatible with the new routing system. Please use domain-specific routing or addons instead. (App " + this.path + ")");
             }
 
             // Addons - Load addon, block the path
@@ -471,15 +551,6 @@ const server = new class WebServer extends Units.Module {
                         return;
                     }
 
-                    // Handle external handles (redirects to a different handler based on domain)
-                    if (typeof attributes.handle === "object" && attributes.handle.domain) {
-                        const handler = backend.domainRouter.match(attributes.handle.domain);
-
-                        if (attributes.handle.target) req.path = attributes.handle.target + (attributes.handle.appendPath ? req.path : "");
-                        backend.resolveHandler(req, res, handler);
-                        return;
-                    }
-
                     // Handle aliases (an URL points to a different file)
                     if (typeof attributes.alias === "string") {
                         if(attributes.alias.charCodeAt(0) !== 47) {
@@ -559,7 +630,6 @@ const server = new class WebServer extends Units.Module {
             }
 
             file = nodePath.normalize(file);
-
             const cacheEntry = server.fileServer.cache.get(file);
 
             // Because we can't read the accept-encoding header after generating async content....
@@ -573,11 +643,28 @@ const server = new class WebServer extends Units.Module {
                 // By default, the server will get its own content
                 let content = null;
 
-                if (extension === "html") {
+                if (extension === "html" || extension === "md" || extension === "htm") {
                     const directory = nodePath.dirname(resolvedPath.relative);
 
-                    parserContext.data = { url, directory, path: app.path, root: app.root, file, app, secure: req.secure };
-                    content = parser.fromFile(file, parserContext, true);
+                    // Prepare parser context data (what the callbacks should see)
+                    // Shared object to reduce allocations (https://jsbm.dev/JeOxl30Y6fOj1)
+                    const data = parserContext.data;
+                    data.url = url;
+                    data.directory = directory;
+                    data.path = app.path;
+                    data.file = file;
+                    data.app = app;
+                    data.secure = req.secure;
+                    data.flags = 0;
+                    data.ls_version = null;
+
+                    // file, parserContext, sanitize_html, template_enabled
+                    // TODO: Allow to enable/disable templates and sanitization per-path or per-app
+                    if(extension === "md") {
+                        content = parser.fromMarkdownFile(file, parserContext, false, false);
+                    } else {
+                        content = parser.fromFile(file, parserContext, false, true);
+                    }
                 }
 
                 if (cacheEntry) {
@@ -906,6 +993,15 @@ const ls_components = {
     ]
 };
 
+const PARSER_FLAGS = {
+    USING_LS_CSS: 1 << 0,
+    USING_LS_JS: 1 << 1,
+    USING_LS: 1 << 2,
+    GOOGLE_FONTS_PRECONNECT: 1 << 3,
+    SET_DEFAULT_CHARSET: 1 << 4,
+    SET_DEFAULT_VIEWPORT: 1 << 5
+};
+
 function initParser(header) {
     parser = new backend.native.parser({
         header,
@@ -917,7 +1013,7 @@ function initParser(header) {
             
             // Inline script compression
             // TODO: Handle script type
-            if(parent === "script") {
+            if (parent === "script") {
                 if(!backend.compression.codeEnabled) {
                     return true;
                 }
@@ -948,8 +1044,11 @@ function initParser(header) {
         // }
     });
 
+    // parserContext is an internal JS object that is passed around to callbacks.
     parserContext = parser.createContext();
+    parserContext.data = { flags: 0 };
 
+    // Block processor
     backend.native.context.prototype.onBlock = function (block) {
         const parent = this.getTagName();
 
@@ -994,10 +1093,12 @@ function initParser(header) {
 
                     if (attrib === "ls" || attrib.startsWith("ls.")) {
                         if (!version) {
-                            if (this.data.ls_version) {
-                                version = this.data.ls_version;
+                            if (this.data.app && this.data.app.lsVersion) {
+                                version = this.data.app.lsVersion;
+                            } else if (this.data.ls_version) {
+                                version = this.data.ls_version; // Use previously specified version (outdated fallback)
                             } else {
-                                console.error(`Error in app "${this.data.path}": No version was specified for LS in your app. This is no longer supported - you must specify a version, for example ${attrib}:${latest_ls_version}. To enforce the latest version, use ${attrib}:latest`);
+                                console.error(`Error in app "${this.data.path}": No version was specified for LS in your app. This is no longer supported - you need to specify a version, for example ${attrib}:${latest_ls_version}. To get the latest version, use ${attrib}:latest, but this is not recommended for production environments.`);
                                 break;
                             }
                         }
@@ -1020,30 +1121,32 @@ function initParser(header) {
                             components = [singularJSComponent];
                         }
 
+                        // Bypass CDN for beta versions
+                        const CDN_ORIGIN = version === "beta" ? server.etc.EXTRAGON_CDN.replace("cdn.", "cdn-origin.") : server.etc.EXTRAGON_CDN;
                         
                         if (is_merged || attrib === "ls.css" || singularCSSComponent) {
                             const cssComponents = is_merged ? components.filter(value => ls_components.css.includes(value)) : components;
-                            const useSingular = cssComponents.length === 1 && (this.data.using_ls_css || singularCSSComponent);
+                            const useSingular = cssComponents.length === 1 && ((this.data.flags & PARSER_FLAGS.USING_LS_CSS) || singularCSSComponent);
                             components_string = cssComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<link rel=stylesheet href="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_css ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
-                                this.data.using_ls_css = true;
+                                this.write(`<link rel=stylesheet href="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
+                                this.data.flags |= PARSER_FLAGS.USING_LS_CSS;
                             }
                         }
 
                         if (is_merged || attrib === "ls.js" || singularJSComponent) {
                             const jsComponents = is_merged ? components.filter(value => ls_components.js.includes(value)) : components;
-                            const useSingular = jsComponents.length === 1 && (this.data.using_ls_js || singularJSComponent);
+                            const useSingular = jsComponents.length === 1 && ((this.data.flags & PARSER_FLAGS.USING_LS_JS) || singularJSComponent);
                             components_string = jsComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<script src="${server.etc.EXTRAGON_CDN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: this.data.using_ls_js ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
-                                this.data.using_ls_js = true;
+                                this.write(`<script src="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: (this.data.flags & PARSER_FLAGS.USING_LS_JS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
+                                this.data.flags |= PARSER_FLAGS.USING_LS_JS;
                             }
                         }
 
-                        this.data.using_ls = true;
+                        this.data.flags |= PARSER_FLAGS.USING_LS;
                         continue;
                     }
 
@@ -1081,13 +1184,13 @@ function initParser(header) {
                             break;
 
                         case "marked":
-                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "16.2.1"}/lib/marked.umd.min.js"${scriptAttributes}></script>`);
+                            this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/${version || "17.0.1"}/lib/marked.umd.min.js"${scriptAttributes}></script>`);
                             break;
 
                         case "google-fonts":
-                            if (!this.data.flag_google_fonts_preconnect) {
+                            if (!(this.data.flags & PARSER_FLAGS.GOOGLE_FONTS_PRECONNECT)) {
                                 this.write(`<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>`)
-                                this.data.flag_google_fonts_preconnect = true;
+                                this.data.flags |= PARSER_FLAGS.GOOGLE_FONTS_PRECONNECT;
                             }
 
                             if (components.length > 0) this.write(`<link rel=stylesheet href="https://fonts.googleapis.com/css2?${components.map(font => "family=" + font.replaceAll(" ", "+")).join("&")}&display=swap">`)
@@ -1142,8 +1245,8 @@ function initParser(header) {
                 if (block.properties.charset) {
                     this.write(`<meta charset="${block.properties.charset}">`);
                 } else {
-                    if (!this.data._setDefaultCharset) {
-                        this.data._setDefaultCharset = true;
+                    if (!(this.data.flags & PARSER_FLAGS.SET_DEFAULT_CHARSET)) {
+                        this.data.flags |= PARSER_FLAGS.SET_DEFAULT_CHARSET;
                         this.write(`<meta charset="utf-8">`);
                     }
                 }
@@ -1179,15 +1282,15 @@ function initParser(header) {
                 if (block.properties.viewport) {
                     this.write(`<meta name="viewport" content="${block.properties.viewport}">`);
                 } else {
-                    if (!this.data._setDefaultViewport) {
-                        this.data._setDefaultViewport = true;
+                    if (!(this.data.flags & PARSER_FLAGS.SET_DEFAULT_VIEWPORT)) {
+                        this.data.flags |= PARSER_FLAGS.SET_DEFAULT_VIEWPORT;
                         this.write(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`);
                     }
                 }
 
-                let bodyAttributes = this.data.using_ls_css ? "ls" : "";
+                let bodyAttributes = (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? "ls" : "";
 
-                if (this.data.using_ls_css) {
+                if (this.data.flags & PARSER_FLAGS.USING_LS_CSS) {
                     if (block.properties.theme) {
                         bodyAttributes += ` ls-theme="${block.properties.theme}"`;
                     }
@@ -1202,7 +1305,7 @@ function initParser(header) {
                 }
 
                 if (block.properties.font) {
-                    bodyAttributes += this.data.using_ls_css ? ` style="--font:${block.properties.font}"` : ` style="font-family:${block.properties.font}"`;
+                    bodyAttributes += (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? ` style="--font:${block.properties.font}"` : ` style="font-family:${block.properties.font}"`;
                 }
 
                 if (block.properties.favicon) {

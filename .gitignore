@@ -32,3 +32,5 @@ build/config.gypi
 
 *spec.js
 *test.js
+
+*-benchmark.js

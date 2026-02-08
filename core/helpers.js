@@ -8,7 +8,7 @@ const nodePath = require("node:path");
 const fs = require("node:fs");
 const Units = require("./unit");
 
-const uws = require("uWebSockets.js");
+const uws = backend.uws;
 const { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash");
 
 let sharp;
@@ -57,7 +57,7 @@ try {
     esbuild = null;
 }
 
-const defaultTargets = ['chrome90', 'firefox90', 'safari15', 'edge90'];
+const defaultTargets = ["chrome108", "firefox102", "safari16"];
 class ContentProcessor {
     /**
      * Internal build pipeline processor.
@@ -290,11 +290,13 @@ class CacheManager extends Units.Server {
         }
 
         // Recompress & send
-        const [usedAlgo, buffer, headers] = backend.helper.sendCompressed(req, res, cache[0][0], mimeType, { ...cache[0][1] }, status, algo);
+        const cResult = backend.helper.sendCompressed(req, res, cache[0][0], mimeType, { ...cache[0][1] }, status, algo);
+
+        if(!cResult) return; // req aborted
 
         // Store if new
-        if (!cache[usedAlgo]) {
-            cache[usedAlgo] = [buffer, headers];
+        if (!cache[cResult.usedAlgo]) {
+            cache[cResult.usedAlgo] = [cResult.buffer, cResult.headers];
         }
     }
 

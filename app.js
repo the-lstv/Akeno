@@ -29,12 +29,17 @@ let
     version = new Units.Version("1.6.8-beta")
 ;
 
+// This is temporary and will be removed in the future when Akeno-uWS is stable.
+const fs = require("node:fs");
+const TEMP_AKENO_UWS_PATH = fs.existsSync(__dirname + "/../akeno-uws/dist/uws.js") && __dirname + "/../akeno-uws/dist/uws.js";
+const TEMP_USING_AKENO_UWS = !!TEMP_AKENO_UWS_PATH;
 
 // Modules
 const
     // - Basic modules
-    fs = require("node:fs"),                              // File system
-    uws = require('uWebSockets.js'),                      // uWebSockets
+    // fs = require("node:fs"),                              // File system
+    // uws = require('uWebSockets.js'),                      // uWebSockets
+    uws = require(TEMP_USING_AKENO_UWS? TEMP_AKENO_UWS_PATH : 'uWebSockets.js'), // uWebSockets
     uuid = (require("uuid")).v4,                          // UUIDv4
     // fastJson = require("fast-json-stringify"),            // Fast JSON serializer
     { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),  // XXHash
@@ -42,7 +47,11 @@ const
     MimeTypes = require("akeno:mime"),                    // MIME types
     Router = require("akeno:router"),                     // Router utilities
 
-    domainRouter = new Router.DomainRouter(),             // Global router instance
+    domainRouter = TEMP_USING_AKENO_UWS? {
+        add(pattern, handler) {
+            uws.routeDomain(pattern, handler);
+        }
+    }: new Router.DomainRouter(),             // Global router instance
 
     // - Authentication and security
     bcrypt = require("bcrypt"),                           // Secure hashing
@@ -61,6 +70,18 @@ const
 
     native = require(`./core/native/dist/akeno-native-${process.platform}-${process.arch}.node`)   // Native bindings
 ;
+
+if(TEMP_USING_AKENO_UWS) {
+    if(!uws.isAkeno) {
+        throw new Error("Invalid uWebSockets.js build detected, please use the Akeno-customized build provided with Akeno.");
+    }
+
+    if(!version.compare(uws.akenoCompatibility)) {
+        throw new Error(`Incompatible Akeno-uWS build detected, expected ${uws.akenoCompatibility}, but is running ${version.toString()}.`);
+    }
+
+    console.warn(`[system] Using experimental Akeno-uWS build`);
+}
 
 
 // Misc constants
@@ -89,74 +110,81 @@ const db = {
 }
 
 
-/**
-* Global HTTP request resolver
-* Note: Do not call this function directly, define a protocol and then .bind it instead.
-* TODO: Move this to the C++ side
-* @param {HttpResponse} res
-* @param {HttpRequest} req
-* @example
-* const myHandler = backend.resolve.bind(myProtocol);
-* myHandler(res, req);
-*/
 
-function resolve(res, req, wsContext = null) {
-    if(!(this instanceof Units.Protocol)) {
-        throw new TypeError("resolve() must be called with Units.Protocol as context");
+let resolve = resolveJS; // Akeno-uWS skips the JS resolver
+if(!TEMP_USING_AKENO_UWS) {
+    /**
+    * This is the legacy JS resolver compatible with vanilla uWebSockets.js.
+    * Note that it uses the reversed order.
+    */
+    resolve = function (res, req, wsContext = null) {
+        if(!(this instanceof Units.Protocol)) {
+            throw new TypeError("resolve() must be called with Units.Protocol as context");
+        }
+
+        if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
+            req.begin = performance.now();
+        }
+
+        // Method string; GET, POST, etc. - is case-sensitive, as per RFC standards. Thus we don't need to normalize (previously I was stupidly normalizing TWICE...).
+        req.method = req.getCaseSensitiveMethod();
+        req.origin = req.getHeader('origin');
+
+        const flags = this.requestFlags;
+        req.secure = !!(flags && flags.secure);
+
+        const _host = req.getHeader("host") || "", _colon_index = _host.lastIndexOf(":");
+        req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
+        req.host = _host;
+
+        if(req.domain.startsWith("www.")) {
+            res.writeStatus("301 Moved Permanently");
+            res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
+            res.end();
+            return;
+        }
+
+        // TODO: More flexible CORS handling, though I don't know how to approach this yet, preflight requests are such a stupid idea.
+        if(req.method === "OPTIONS"){
+            backend.helper.corsHeaders(req, res);
+            res.writeHeader("Cache-Control", "max-age=1382400");
+            res.writeHeader("Access-Control-Max-Age", "1382400");
+            res.end();
+            return;
+        }
+
+        const url = req.getUrl();
+        req.path = url.indexOf("%") === -1? url: decodeURIComponent(url);
+
+        if(req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE") {
+            req.contentType = req.getHeader("content-type");
+            req.contentLength = req.getHeader("content-length");
+        }
+
+        res.onAborted(() => {
+            req.abort = true;
+        });
+
+        resolveHandler(req, res, wsContext, domainRouter.match(req.domain));
     }
-
-    if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
-        req.begin = performance.now();
-    }
-
-    // Uppercased because of common convention, a lot of people expect methods to be uppercase
-    req.method = req.getMethod().toUpperCase();
-    req.secure = Boolean(this.requestFlags?.secure);
-    req.origin = req.getHeader('origin');
-
-    const _host = req.getHeader("host"), _colon_index = _host.lastIndexOf(":");
-    req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
-
-    if(req.domain.startsWith("www.") && backend.config.getBlock("web").get("redirect-www", Boolean, false)) {
-        res.writeStatus("301 Moved Permanently");
-        res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
-        res.end();
-        return;
-    }
-
-    // TODO: More flexible CORS handling, though I don't know how to approach this yet, preflight requests are such a stupid idea.
-    if(req.method === "OPTIONS"){
-        backend.helper.corsHeaders(req, res);
-        res.writeHeader("Cache-Control", "max-age=1382400");
-        res.writeHeader("Access-Control-Max-Age", "1382400");
-        res.end();
-        return;
-    }
-
-    const url = req.getUrl();
-    req.path = url.indexOf("%") === -1? url: decodeURIComponent(url);
-
-    if(req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE") {
-        req.contentType = req.getHeader("content-type");
-        req.contentLength = req.getHeader("content-length");
-    }
-
-    res.onAborted(() => {
-        req.abort = true;
-    });
-
-    resolveHandler(req, res, domainRouter.match(req.domain), wsContext);
 }
 
-function resolveHandler(req, res, handler, wsContext) {
+function resolveHandler(req, res, wsContext, handler = null) {
+    const isWs = wsContext !== null && typeof wsContext !== "undefined";
+
+    while (handler && typeof handler === "object" && handler instanceof Router.PathMatcher) {
+        handler = handler.match(req.path);
+    }
+
     if(typeof handler === "function"){
-        if(wsContext) {
+        if(isWs) {
             if(handler.__includeWebSocketUpgrades) {
                 handler(req, res, wsContext);
-            } else {
-                res.writeStatus("400 Bad Request").end("400 Bad Request");
                 return;
             }
+
+            res.writeStatus("400 Bad Request").end("400 Bad Request");
+            return;
         }
 
         handler(req, res);
@@ -164,37 +192,37 @@ function resolveHandler(req, res, handler, wsContext) {
     }
 
     if (typeof handler === "object") {
-        if (handler instanceof Router.PathMatcher) {
-            return resolveHandler(req, res, handler.match(req.path), wsContext);
-        }
-
-        if(wsContext){
-            if(typeof handler.websocket !== "object"){
+        if (isWs) {
+            const ws = handler.websocket;
+            if (!ws || typeof ws !== "object") {
                 res.writeStatus("400 Bad Request").end("400 Bad Request");
                 return;
             }
 
-            if(typeof handler.websocket.upgrade === "function") {
-                handler.websocket.upgrade(req, res, wsContext);
-            } else {
-                const customData = {
-                    uuid: uuid(),
-                    url: req.path,
-                    query: req.getQuery(),
-                    domain: req.domain,
-                    host: req.host,
-                    ip: backend.helper.getRequestIP(res),
-                    handler: handler.websocket
-                };
+            if(typeof ws.upgrade === "function") {
+                ws.upgrade(req, res, wsContext);
+                return;
+            }
 
-                if(typeof handler.websocket.beforeUpgrade === "function") {
-                    if(handler.websocket.beforeUpgrade(req, res, wsContext, customData) === false) {
-                        return;
-                    }
+            const customData = {
+                uuid: uuid(),
+                url: req.path,
+                query: req.getQuery(),
+                domain: req.domain,
+                host: req.host,
+                ip: backend.helper.getRequestIP(res),
+                handler: ws
+            };
+
+            if(typeof ws.beforeUpgrade === "function") {
+                if(ws.beforeUpgrade(req, res, wsContext, customData) === false) {
+                    return;
                 }
+            }
 
+            if (!req.abort) {
                 try {
-                    if(!req.abort) res.upgrade(customData, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
+                    res.upgrade(customData, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), wsContext);
                 } catch (e) {
                     console.error("WebSocket upgrade error:", e);
                 }
@@ -205,7 +233,9 @@ function resolveHandler(req, res, handler, wsContext) {
         if(typeof handler.onRequest === "function"){
             handler.onRequest(req, res);
             return;
-        } else if(handler instanceof Units.App){
+        }
+
+        if(handler instanceof Units.App){
             backend.webServerHandler(req, res, handler);
             return;
         }
@@ -214,6 +244,11 @@ function resolveHandler(req, res, handler, wsContext) {
     res.writeStatus("400 Bad Request").end("400 Bad Request");
 }
 
+// This one has the correct order.
+function resolveJS(req, res, target) {
+    res.onAborted(() => { });
+    resolveHandler(req, res, null, target);
+}
 
 // Central backend object
 const backend = {
@@ -925,7 +960,7 @@ const backend = {
         backend.compression.codeEnabled = backend.config.getBlock("web").get("compress-code", Boolean, true);
 
         backend.esbuildEnabled = backend.config.getBlock("web").get("esbuild", Boolean, false);
-        backend.esbuildTargets = backend.config.getBlock("web").get("esbuild-targets", Array, ["chrome58", "firefox57", "safari11"]);
+        backend.esbuildTargets = backend.config.getBlock("web").get("esbuild-targets", Array, ["chrome108", "firefox102", "safari16"]);
     },
 
     trustedOrigins: new Set,
@@ -936,7 +971,9 @@ const backend = {
 
     domainRouter,
 
-    uuid
+    uuid,
+
+    uws
 }
 
 
