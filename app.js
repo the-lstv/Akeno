@@ -26,13 +26,17 @@ const Units = require("akeno:units");
 
 // Global variables
 let
-    version = new Units.Version("1.6.8-beta")
+    version = new Units.Version("1.6.9-beta")
 ;
 
 // This is temporary and will be removed in the future when Akeno-uWS is stable.
+// Everywhere where is "TEMP_USING_AKENO_UWS" is to be replaced later on
 const fs = require("node:fs");
 const TEMP_AKENO_UWS_PATH = fs.existsSync(__dirname + "/../akeno-uws/dist/uws.js") && __dirname + "/../akeno-uws/dist/uws.js";
 const TEMP_USING_AKENO_UWS = !!TEMP_AKENO_UWS_PATH;
+
+// Tempoary
+let globalApp;
 
 // Modules
 const
@@ -49,7 +53,7 @@ const
 
     domainRouter = TEMP_USING_AKENO_UWS? {
         add(pattern, handler) {
-            uws.routeDomain(pattern, handler);
+            globalApp.route(pattern, handler);
         }
     }: new Router.DomainRouter(),             // Global router instance
 
@@ -68,8 +72,14 @@ const
     { Server: IPCServer } = require("./core/ipc"),        // IPC server
     { parse, configTools } = require("./core/parser"),    // Parser
 
-    native = require(`./core/native/dist/akeno-native-${process.platform}-${process.arch}.node`)   // Native bindings
+    // Native bindings
+    native = !TEMP_USING_AKENO_UWS? require(`./core/native/dist/akeno-native-${process.platform}-${process.arch}.node`): {
+        get parser() { return uws.HTMLParser; }
+    } // <- The native bindings module has been replaced by Akeno-uWS. TODO: Remove once API is replaced.
 ;
+
+// Tempoarary
+globalApp = new uws.App();
 
 if(TEMP_USING_AKENO_UWS) {
     if(!uws.isAkeno) {
@@ -430,6 +440,9 @@ const backend = {
             }
         },
 
+        /**
+         * @deprecated To be replaced by the new Protocol API
+         */
         http: new class HTTPProtocol extends Units.HTTPProtocol {
             constructor(){
                 super({
@@ -442,16 +455,22 @@ const backend = {
                     secure: false
                 }
 
-                this.defaultResolver = resolve.bind(this);
+                if(!TEMP_USING_AKENO_UWS) this.defaultResolver = resolve.bind(this);
 
+                // @deprecated
                 this.ports = [];
             }
 
             init() {
-                this.server = uws.App();
-                this.server.any("/*", this.defaultResolver);
-
-                if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
+                if(TEMP_USING_AKENO_UWS) {
+                    // There is finally a proper API for this
+                    this.server = new uws.HTTPProtocol();
+                } else {
+                    this.server = uws.App();
+                    this.server.any("/*", this.defaultResolver);
+    
+                    if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
+                }
             }
         },
 
@@ -469,7 +488,7 @@ const backend = {
                     secure: true
                 }
 
-                this.defaultResolver = resolve.bind(this);
+                if(!TEMP_USING_AKENO_UWS) this.defaultResolver = resolve.bind(this);
 
                 this.ports = [];
 

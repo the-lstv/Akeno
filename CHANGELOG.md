@@ -1,15 +1,23 @@
 ## TO-DO
 - Add a fast C++ side content cache replacing the current temporary one
-- Implement a proper database system
+- Implement a proper database system (X - not this project's job)
 - Complete package manager for addons/modules
 - Rework many parts, including the CLI, dynamic content, and the router
 - Write a proper documentation (https://lstv.space/docs/akeno is work in progress now)
 - Add a proper installation script (soon)
-- Stop relying on napi and use v8 directly
 - Allow modules to extend the CLI help menu
+- Re-implement HTTPS, H3 and WS protocols
+- Fix jsObject router type
+- Remove native/dist once properly switched to Akeno-uWS
+- Streamline build setup
 
 ## New in 1.6.9-beta
 - Shifting to an experimental fork of uWebSockets.js
+- Redesigned the internal API to separate Protocols and Apps
+- Now properly utilizing SNI and native routing; up to this point we were routing twice due to the API limitation, which was wasting work
+- A huge part of the logic is now done natively
+- Methods are now case-sensitive by default
+- Removed the native/ bindings; moved to Akeno-uWS
 
 ## New in 1.6.8-beta
 - A proper build pipeline and server events

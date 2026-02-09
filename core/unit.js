@@ -705,8 +705,8 @@ class App extends Unit {}
 
 /**
  * @description Protocol is describing a communication protocol like HTTP, WebSocket, etc.
+    TODO: Revamp Protocol API for the new Akeno-uWS protocol API
  */
-
 class Protocol extends Unit {
     constructor(options = {}){
         super(options);
@@ -750,7 +750,6 @@ class HTTPProtocol extends Protocol {
             this._initialized = true;
             this.init();
         }
-
 
         for(const port of this.ports){
             this.server.listen(port, (listenSocket) => {
