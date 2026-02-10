@@ -1178,7 +1178,7 @@ function initParser(header) {
                                 }
 
                                 if(component.startsWith("theme:")) {
-                                    this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/styles/${component.slice(5)}.min.css">`);
+                                    this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/styles/${component.slice(6)}.min.css">`);
                                 }
                             }
                             break;

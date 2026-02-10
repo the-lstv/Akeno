@@ -33,7 +33,7 @@ let
 // Everywhere where is "TEMP_USING_AKENO_UWS" is to be replaced later on
 const fs = require("node:fs");
 const TEMP_AKENO_UWS_PATH = fs.existsSync(__dirname + "/../akeno-uws/dist/uws.js") && __dirname + "/../akeno-uws/dist/uws.js";
-const TEMP_USING_AKENO_UWS = !!TEMP_AKENO_UWS_PATH;
+const TEMP_USING_AKENO_UWS = false//!!TEMP_AKENO_UWS_PATH;
 
 // Tempoary
 let globalApp;
