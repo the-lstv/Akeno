@@ -1049,7 +1049,7 @@ function initParser(header) {
     parserContext.data = { flags: 0 };
 
     // Block processor
-    backend.native.context.prototype.onBlock = function (block) {
+    parserContext.constructor.prototype.onBlock = function (block) {
         const parent = this.getTagName();
 
         switch (block.name) {

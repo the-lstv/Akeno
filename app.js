@@ -54,6 +54,7 @@ const
     domainRouter = TEMP_USING_AKENO_UWS? {
         add(pattern, handler) {
             globalApp.route(pattern, handler);
+            console.log(`Added route ${pattern} to global router with Akeno-uWS`, handler);
         }
     }: new Router.DomainRouter(),             // Global router instance
 
@@ -465,6 +466,7 @@ const backend = {
                 if(TEMP_USING_AKENO_UWS) {
                     // There is finally a proper API for this
                     this.server = new uws.HTTPProtocol();
+                    this.server.bind(globalApp);
                 } else {
                     this.server = uws.App();
                     this.server.any("/*", this.defaultResolver);
@@ -498,14 +500,17 @@ const backend = {
             onReload(){
                 if(!this.server || !this.enabled) return;
 
-                const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
+                // Legacy SNI handling
+                if(!TEMP_USING_AKENO_UWS) {
+                    const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
 
-                if(SNIDomains && SNIDomains.length > 0) for(const domain of SNIDomains) {
-                    this.addSNIRoute(domain);
+                    if(SNIDomains && SNIDomains.length > 0) for(const domain of SNIDomains) {
+                        this.addSNIRoute(domain);
 
-                    // Not sure if we should be adding a root domain handler by default.
-                    if(domain.startsWith("*.")){
-                        this.addSNIRoute(domain.replace("*.", ""));
+                        // Not sure if we should be adding a root domain handler by default.
+                        if(domain.startsWith("*.")){
+                            this.addSNIRoute(domain.replace("*.", ""));
+                        }
                     }
                 }
             }
@@ -520,15 +525,15 @@ const backend = {
                     cert_file_name: cert || backend.config.getBlock("ssl").get("certBase", String, "").replace("{domain}", domain.replace("*.", ""))
                 })
 
-                // TODO: Better routing options
-                const route = this.server.domain(domain);
-
                 this.SNINames.add(domain);
 
-                route.any("/*", this.defaultResolver);
+                if(!TEMP_USING_AKENO_UWS) {
+                    const route = this.server.domain(domain);
+                    route.any("/*", this.defaultResolver);
 
-                if(this.enableWebSockets) route.ws("/*", backend.protocols.ws.options);
-                return true;
+                    if(this.enableWebSockets) route.ws("/*", backend.protocols.ws.options);
+                    return true;
+                }
             }
 
             init() {
@@ -542,12 +547,18 @@ const backend = {
                     cert_file_name: default_cert
                 }: null;
 
-                // No, you can't put the ternary inside the constructor.
-                this.server = ssl_config? uws.SSLApp(ssl_config): uws.SSLApp();
-                this.server.any("/*", this.defaultResolver);
+                if(TEMP_USING_AKENO_UWS) {
+                    // There is finally a proper API for this
+                    this.server = ssl_config? new uws.HTTPSProtocol(ssl_config): new uws.HTTPSProtocol();
+                    this.server.bind(globalApp);
+                } else {
+                    // No, you can't put the ternary inside the constructor.
+                    this.server = ssl_config? uws.SSLApp(ssl_config): uws.SSLApp();
+                    this.server.any("/*", this.defaultResolver);
 
-                // TODO: Distinguish WS over HTTP/s
-                if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
+                    // TODO: Distinguish WS over HTTP/s
+                    if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
+                }
             }
         },
 
