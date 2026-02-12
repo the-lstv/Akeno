@@ -54,7 +54,6 @@ const
     domainRouter = TEMP_USING_AKENO_UWS? {
         add(pattern, handler) {
             globalApp.route(pattern, handler);
-            console.log(`Added route ${pattern} to global router with Akeno-uWS`, handler);
         }
     }: new Router.DomainRouter(),             // Global router instance
 
@@ -92,6 +91,10 @@ if(TEMP_USING_AKENO_UWS) {
     }
 
     console.warn(`[system] Using experimental Akeno-uWS build`);
+
+    globalApp.onObject((req, res, handler) => {
+        resolveHandler(req, res, null, handler);
+    });
 }
 
 

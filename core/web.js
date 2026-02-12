@@ -24,12 +24,12 @@ let
 
     { xxh3 } = require("@node-rs/xxhash");
 
-    applications = new Map,
+applications = new Map,
 
     // Backend object
     backend = require("akeno:backend"),
     uws = backend.uws
-;
+    ;
 
 /**
  * Web application class for Akeno.
@@ -206,7 +206,7 @@ class WebApp extends Units.App {
     }
 
     readConfig() {
-        if(this._memoryConfig) return true;
+        if (this._memoryConfig) return true;
 
         if (!this.configPath) {
             return false;
@@ -229,17 +229,17 @@ class WebApp extends Units.App {
     reload(options, checkConfig = true) {
         options ??= {};
 
-        if(options.config) {
-            if(typeof options.config === "object" && !options.config.data) {
+        if (options.config) {
+            if (typeof options.config === "object" && !options.config.data) {
                 // Config is possibly JSON, will need to parse
                 throw new Error("Provided config seems to be an object - this has not yet been implemented. (App " + path + ")");
-            } else if(typeof options.config === "object" && options.config.data) {
+            } else if (typeof options.config === "object" && options.config.data) {
                 // Config is provided as configTools
                 this.config = options.config; // TODO: configTools should be a class
-            } else if(options.config instanceof Map) {
+            } else if (options.config instanceof Map) {
                 // Config is provided as a parsed Map of blocks
                 this.config = configTools(options.config);
-            } else if(typeof options.config === "string") {
+            } else if (typeof options.config === "string") {
                 // Config is provided as a string
                 this.config = configTools(parse(options.config, {
                     strict: true,
@@ -254,7 +254,7 @@ class WebApp extends Units.App {
         }
 
         if ((!this.config || checkConfig) && !this._memoryConfig) {
-            this.configPath = this.path + (options.configPath? nodePath.posix.resolve("/", options.configPath): "/app.conf");
+            this.configPath = this.path + (options.configPath ? nodePath.posix.resolve("/", options.configPath) : "/app.conf");
 
             const configPath = this.path + "/app.conf";
             let currentMtime = null;
@@ -444,7 +444,7 @@ class WebApp extends Units.App {
             if (this.config.data.has("addon")) {
                 for (const addon of this.config.getBlocks("addon")) {
                     const path = this.resolvePath(addon.attributes[0]).full;
-                    
+
                     Units.Manager.loadAddon(path);
                     this.pathMatcher.add(addon.attributes[0], { deny: true });
                 }
@@ -476,7 +476,7 @@ class WebApp extends Units.App {
         super.destroy();
     }
 
-    ws(options){
+    ws(options) {
         this.websocket = options;
     }
 }
@@ -488,6 +488,11 @@ const server = new class WebServer extends Units.Module {
         this.registerType("WebApp", WebApp);
 
         this.fileServer = new backend.helper.FileServer();
+
+        // Avoid stale entries, but also avoid hitting the filesystem too often
+        // TODO: Better system (will exist once in C++)
+        this.cacheExistenceCheck = new Map();
+        this.cacheExistenceIntervalMs = 5000;
 
         new Units.EventHandler(this);
 
@@ -502,6 +507,15 @@ const server = new class WebServer extends Units.Module {
     // This is the main handler/router for websites/webapps.
     async onRequest(req, res, app) {
         try {
+            // !TODO!
+            res.onAborted(() => {
+                console.log("Request aborted for", req.getUrl());
+            });
+
+            // TODO: Optimize for the new C++ APIs
+            // Currently it still uses the slow JS-side cache
+            // But most of the logic could be moved to C++ (even the parser is in C++)
+
             if (!app) {
                 backend.helper.sendErrorPage(req, res, "404");
                 return;
@@ -513,8 +527,8 @@ const server = new class WebServer extends Units.Module {
                 return;
             }
 
-            if(app.ratelimit) {
-                if(!app.ratelimit.pass(req, res)) return;
+            if (app.ratelimit) {
+                if (!app.ratelimit.pass(req, res)) return;
             }
 
             // When the app is disabled
@@ -553,7 +567,7 @@ const server = new class WebServer extends Units.Module {
 
                     // Handle aliases (an URL points to a different file)
                     if (typeof attributes.alias === "string") {
-                        if(attributes.alias.charCodeAt(0) !== 47) {
+                        if (attributes.alias.charCodeAt(0) !== 47) {
                             attributes.alias = "/" + attributes.alias;
                         }
 
@@ -585,7 +599,43 @@ const server = new class WebServer extends Units.Module {
             // We need to do this upfront even if not used, because we can't access the request after an await
             const ACCEPTS_ENCODING = req.getHeader("accept-encoding") || "";
 
-            let file = resolvedPath.full;
+            let file = nodePath.normalize(resolvedPath.full);
+
+            // Temporary hack
+            if(file.lastIndexOf("/") === file.length - 1) {
+                file = file.slice(0, -1);
+            }
+
+            const candidates = [file + ".html", file + "/index.html", file]; // We assume this is always normalized
+            let cacheEntry = null;
+            let cachedFile = null;
+
+            for (const candidate of candidates) {
+                const entry = server.fileServer.cache.get(candidate);
+                if (entry) {
+                    cachedFile = candidate;
+                    cacheEntry = entry;
+                    break;
+                }
+            }
+
+            // TODO: This is a tempoary solution
+            if (cachedFile) {
+                const now = Date.now();
+                const lastCheck = server.cacheExistenceCheck.get(cachedFile) || 0;
+
+                if ((now - lastCheck) > server.cacheExistenceIntervalMs) {
+                    server.cacheExistenceCheck.set(cachedFile, now);
+                    try {
+                        await fs.promises.access(cachedFile, fs.constants.F_OK);
+                    } catch {
+                        server.fileServer.cache.delete(cachedFile);
+                        server.cacheExistenceCheck.delete(cachedFile);
+                        cachedFile = null;
+                        cacheEntry = null;
+                    }
+                }
+            }
 
             // Request event for addons
             // TODO: Optimize
@@ -613,7 +663,13 @@ const server = new class WebServer extends Units.Module {
                 }
             }
 
-            if (!(file = await files_try_async(file + ".html", file + "/index.html", file))) {
+            if (!cachedFile) {
+                file = await files_try_async(candidates);
+            } else {
+                file = cachedFile;
+            }
+
+            if (!file) {
                 if (!app._404 || !app._404.full) {
                     return backend.helper.sendErrorPage(req, res, "404", "File \"" + url + "\" not found on this server.");
                 }
@@ -629,8 +685,11 @@ const server = new class WebServer extends Units.Module {
                 return backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
             }
 
-            file = nodePath.normalize(file);
-            const cacheEntry = server.fileServer.cache.get(file);
+            file = nodePath.normalize(file); // We may or may not need to normalize again; if we aren't 100% sure something in the path could not be normalized, we *have* to.
+
+            if (!cacheEntry) {
+                cacheEntry = server.fileServer.cache.get(file);
+            }
 
             // Because we can't read the accept-encoding header after generating async content....
             const extension = cacheEntry ? cacheEntry[0][5] : nodePath.extname(file).slice(1);
@@ -660,7 +719,7 @@ const server = new class WebServer extends Units.Module {
 
                     // file, parserContext, sanitize_html, template_enabled
                     // TODO: Allow to enable/disable templates and sanitization per-path or per-app
-                    if(extension === "md") {
+                    if (extension === "md") {
                         content = parser.fromMarkdownFile(file, parserContext, false, false);
                     } else {
                         content = parser.fromFile(file, parserContext, false, true);
@@ -676,7 +735,7 @@ const server = new class WebServer extends Units.Module {
 
             server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedAlg);
 
-            if(!cacheEntry) {
+            if (!cacheEntry) {
                 // TODO: Optimize
                 const evData = [file, server.fileServer.cache.get(file), app];
                 this.emit(server.cacheStoreEvref, evData);
@@ -923,7 +982,7 @@ const server = new class WebServer extends Units.Module {
 }
 
 // Section: utils
-async function files_try_async(...files) {
+async function files_try_async(files) {
     for (let file of files) {
         try {
             await fs.promises.access(file, fs.constants.F_OK);
@@ -1010,11 +1069,11 @@ function initParser(header) {
 
         onText(text, parent, context) {
             if (!text || text.length === 0) return;
-            
+
             // Inline script compression
             // TODO: Handle script type
             if (parent === "script") {
-                if(!backend.compression.codeEnabled) {
+                if (!backend.compression.codeEnabled) {
                     return true;
                 }
 
@@ -1025,7 +1084,7 @@ function initParser(header) {
 
             // Inline style compression
             if (parent === "style") {
-                if(!backend.compression.codeEnabled) {
+                if (!backend.compression.codeEnabled) {
                     return true;
                 }
 
@@ -1063,7 +1122,7 @@ function initParser(header) {
                 for (const entry of block.attributes) {
                     const has_component_list = typeof entry !== "string";
 
-                    const scriptAttributes = `${block.properties.defer? " defer": block.properties.async? " async": ""}`;
+                    const scriptAttributes = `${block.properties.defer ? " defer" : block.properties.async ? " async" : ""}`;
 
                     let attrib = has_component_list ? entry.name : entry;
                     let components = has_component_list && entry.values.length > 0 ? [] : backend.constants.EMPTY_ARRAY;
@@ -1111,26 +1170,26 @@ function initParser(header) {
 
                         let components_string;
 
-                        const singularCSSComponent = attrib.startsWith("ls.css.")? attrib.substring(8).toLowerCase() : null;
+                        const singularCSSComponent = attrib.startsWith("ls.css.") ? attrib.substring(8).toLowerCase() : null;
                         if (singularCSSComponent && ls_components.css.includes(singularCSSComponent)) {
                             components = [singularCSSComponent];
                         }
 
-                        const singularJSComponent = attrib.startsWith("ls.js.")? attrib.substring(6).toLowerCase() : null;
+                        const singularJSComponent = attrib.startsWith("ls.js.") ? attrib.substring(6).toLowerCase() : null;
                         if (singularJSComponent && ls_components.js.includes(singularJSComponent)) {
                             components = [singularJSComponent];
                         }
 
                         // Bypass CDN for beta versions
                         const CDN_ORIGIN = version === "beta" ? server.etc.EXTRAGON_CDN.replace("cdn.", "cdn-origin.") : server.etc.EXTRAGON_CDN;
-                        
+
                         if (is_merged || attrib === "ls.css" || singularCSSComponent) {
                             const cssComponents = is_merged ? components.filter(value => ls_components.css.includes(value)) : components;
                             const useSingular = cssComponents.length === 1 && ((this.data.flags & PARSER_FLAGS.USING_LS_CSS) || singularCSSComponent);
                             components_string = cssComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<link rel=stylesheet href="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
+                                this.write(`<link rel=stylesheet href="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular ? components_string : (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
                                 this.data.flags |= PARSER_FLAGS.USING_LS_CSS;
                             }
                         }
@@ -1141,7 +1200,7 @@ function initParser(header) {
                             components_string = jsComponents.join();
 
                             if (components_string.length !== 0) {
-                                this.write(`<script src="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular? components_string: (this.data.flags & PARSER_FLAGS.USING_LS_JS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
+                                this.write(`<script src="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular ? components_string : (this.data.flags & PARSER_FLAGS.USING_LS_JS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
                                 this.data.flags |= PARSER_FLAGS.USING_LS_JS;
                             }
                         }
@@ -1173,11 +1232,11 @@ function initParser(header) {
                             this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/highlight.min.js"${scriptAttributes}></script>`);
 
                             for (const component of components) {
-                                if(component.startsWith("lang:")) {
+                                if (component.startsWith("lang:")) {
                                     this.write(`<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/languages/${component.slice(5)}.min.js"${scriptAttributes}></script>`);
                                 }
 
-                                if(component.startsWith("theme:")) {
+                                if (component.startsWith("theme:")) {
                                     this.write(`<link rel=stylesheet href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/${version || "11.11.1"}/styles/${component.slice(6)}.min.css">`);
                                 }
                             }

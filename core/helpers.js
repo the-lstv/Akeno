@@ -896,7 +896,7 @@ module.exports = {
      * @param {object} req - The request object.
      * @param {object} res - The response object.
      * @param {Array} template - The template.
-     * @experimental
+     * @deprecated
      */
     sendTemplate(req, res, template, data){
         _isJSON = false; // Reserved for later
@@ -1166,11 +1166,11 @@ module.exports = {
         }
 
         static hasBody(req){
-            return req.contentLength > 0 || req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || (req.hasBody && req.transferProtocol === "qblaze")
+            return req.contentLength > 0 || req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || (req.hasBody && req.transferProtocol === "qblaze");
         }
 
         get data(){
-            return this.req.fullBody
+            return this.req.fullBody;
         }
 
         get string(){
@@ -1192,6 +1192,7 @@ module.exports = {
 
     /**
      * Basic rate limiter.
+     * TODO: Should be C++ side
      */
     RateLimiter: class {
         constructor(limit, interval = 60000) {
@@ -1200,79 +1201,45 @@ module.exports = {
             this.requests = new Map();
         }
 
-        /**
-         * Checks if the request exceeds the rate limit.
-         * @param {object} req - The request object.
-         * @param {object} res - The response object.
-         * @returns {boolean} True if the request is allowed, false if it exceeds the rate limit.
-         */
         check(req, res) {
             const now = Date.now();
             const key = backend.helper.getRequestIP(res) || req.getHeader("x-forwarded-for") || "anonymous";
 
-            if (!this.requests.has(key)) {
-                this.requests.set(key, []);
+            const entry = this.requests.get(key);
+
+            if (!entry) {
+                this.requests.set(key, { count: 1, reset: now + this.interval });
+                return true;
             }
 
-            const timestamps = this.requests.get(key);
-            timestamps.push(now);
-
-            // Remove timestamps older than the interval
-            while (timestamps.length > 0 && timestamps[0] < now - this.interval) {
-                timestamps.shift();
+            if (now > entry.reset) {
+                entry.count = 1;
+                entry.reset = now + this.interval;
+                return true;
             }
 
-            if (timestamps.length > this.limit) {               
+            if (++entry.count > this.limit) {
                 return false;
             }
 
             return true;
         }
 
-        /**
-         * Checks if the request exceeds the rate limit.
-         * If it does, sends a 429 response.
-         * @param {object} req - The request object.
-         * @param {object} res - The response object.
-         * @returns {boolean} True if the request is allowed, false if it exceeds the rate limit.
-         * 
-         * @example
-         * // Usage in a route handler:
-         * if (!rateLimiter.pass(req, res)) {
-         *     return;
-         * }
-         */
         pass(req, res) {
-            if (this.check(req, res)) {
-                return true;
-            }
+            if (this.check(req, res)) return true;
 
             res.cork(() => {
-                res.writeStatus("429").end('Rate limit exceeded');
+                res.writeStatus("429").end("Rate limit exceeded");
             });
             return false;
         }
 
-        /**
-         * Resets the request count for a specific key or all keys.
-         * @param {string} [key] - The key to reset. If not provided, resets all keys.
-         */
         reset(key) {
-            if(!key) {
+            if (!key) {
                 this.requests.clear();
                 return;
             }
-
             this.requests.delete(key);
-        }
-
-        /**
-         * Returns the number of requests made by a specific key.
-         * @param {string} key - The key to check.
-         * @returns {number} The number of requests made by the key.
-         */
-        getRequestCount(key) {
-            return this.requests.has(key) ? this.requests.get(key).length : 0;
         }
     },
 
