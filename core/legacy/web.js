@@ -1,0 +1,1714 @@
+/*
+    Author: Lukas (thelstv)
+    Copyright: (c) https://lstv.space
+
+    Last modified: 2026
+    License: GPL-3.0
+    Version: 2.0.0
+    Description: A performance optimized web application framework for Akeno.
+*/
+
+
+let
+    // Libraries
+    fs = require("fs"),
+    nodePath = require("path"),
+
+    parser, // Will be defined later
+    parserContext,
+
+    // Local libraries
+    { parse, configTools } = require("../parser"),
+    { PathMatcher } = require("../router"),
+    Units = require("../unit"),
+
+    { xxh3 } = require("@node-rs/xxhash"),
+
+    applications = new Map,
+
+    // Backend object
+    backend = require("akeno:backend"),
+    uws = backend.uws
+;
+
+/**
+ * Web application class for Akeno.
+ * Everything should be pre-computed here, routing should be mostly linear.
+ */
+class WebApp extends Units.App {
+    constructor(path, options = {}) {
+        super();
+
+        this.path = nodePath.normalize(path);
+        this.basename = nodePath.basename(path);
+        this.root = this.path;
+        this.type = "akeno.web.WebApp";
+
+        this.configMtime = null;
+        this.loaded = false;
+
+        this.enabled = null;
+        this.ports = new Set;
+
+        new Units.EventHandler(this);
+        this.requestEvref = this._events.prepareEvent("request", {
+            results: true
+        });
+
+        // @experimental
+        this.cacheStoreEvref = this._events.prepareEvent("refreshed-cache");
+
+        /**
+         * @warning Do not use this set for routing - it is only a copy to allow for easy removal of domains.
+         */
+        this.domains = new Set;
+        this.modules = new Map;
+
+        applications.set(this.path, this);
+
+        this._rootPathAllowed = true;
+
+        this.reload(options, true);
+        this.name = this.config.getBlock("app").get("name", String, this.basename);
+    }
+
+    /**
+     * Resolve a relative, absolute, or root path to a full path while safely avoiding directory traversal attacks.
+     * @param {string} path 
+     * @param {string} current 
+     * @param {boolean} useRootPath - Indicates whether to use the root path.
+     * @returns 
+     */
+
+    resolvePath(path, current = null, useRootPath = false) {
+        // Preserve original input for URL construction
+        const original = path;
+        let isRelative = false;
+
+        if (path.charCodeAt(0) === 126) { // '~'
+            path = path.slice(1);
+            useRootPath = true;
+        } else if (path.charCodeAt(0) !== 47) { // not starting with '/'
+            isRelative = true;
+        } else if (path.length >= 3 && path.charCodeAt(1) === 126 && path.charCodeAt(2) === 47) { // '/~/'
+            path = path.slice(2);
+            useRootPath = true;
+        }
+
+        if (!this._rootPathAllowed) {
+            useRootPath = false;
+        }
+
+        const root = useRootPath ? this.path : (this.root || this.path);
+
+        // Resolve to an absolute filesystem path for the server
+        const base = isRelative ? (current || "/") : "/";
+        const resolvedFsRelative = nodePath.posix.resolve(base, path);
+        const full = nodePath.join(root, resolvedFsRelative);
+
+        // Safety: prevent traversal outside of root
+        if (!full.startsWith(root)) {
+            return { full, relative: nodePath.sep, useRootPath: true };
+        }
+
+        // For client links, keep relative input as-is (e.g., "./assets/main.js")
+        const relativeForLink = isRelative ? original : resolvedFsRelative;
+
+        return { full, relative: relativeForLink, useRootPath };
+    }
+
+    #applyCaseOverrides() {
+        if (!this.config) return;
+
+        const caseEntries = this.config.getBlocks("case_override");
+        if (!caseEntries || caseEntries.length === 0) return;
+
+        this.warn("case_override is an experimental feature");
+
+        for (const entry of caseEntries) {
+            if (!entry || !Array.isArray(entry.attributes) || entry.attributes.length === 0) continue;
+
+            let match = false;
+            for (const attr of entry.attributes) {
+                const compare = this.#resolveCaseField(attr.name);
+                if (compare && Array.isArray(attr.values) && attr.values.some((value) => compare === value)) {
+                    match = true;
+                    break;
+                }
+            }
+
+            if (!match) continue;
+            this.#applyOverride(entry);
+        }
+    }
+
+    #resolveCaseField(name) {
+        switch (name) {
+            case "basename":
+                return this.basename;
+            case "path":
+                return this.path;
+            case "name":
+                return this.name;
+            case "root":
+                return this.root;
+            case "dir": case "dirname":
+                return nodePath.dirname(this.path);
+            case "mode":
+                return backend.modes[backend.mode];
+            default:
+                if (name.startsWith("env.")) {
+                    const envKey = name.slice(4);
+                    return process.env ? process.env[envKey] : undefined;
+                }
+
+                if (Object.prototype.hasOwnProperty.call(this, name) && typeof this[name] !== "function") {
+                    return this[name];
+                }
+
+                return undefined;
+        }
+    }
+
+    #applyOverride(entry) {
+        if (!entry.properties || typeof entry.properties !== "object") return;
+
+        for (const blockName of Object.keys(entry.properties)) {
+            const override = entry.properties[blockName];
+            if (!override) continue;
+
+            // Only overrides blocks; properties aren't supported at the top level (yet)
+            if (this.#isConfigBlock(override)) {
+                const targetName = override.name || blockName;
+                const blocks = this.config.data.get(targetName) || [];
+
+                if (blocks.length <= 1) {
+                    this.config.data.set(targetName, [override]);
+                    continue;
+                }
+
+                this.error(`case_override: Block "${targetName}" has multiple instances; cannot override (App ${this.path})`);
+            }
+        }
+    }
+
+    #isConfigBlock(value) {
+        return value && typeof value === "object" && typeof value.get === "function" && typeof value.getBlock === "function";
+    }
+
+    fileHasChangedSince(path, ms) {
+        const file = this.resolvePath(path).full;
+        try {
+            return fs.statSync(file).mtimeMs > ms;
+        } catch {
+            return false;
+        }
+    }
+
+    readConfig() {
+        if (this._memoryConfig) return true;
+
+        if (!this.configPath) {
+            return false;
+        }
+
+        try {
+            this.configMtime = fs.statSync(this.configPath).mtimeMs;
+        } catch {
+            this.configMtime = null;
+        }
+
+        this.config = configTools(parse(fs.readFileSync(this.configPath, "utf8"), {
+            strict: true,
+            asLookupTable: true
+        }));
+
+        return true;
+    }
+
+    reload(options, checkConfig = true) {
+        options ??= {};
+
+        if (options.config) {
+            if (typeof options.config === "object" && !options.config.data) {
+                // Config is possibly JSON, will need to parse
+                throw new Error("Provided config seems to be an object - this has not yet been implemented. (App " + path + ")");
+            } else if (typeof options.config === "object" && options.config.data) {
+                // Config is provided as configTools
+                this.config = options.config; // TODO: configTools should be a class
+            } else if (options.config instanceof Map) {
+                // Config is provided as a parsed Map of blocks
+                this.config = configTools(options.config);
+            } else if (typeof options.config === "string") {
+                // Config is provided as a string
+                this.config = configTools(parse(options.config, {
+                    strict: true,
+                    asLookupTable: true
+                }));
+            } else {
+                throw new Error("Provided config is not valid. (App " + path + ")");
+            }
+
+            this._memoryConfig = true;
+            delete options.config;
+        }
+
+        if ((!this.config || checkConfig) && !this._memoryConfig) {
+            this.configPath = this.path + (options.configPath ? nodePath.posix.resolve("/", options.configPath) : "/app.conf");
+
+            const configPath = this.path + "/app.conf";
+            let currentMtime = null;
+
+            try {
+                currentMtime = fs.statSync(configPath).mtimeMs;
+            } catch { }
+
+            if (currentMtime && this.configMtime !== currentMtime) {
+                this.readConfig();
+            } else return;
+
+            if (!this.config) throw "Invalid or missing config";
+        }
+
+        this.#applyCaseOverrides();
+
+        if (this.loaded) this.verbose("Hot-reloading");
+
+        const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean);
+        this.enabled = (is_enabled === null ? true : is_enabled) || false;
+
+        const serverBlock = this.config.getBlock("server");
+
+        const enabledDomains = serverBlock.get("domains", Array, []);
+
+        const custom_root = serverBlock.get("root", String, null);
+        this._rootPathAllowed = serverBlock.get("allowRootPath", Boolean, true);
+
+        if (custom_root && custom_root.length > 0) {
+            this.root = this.resolvePath(custom_root, null, true).full;
+        } else {
+            this.root = this.path;
+        }
+
+        if (enabledDomains.length > 0 || this.domains.size > 0) {
+            const domains = new Set([...enabledDomains, ...this.domains]);
+
+            for (let domain of domains) {
+                if (!domain || typeof domain !== "string") {
+                    server.warn("Invalid domain name \"" + domain + "\" for web application \"" + this.basename + "\".");
+                    continue;
+                }
+
+                if (!enabledDomains.includes(domain)) {
+                    backend.domainRouter.remove(domain);
+                    this.domains.delete(domain);
+                    continue;
+                }
+
+                backend.domainRouter.add(domain, this);
+                this.domains.add(domain);
+            }
+        }
+
+        const enabledPorts = this.config.getBlock("server").get("port") || [];
+
+        if (enabledPorts.length > 0 || this.ports.size > 0) {
+            const ports = new Set([...enabledPorts, ...this.ports]);
+
+            for (let port of ports) {
+                if (!port || typeof port !== "number" || port < 1 || port > 65535) {
+                    server.warn("Invalid port number \"" + port + "\" for web application \"" + this.basename + "\" - skipped.");
+                    continue
+                }
+
+                if (this.ports.has(port)) {
+                    if (!enabledPorts.includes(port)) {
+                        this.ports.delete(port);
+
+                        if (this.uws) {
+                            uws.us_listen_socket_close(this.sockets.get(port));
+                            this.uws.close();
+                            this.uws = null;
+                        }
+
+                        server.log(`Web application "${this.basename}" is no longer listening on port ${port}`);
+                        continue
+                    }
+                    continue
+                }
+
+                let found = false;
+                for (const app of applications.values()) {
+                    if (app.ports.has(port)) {
+                        found = app;
+                        break
+                    }
+                }
+
+                if (found) {
+                    server.warn("Port " + port + " is already in use by \"" + found.basename + "\" - skipped.");
+                    continue
+                }
+
+                this.ports.add(port);
+
+                const flags = { app: this };
+
+                if (!this.uws) {
+                    this.uws = uws.App().any('/*', (res, req) => {
+                        backend.resolve(res, req, flags)
+                    })
+
+                    this.sockets = new Map;
+                }
+
+                this.uws.listen(port, (socket) => {
+                    if (socket) {
+                        this.sockets.set(port, socket)
+                        server.log(`Web application "${this.basename}" is listening on port ${port}`);
+                    } else {
+                        server.error(`Failed to start web application "${this.basename}" on port ${port}`);
+                    }
+                })
+            }
+        }
+
+        if (this.config.data.has("ratelimit")) {
+            const limit = this.config.getBlock("ratelimit").get("limit", Number, 1000); // 1000 Requests
+            const interval = this.config.getBlock("ratelimit").get("interval", Number, 60000); // 1 Minute
+            this.ratelimit = new backend.helper.RateLimiter(limit, interval);
+        } else delete this.ratelimit;
+
+        if (this.config.data.has("esbuild")) {
+            const targets = this.config.getBlock("esbuild").get("targets", Array, []);
+            this.esbuildTargets = targets.length > 0 && targets;
+        } else delete this.esbuildTargets;
+
+        if (this.config.data.has("ls")) {
+            const version = this.config.getBlock("ls").get("version", String, null);
+            this.lsVersion = version;
+        } else delete this.lsVersion;
+
+        for (let api of this.config.getBlocks("module")) {
+            // TODO: Proper module system
+            const name = api.attributes;
+
+            if (this.modules.has(name)) continue;
+
+            let module;
+            try {
+                module = new backend.Module(`${this.basename}/${name}`, { path: this.path + "/" + api.get("path", String), autoRestart: api.get("autoRestart", Boolean, false) });
+            } catch (error) {
+                server.error("Failed to load module " + name + " for web application " + this.basename + ": " + error.toString() + ". You can reload the app to retry.");
+                continue
+            }
+
+            this.modules.set(name, module);
+        }
+
+        this.loaded = true;
+
+        // Precompute any path-specific attributes
+        this._hasAttribs = this.config.data.has("location") || this.config.data.has("addon") || this.config.data.has("redirect") || this.config.data.has("route") || this.config.data.has("handle");
+        if (this._hasAttribs) {
+            if (!this.pathMatcher) this.pathMatcher = new PathMatcher({
+                mergeObjects: true // Internally merges objects
+            });
+
+            this.pathMatcher.clear();
+
+            // Routes (aliases)
+            for (const route of this.config.getBlocks("route")) { // Since 1.6.5, this is now called alias
+                const to = route.get("to", Array);
+                if (!to || typeof to[0] !== "string") continue;
+
+                for (const pattern of route.attributes) {
+                    this.pathMatcher.add(pattern, { alias: to[0] });
+                }
+            }
+
+            // Redirects
+            for (const redirect of this.config.getBlocks("redirect")) {
+                const to = redirect.get("to", String);
+                if (!to) continue;
+
+                this.pathMatcher.add(redirect.attributes[0], { redirect: to });
+            }
+
+            // This is possibly deprecated
+            for (const handle of this.config.getBlocks("handle")) {
+                server.error("The \"handle\" block is deprecated and should not be used, and it is not compatible with the new routing system. Please use domain-specific routing or addons instead. (App " + this.path + ")");
+            }
+
+            // Addons - Load addon, block the path
+            if (this.config.data.has("addon")) {
+                for (const addon of this.config.getBlocks("addon")) {
+                    const path = this.resolvePath(addon.attributes[0]).full;
+
+                    Units.Manager.loadAddon(path);
+                    this.pathMatcher.add(addon.attributes[0], { deny: true });
+                }
+            }
+
+            // General path attributes
+            for (const route of this.config.getBlocks("location")) {
+                for (const pattern of route.attributes) {
+                    this.pathMatcher.add(pattern, route.properties);
+                }
+            }
+        }
+
+        this._browserRequirements = this.config.getBlock("browserSupport")?.properties || null;
+
+        const _404 = this.config.getBlock("errors").get("404", String) || this.config.getBlock("errors").get("default", String);
+        this._404 = _404 ? this.resolvePath(_404) : null;
+
+        // Preload configured files into cache
+        void this.preloadFiles();
+    }
+
+    async preloadFiles() {
+        if (!this.config?.data?.has("preload")) return;
+
+        const blocks = this.config.getBlocks("preload");
+        const paths = [];
+
+        for (const block of blocks) {
+            for (const item of block.attributes || []) {
+                if (typeof item === "string" && item.length > 0) paths.push(item);
+            }
+        }
+
+        if (paths.length === 0) return;
+
+        let c_url = null, c_encoding = null;
+        const noop = new Proxy({}, {
+            get: (_, key) => {
+                if(key === "path") return c_url;
+                if(key === "domain") return "preload";
+                if(key === "isPreload" || key === "secure") return true;
+                if(key === "getHeader") return name => ({
+                    "accept-encoding": c_encoding
+                }[name.toLowerCase()] || "");
+                return () => null;
+            }
+        });
+
+        for (const url of paths) {
+            c_url = url;
+            try {
+                // TODO: Cache both compressed variants
+                // c_encoding = "gzip";
+                // server.onRequest(noop, noop, this);
+                // c_encoding = "br";
+                server.onRequest(noop, noop, this);
+            } catch (error) {
+                this.warn(`Preload failed for "${url}" in app "${this.basename}".`, error);
+            }
+        }
+    }
+
+    destroy() {
+        for (let domain of this.domains) {
+            backend.domainRouter.remove(domain);
+        }
+
+        // TODO: Proper cleanup, clear caches, destroy modules, ports, etc.
+
+        applications.delete(this.path);
+        this.events.clear();
+        super.destroy();
+    }
+
+    ws(options) {
+        this.websocket = options;
+    }
+}
+
+const server = new class WebServer extends Units.Module {
+    moduleProviders = new Map;
+    customBlocks = new Map;
+
+    constructor() {
+        super({ name: "web", id: "akeno.web", version: "1.4.0-beta" });
+
+        this.registerType("WebApp", WebApp);
+
+        this.fileServer = new backend.helper.FileServer();
+
+        if(backend.TEMP_USING_AKENO_UWS) {
+            backend.globalApp.onObject((req, res, app) => {
+                if (app instanceof WebApp) {
+                    this.onRequest(req, res, app);
+                } else {
+                    // Fallback to the JS handler
+                    backend.resolveHandler(req, res, null, app);
+                }
+            });
+        }
+
+        // Avoid stale entries, but also avoid hitting the filesystem too often
+        // TODO: Better system (will exist once in C++)
+        this.cacheExistenceCheck = new Map();
+        this.cacheExistenceIntervalMs = 5000;
+
+        new Units.EventHandler(this);
+
+        this.requestEvref = this._events.prepareEvent("request", {
+            results: true
+        });
+
+        // @experimental
+        this.cacheStoreEvref = this._events.prepareEvent("refreshed-cache");
+    }
+
+    // This is the main handler/router for websites/webapps.
+    // In the future, this is NOT called at all on a cache hit, and is handled purely by C++.
+    async onRequest(req, res, app) {
+        try {
+            if (!app) {
+                backend.helper.sendErrorPage(req, res, "404");
+                return;
+            }
+
+            // !TODO!
+            res.onAborted(() => {
+                console.log("Request aborted");
+            });
+
+            // TODO: Optimize for the new C++ APIs
+            // Currently it still uses the slow JS-side cache
+            // But most of the logic could be moved to C++ (even the parser is in C++)
+
+            // HTTPS Redirect
+            if (backend.mode !== backend.modes.DEVELOPMENT && (!req.secure && !app.config.getBlock("server").get("allowInsecureTraffic", Boolean))) {
+                res.writeStatus('302 Found').writeHeader('Location', `https://${req.getHeader("host")}${req.path}`).end();
+                return;
+            }
+
+            if (app.ratelimit) {
+                if (!app.ratelimit.pass(req, res)) return;
+            }
+
+            // When the app is disabled
+            if (!app.enabled) {
+                backend.helper.send(req, res, app.config.getBlock("server").get("disabled_message", String, server.etc.default_disabled_message), null, "422");
+                return;
+            }
+
+            // Check if the client version is supported
+            if (app._browserRequirements) {
+
+                if (!checkSupportedBrowser(req.getHeader('user-agent'), app._browserRequirements)) {
+                    backend.helper.sendErrorPage(req, res, "403", app._browserRequirements.message || `Your browser version is not supported - please update your web browser!<br>Minimum requirement to access this website: Chrome ${app._browserRequirements.chrome && app._browserRequirements.chrome} and up, Firefox ${app._browserRequirements.firefox && app._browserRequirements.firefox} and up.<br><br><strong><a href="https://browser-update.org/update-browser.html" target="_blank">Learn more</a></strong>`, "Outdated Browser");
+                    return;
+                }
+            }
+
+            let url = req.path;
+            const isPreload = req.isPreload;
+
+            // Path attributes
+            if (app._hasAttribs && app.pathMatcher) {
+                let attributes = app.pathMatcher.match(url);
+
+                if (attributes) {
+                    // Check if the path is denied
+                    if (attributes.deny) {
+                        backend.helper.send(req, res, "Access denied.", null, "403 Forbidden");
+                        return;
+                    }
+
+                    // Handle redirects
+                    if (typeof attributes.redirect === "string") {
+                        res.writeStatus('302 Found').writeHeader('Location', attributes.redirect).end();
+                        return;
+                    }
+
+                    // Handle aliases (an URL points to a different file)
+                    if (typeof attributes.alias === "string") {
+                        if (attributes.alias.charCodeAt(0) !== 47) {
+                            attributes.alias = "/" + attributes.alias;
+                        }
+
+                        url = attributes.alias;
+
+                        if (attributes.alias.indexOf("$url") !== -1) {
+                            url = url.replace("$url", req.path);
+                        }
+
+                        if (attributes.alias.indexOf("$file") !== -1) {
+                            url = url.replace("$file", nodePath.basename(req.path));
+                        }
+
+                        if (attributes.alias.indexOf("$path") !== -1) {
+                            url = url.replace("$path", nodePath.dirname(req.path));
+                        }
+                    }
+                }
+            }
+
+            /**
+             * TODO: Migrate router and caching to C++ using the uWS fork, currently the C++ cache is never hit and the cache system is a bit eh.
+             */
+
+            // TODO: Cache this
+            let resolvedPath = app.resolvePath(url);
+            let errorCode = null;
+
+            // We need to do this upfront even if not used, because we can't access the request after an await
+            const ACCEPTS_ENCODING = req.getHeader("accept-encoding") || "";
+
+            let file = nodePath.normalize(resolvedPath.full);
+
+            // Temporary hack
+            if(file.lastIndexOf("/") === file.length - 1) {
+                file = file.slice(0, -1);
+            }
+
+            const candidates = [file + ".html", file + "/index.html", file]; // We assume this is always normalized
+            let cacheEntry = null;
+            let cachedFile = null;
+
+            for (const candidate of candidates) {
+                const entry = server.fileServer.cache.get(candidate);
+                if (entry) {
+                    cachedFile = candidate;
+                    cacheEntry = entry;
+                    break;
+                }
+            }
+
+            // TODO: This is a tempoary solution
+            if (cachedFile) {
+                const now = Date.now();
+                const lastCheck = server.cacheExistenceCheck.get(cachedFile) || 0;
+
+                if ((now - lastCheck) > server.cacheExistenceIntervalMs) {
+                    server.cacheExistenceCheck.set(cachedFile, now);
+                    try {
+                        await fs.promises.access(cachedFile, fs.constants.F_OK);
+                    } catch {
+                        server.fileServer.cache.delete(cachedFile);
+                        server.cacheExistenceCheck.delete(cachedFile);
+                        cachedFile = null;
+                        cacheEntry = null;
+                    }
+                }
+            }
+
+            // Request event for addons
+            // TODO: Optimize
+            const evData = [req, res, app, resolvedPath];
+            const r1 = server.emit(server.requestEvref, evData);
+            const r2 = app.emit(app.requestEvref, evData);
+            if (r1 && r1.length > 0) {
+                for (const result of r1) {
+                    if (result && result.file) file = result.file;
+                    else if (result === false) {
+                        resolvedPath = app._404;
+                        file = app._404.full;
+                        errorCode = "404";
+                    }
+                }
+            }
+            if (r2 && r2.length > 0) {
+                for (const result of r2) {
+                    if (result && result.file) file = result.file;
+                    else if (result === false) {
+                        resolvedPath = app._404;
+                        file = app._404.full;
+                        errorCode = "404";
+                    }
+                }
+            }
+
+            if (!cachedFile) {
+                file = await files_try_async(candidates);
+            } else {
+                file = cachedFile;
+            }
+
+            if (!file) {
+                if (!app._404 || !app._404.full) {
+                    return backend.helper.sendErrorPage(req, res, "404", "File \"" + url + "\" not found on this server.");
+                }
+
+                // Load the defined 404 page (existence should be checked when the app is loaded)
+                resolvedPath = app._404;
+                file = app._404.full;
+                errorCode = "404";
+            }
+
+            // Handle directories (we already know the file exists)
+            if ((await fs.promises.stat(file)).isDirectory()) {
+                return backend.helper.send(req, res, "You have landed in " + url + " - which is a directory.");
+            }
+
+            file = nodePath.normalize(file); // We may or may not need to normalize again; if we aren't 100% sure something in the path could not be normalized, we *have* to.
+
+            if (!cacheEntry) {
+                cacheEntry = server.fileServer.cache.get(file);
+            }
+
+            // Because we can't read the accept-encoding header after generating async content....
+            const extension = cacheEntry ? cacheEntry[0][5] : nodePath.extname(file).slice(1);
+            const suggestedAlg = backend.helper.getUsedCompression(ACCEPTS_ENCODING, cacheEntry ? cacheEntry[0][6] : backend.mime.getType(extension));
+
+            // Generate and serve fresh content if not cached or modified
+            if (!cacheEntry || server.fileServer.needsUpdate(file, cacheEntry)) {
+                if(!isPreload) {
+                    app.verbose(`Serving request for ${req.domain}, path ${url}, file ${file || "<not found>"}`);
+                }
+
+                // By default, the server will get its own content
+                let content = null;
+
+                if (extension === "html" || extension === "md" || extension === "htm") {
+                    const directory = nodePath.dirname(resolvedPath.relative);
+
+                    // Prepare parser context data (what the callbacks should see)
+                    // Shared object to reduce allocations (https://jsbm.dev/JeOxl30Y6fOj1)
+                    const data = parserContext.data;
+                    data.url = url;
+                    data.directory = directory;
+                    data.path = app.path;
+                    data.file = file;
+                    data.app = app;
+                    data.secure = req.secure;
+                    data.flags = 0;
+                    data.ls_version = null;
+
+                    // file, parserContext, sanitize_html, template_enabled
+                    // TODO: Allow to enable/disable templates and sanitization per-path or per-app
+                    if (extension === "md") {
+                        content = parser.fromMarkdownFile(file, parserContext, false, false);
+                    } else {
+                        content = parser.fromFile(file, parserContext, false, true);
+                    }
+                }
+
+                if (cacheEntry) {
+                    await server.fileServer.refresh(file, null, extension === "html" ? (path) => parser.needsUpdate(path) : null, content, app);
+                } else {
+                    await server.fileServer.refresh(file, { "Vary": "Accept-Encoding, Akeno-Content-Only" }, extension === "html" ? (path) => parser.needsUpdate(path) : null, content, app);
+                }
+            }
+
+            server.fileServer.serveWithoutChecking(req, res, cacheEntry || server.fileServer.cache.get(file), errorCode, false, suggestedAlg);
+
+            if (!cacheEntry) {
+                // TODO: Optimize
+                const evData = [file, server.fileServer.cache.get(file), app];
+                this.emit(server.cacheStoreEvref, evData);
+                app.emit(app.cacheStoreEvref, evData);
+            }
+
+        } catch (error) {
+            const logTarget = app || server;
+
+            logTarget.error("Error when serving app \"" + logTarget.path + "\", requesting \"" + req.path + "\": ", error);
+
+            try {
+                backend.helper.sendErrorPage(req, res, "500", "Internal Server Error - Incident log was saved.");
+            } catch (error) {
+                logTarget.error("Failed to send error response for app \"" + logTarget.path + "\".", error);
+            }
+        }
+    }
+
+    onIPCRequest(segments, req, res) {
+        switch (segments[0]) {
+            case "list":
+                res.end([...applications.values()].map(app => ({
+                    name: app.name,
+                    basename: app.basename,
+                    path: app.path,
+                    enabled: app.enabled,
+                    ports: [...app.ports],
+                    domains: [...app.domains],
+                    modules: [...app.modules.keys()],
+                })));
+                break;
+
+            case "list.domains":
+                res.end(this.listDomains(req.data[0]));
+                break;
+
+            case "list.getDomain":
+            case "getFirstDomain":
+                res.end(this.getFirstDomain(req.data[0]));
+                break;
+
+            case "enable":
+                res.end(this.enableApp(req.data[0]));
+                break;
+
+            case "disable":
+                res.end(this.disableApp(req.data[0]));
+                break;
+
+            case "reload":
+                if (!req.data || !req.data[0]) {
+                    this.reload();
+                    res.end(true);
+                } else {
+                    const app = applications.get(this.resolveApplicationPath(req.data[0]));
+                    if (!app) return res.end(false);
+
+                    app.reload();
+                    res.end(true);
+                }
+                break;
+
+            case "tempDomain":
+                res.end(this.tempDomain(req.data[0], req.data[1] || null));
+                break;
+
+            case "info":
+                if (!req.data || !req.data[0]) return res.error("No application specified").end();
+                const appInfo = this.getApp(req.data[0]);
+                if (!appInfo) return res.error("Application not found").end();
+
+                res.end({
+                    name: appInfo.name,
+                    basename: appInfo.basename,
+                    path: appInfo.path,
+                    enabled: appInfo.enabled,
+                    ports: [...appInfo.ports],
+                    domains: [...appInfo.domains],
+                    modules: [...appInfo.modules.keys()],
+                });
+                break;
+
+            default:
+                res.end("Invalid request");
+        }
+    }
+
+    async reload(specific_app, skip_config_refresh) {
+        if (specific_app) return !!this.load(specific_app);
+
+        if (!skip_config_refresh) backend.refreshConfig();
+
+        const start = performance.now();
+
+        const webConfig = backend.config.getBlock("web");
+        const locations = webConfig.get("locations", Array, []);
+
+        // Looks for valid application locations
+        for (let location of locations) {
+            if (location.startsWith("./")) location = backend.path + location.slice(1);
+
+            if (!fs.existsSync(location.replace("/*", ""))) {
+                this.warn("Web application (at " + location + ") does not exist - skipped.");
+                continue;
+            }
+
+            // Handle wildcard (multi) locations
+            if (location.endsWith("*")) {
+                let appDirectory = nodePath.normalize(location.slice(0, -1) + "/");
+
+                for (let path of fs.readdirSync(appDirectory)) {
+                    path = appDirectory + path;
+
+                    if (!fs.statSync(path).isDirectory() || !fs.existsSync(path + "/app.conf")) continue;
+                    locations.push(path);
+                }
+                continue;
+            }
+
+            if (!fs.statSync(location).isDirectory()) {
+                this.warn("Web application (at " + location + ") is a file - skipped.");
+                continue;
+            }
+
+            this.load(location);
+        }
+
+        this.log(`${skip_config_refresh ? "Loaded" : "Reloaded"} ${locations.length} web application${locations.length !== 1 ? "s" : ""} in ${(performance.now() - start).toFixed(2)}ms`);
+    }
+
+    onLoad() {
+        // Constants
+        const header = backend.config.getBlock("web").get("htmlHeader", String, `<!-- Server-generated code. Powered by Akeno v${backend.version} (LEGACY MODE) - https://github.com/the-lstv/Akeno -->`) || '';
+
+        this.etc = {
+            default_disabled_message: Buffer.from(backend.config.getBlock("web").get("disabledMessage", String) || "This website is temporarily disabled."),
+            EXTRAGON_CDN: backend.config.getBlock("web").get("extragon_cdn_url", String) || backend.mode === backend.modes.DEVELOPMENT ? `https://cdn.extragon.localhost` : `https://cdn.extragon.cloud`
+        };
+
+        initParser(header);
+
+        backend.exposeToDebugger("parser", parser);
+        this.reload(null, true);
+    }
+
+    registerModuleProvider(name, providerCallback) {
+        this.moduleProviders.set(name, providerCallback);
+    }
+
+    unregisterModuleProvider(name) {
+        this.moduleProviders.delete(name);
+    }
+
+    registerCustomBlock(name, handler) {
+        this.customBlocks.set(name, handler);
+    }
+
+    unregisterCustomBlock(name) {
+        this.customBlocks.delete(name);
+    }
+
+    // --- Utility functions ---
+
+    /**
+     * Get application from its path or name.
+     * @param {string} path - The path or name of the application.
+     * @returns {WebApp|null} - The application object or null if not found.
+     */
+    getApp(path) {
+        path = this.resolveApplicationPath(path);
+        if (!path) return null;
+
+        return applications.get(path);
+    }
+
+    /**
+     * Resolve an application path by its name or path.
+     * @param {string} path - The path or name of the application.
+     * @returns {string|null} - The resolved application path or null if not found.
+     */
+    resolveApplicationPath(path) {
+        path = nodePath.normalize(path);
+
+        if (!path) return null;
+        if (applications.has(path)) return path; // Direct match
+        if (path.includes("/") && fs.existsSync(path)) return path;
+
+        for (const app of applications.values()) {
+            if (app.basename === path) return app.path;
+        }
+
+        return null;
+    }
+
+    // TODO:
+    load(path, options = {}) {
+        path = nodePath.normalize(path);
+
+        let app = applications.get(path);
+
+        if (!app) {
+            try {
+                app = new WebApp(path, options);
+            } catch (error) {
+                this.warn("Web application (at " + path + ") failed to load due to an error: ", error);
+                return false;
+            }
+
+            if (!app) return false;
+        } else {
+            app.reload(options);
+        }
+
+        if (!app.config) return false;
+        return app;
+    }
+
+    enableApp(app_path) {
+        if (!(app_path = this.resolveApplicationPath(app_path))) return false;
+
+        const app = applications.get(app_path);
+        app.enabled = true;
+        backend.db.apps.commitSet(`${app_path}.enabled`, true);
+        return true;
+    }
+
+    disableApp(app_path) {
+        if (!(app_path = this.resolveApplicationPath(app_path))) return false;
+
+        const app = applications.get(app_path);
+        app.enabled = false;
+        backend.db.apps.commitSet(`${app_path}.enabled`, false);
+        return true;
+    }
+
+    listDomains(app_path) {
+        if (!(app_path = this.resolveApplicationPath(app_path))) return false;
+
+        const app = applications.get(app_path);
+        if (!app) return false;
+
+        return [...app.domains];
+    }
+
+    getFirstDomain(app_path) {
+        const list = this.listDomains(app_path);
+        return list && list[0];
+    }
+
+    tempDomain(app_path, domain = null) {
+        const app = this.getApp(app_path);
+        if (!app) return false;
+
+        let random = domain || backend.uuid();
+        backend.domainRouter.add(random, app);
+
+        return random;
+    }
+}
+
+// Section: utils
+async function files_try_async(files) {
+    for (let file of files) {
+        try {
+            await fs.promises.access(file, fs.constants.F_OK);
+            return file;
+        } catch { }
+    }
+}
+
+function checkSupportedBrowser(userAgent, properties) {
+    if (!userAgent || !properties) return true;
+
+    const ua = userAgent.toLowerCase();
+
+    if (ua.includes('msie') || ua.includes('trident')) return false;
+
+    // Check Chrome
+    if (properties.chrome && ua.includes('chrome')) {
+        if (properties.disableChrome) return false;
+        const match = ua.match(/chrome\/(\d+)/);
+        return !match || parseInt(match[1], 10) >= +properties.chrome;
+    }
+
+    // Check Firefox
+    if (properties.firefox && ua.includes('firefox')) {
+        if (properties.disableFirefox) return false;
+        const match = ua.match(/firefox\/(\d+)/);
+        return !match || parseInt(match[1], 10) >= +properties.firefox;
+    }
+
+    return true; // Allow by default if browser could not be determined
+}
+
+
+const ls_path = backend.path + "/addons/cdn/ls";
+const latest_ls_version = fs.existsSync(ls_path + "/version") ? fs.readFileSync(ls_path + "/version", "utf8").trim() : "5.1.0";
+
+// TODO: Let the API itself handle this
+const ls_components = {
+    "js": [
+        "animation",
+        "animation2",
+        "automationgraph",
+        "color",
+        "compiletemplate",
+        "dragdrop",
+        "gl",
+        "imagecropper",
+        "knob",
+        "menu",
+        "modal",
+        "network",
+        "node",
+        "patcher",
+        "reactive",
+        "resize",
+        "shortcutmanager",
+        "tabs",
+        "timeline",
+        "toast",
+        "tooltips",
+        "tree"
+    ],
+    "css": [
+        "flat",
+        "knob",
+        "timeline"
+    ]
+};
+
+const PARSER_FLAGS = {
+    USING_LS_CSS: 1 << 0,
+    USING_LS_JS: 1 << 1,
+    USING_LS: 1 << 2,
+    GOOGLE_FONTS_PRECONNECT: 1 << 3,
+    SET_DEFAULT_CHARSET: 1 << 4,
+    SET_DEFAULT_VIEWPORT: 1 << 5
+};
+
+function initParser(header) {
+    parser = new backend.native.parser({
+        header,
+        buffer: true,
+        compact: backend.compression.codeEnabled,
+
+        onText(text, parent, context) {
+            if (!text || text.length === 0) return;
+
+            // Inline script compression
+            // TODO: Handle script type
+            if (parent === "script") {
+                if (!backend.compression.codeEnabled) {
+                    return true;
+                }
+
+                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "js", targets: backend.esbuildTargets, asBuffer: false, filePath: this?.data?.path, app: this?.data?.app }).result;
+
+                // return backend.compression.code(text, backend.compression.format.JS);
+            }
+
+            // Inline style compression
+            if (parent === "style") {
+                if (!backend.compression.codeEnabled) {
+                    return true;
+                }
+
+                // TODO: Idea; could have a special attribute to support inline scss (editor won't like it though)
+                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "css", targets: backend.esbuildTargets, asBuffer: false, filePath: this?.data?.path, app: this?.data?.app }).result;
+
+                // return backend.compression.code(text, backend.compression.format.CSS);
+            }
+
+            // Parse with Atrium, text gets sent back to C++, blocks get handled via onBlock
+            parse(text, context);
+        },
+
+        // onEnd(context) {
+        //     // context.data = null;
+        // }
+    });
+
+    // parserContext is an internal JS object that is passed around to callbacks.
+    parserContext = parser.createContext();
+    parserContext.data = { flags: 0 };
+
+    // Block processor
+    parserContext.constructor.prototype.onBlock = function (block) {
+        const parent = this.getTagName();
+        const blockHandler = server.customBlocks.get(block.name);
+
+        // Addons can now define custom blocks
+        if (blockHandler) {
+            try {
+                blockHandler(block, this);
+            } catch (error) {
+                this.data.app.error(`Custom block handler "${block.name}" failed:`, error);
+            }
+            return;
+        }
+
+        // Built-in blocks
+        switch (block.name) {
+            case "use":
+                // if(parent !== "head") {
+                //     server.warn("Error in app " + this.data.path + ": @use can only be used in <head>.");
+                //     break
+                // }
+
+                // Modules
+                for (const entry of block.attributes) {
+                    const has_component_list = typeof entry !== "string";
+
+                    const scriptAttributes = `${block.properties.defer ? " defer" : block.properties.async ? " async" : ""}`;
+
+                    let attrib = has_component_list ? entry.name : entry;
+                    let components = has_component_list && entry.values.length > 0 ? [] : backend.constants.EMPTY_ARRAY;
+
+                    // We sort alphabetically and remove duplicates to maximize cache hits
+                    // This is the fastest implementation based on my benchmark: https://jsbm.dev/Au74tivWZWKEo
+                    if (has_component_list) {
+                        const is_google_fonts = attrib === "google-fonts";
+
+                        let last = "";
+                        entry.values.sort();
+                        for (let i = 0, len = entry.values.length; i < len; i++) {
+                            let v = entry.values[i];
+                            if (!v) continue;
+                            let lower = is_google_fonts ? v : v.toLowerCase();
+                            if (lower !== last) {
+                                components.push(lower);
+                                last = lower;
+                            }
+                        }
+                    }
+
+                    const v_start_index = attrib.lastIndexOf(":");
+
+                    let version = v_start_index !== -1 ? attrib.substring(v_start_index + 1) : null;
+                    if (v_start_index !== -1) attrib = attrib.substring(0, v_start_index);
+
+                    if (attrib === "ls" || attrib.startsWith("ls.")) {
+                        if (!version) {
+                            if (this.data.app && this.data.app.lsVersion) {
+                                version = this.data.app.lsVersion;
+                            } else if (this.data.ls_version) {
+                                version = this.data.ls_version; // Use previously specified version (outdated fallback)
+                            } else {
+                                console.error(`Error in app "${this.data.path}": No version was specified for LS in your app. This is no longer supported - you need to specify a version, for example ${attrib}:${latest_ls_version}. To get the latest version, use ${attrib}:latest, but this is not recommended for production environments.`);
+                                break;
+                            }
+                        }
+
+                        if (version === "latest") version = latest_ls_version;
+
+                        this.data.ls_version = version;
+
+                        const is_merged = attrib === "ls";
+
+                        let components_string;
+
+                        const singularCSSComponent = attrib.startsWith("ls.css.") ? attrib.substring(8).toLowerCase() : null;
+                        if (singularCSSComponent && ls_components.css.includes(singularCSSComponent)) {
+                            components = [singularCSSComponent];
+                        }
+
+                        const singularJSComponent = attrib.startsWith("ls.js.") ? attrib.substring(6).toLowerCase() : null;
+                        if (singularJSComponent && ls_components.js.includes(singularJSComponent)) {
+                            components = [singularJSComponent];
+                        }
+
+                        // Bypass CDN for beta versions
+                        const CDN_ORIGIN = version === "beta" ? server.etc.EXTRAGON_CDN.replace("cdn.", "cdn-origin.") : server.etc.EXTRAGON_CDN;
+
+                        if (is_merged || attrib === "ls.css" || singularCSSComponent) {
+                            const cssComponents = is_merged ? components.filter(value => ls_components.css.includes(value)) : components;
+                            const useSingular = cssComponents.length === 1 && ((this.data.flags & PARSER_FLAGS.USING_LS_CSS) || singularCSSComponent);
+                            components_string = cssComponents.join();
+
+                            if (components_string.length !== 0) {
+                                this.write(`<link rel=stylesheet href="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular ? components_string : (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}css">`);
+                                this.data.flags |= PARSER_FLAGS.USING_LS_CSS;
+                            }
+                        }
+
+                        if (is_merged || attrib === "ls.js" || singularJSComponent) {
+                            const jsComponents = is_merged ? components.filter(value => ls_components.js.includes(value)) : components;
+                            const useSingular = jsComponents.length === 1 && ((this.data.flags & PARSER_FLAGS.USING_LS_JS) || singularJSComponent);
+                            components_string = jsComponents.join();
+
+                            if (components_string.length !== 0) {
+                                this.write(`<script src="${CDN_ORIGIN}/ls/${version}/${(components_string && !useSingular) ? components_string + "/" : ""}${useSingular ? components_string : (this.data.flags & PARSER_FLAGS.USING_LS_JS) ? "bundle" : "ls"}.${this.data.compress ? "min." : ""}js"${scriptAttributes}></script>`);
+                                this.data.flags |= PARSER_FLAGS.USING_LS_JS;
+                            }
+                        }
+
+                        this.data.flags |= PARSER_FLAGS.USING_LS;
+                        continue;
+                    }
+
+
+                    /**
+                     * TODO:FIXME: (High priority)
+                     * Implement a proper source system to allow custom sources, and use a real resource API instead of hard-coded URLs.
+                     */
+
+                    // Check for custom module providers
+                    const moduleProvider = server.moduleProviders.get(attrib);
+                    if (moduleProvider) {
+                        try {
+                            moduleProvider({ attrib, version, components, scriptAttributes, context: this });
+                        } catch (error) {
+                            this.data.app.error(`Module provider "${attrib}" failed:`, error);
+                        }
+                        continue;
+                    }
+
+                    if (attrib.includes("/")) {
+                        // Check if the first segment has a module provider (e.g., npm/package-name)
+                        const firstSegment = attrib.split("/")[0];
+                        const segmentProvider = server.moduleProviders.get(firstSegment);
+                        if (segmentProvider) {
+                            try {
+                                segmentProvider({ attrib, version, components, scriptAttributes, context: this });
+                            } catch (error) {
+                                this.data.app.error(`Module provider "${firstSegment}" failed:`, error);
+                            }
+                            continue;
+                        }
+
+                        if (attrib.startsWith("http")) {
+                            server.warn("Error in app " + this.data.path + ": @use does not allow direct URL imports (\"" + attrib + "\") - please define a custom @source or use a different way to import your content.");
+                            continue;
+                        }
+
+                        const resolvedPath = this.data.app.resolvePath(attrib, this.data.directory);
+                        const path = resolvedPath.full;
+                        const link = (resolvedPath.useRootPath ? "/~" : "") + resolvedPath.relative || attrib;
+
+                        if (!fs.existsSync(path)) {
+                            this.data.app.warn("Error: File \"" + path + "\" does not exist.");
+                            continue;
+                        }
+
+                        const mtime = `?mtime=${(fs.statSync(path).mtimeMs).toString(36)}`;
+                        const extension = attrib.slice(attrib.lastIndexOf('.') + 1);
+
+                        switch (extension) {
+                            case "js": case "mjs": case "cjs":
+                                this.write(`<script src="${link}${mtime}" ${components.join(" ")}${scriptAttributes}></script>`)
+                                break;
+                            case "css": case "scss":
+                                this.write(`<link rel=stylesheet href="${link}${mtime}" ${components.join(" ")}>`)
+                                break;
+                            case "json":
+                                this.write(`<script type="application/json" id="${components.length ? components.join(",") : attrib}">${fs.readFileSync(path)}</script>`)
+                                break;
+                            default:
+                                this.data.app.warn("Error: Unknown file extension \"" + extension + "\" for file \"" + attrib + "\"");
+                                break;
+                        }
+                    } else {
+                        this.data.app.warn("Error: Unknown module \"" + attrib + "\"");
+                    }
+                }
+                break;
+
+            case "page":
+                if (parent !== "head") {
+                    this.data.app.warn("Error: @page can only be used in <head>, instead was found in <" + parent + ">.");
+                    break
+                }
+
+                if (block.properties.charset) {
+                    this.write(`<meta charset="${block.properties.charset}">`);
+                } else {
+                    if (!(this.data.flags & PARSER_FLAGS.SET_DEFAULT_CHARSET)) {
+                        this.data.flags |= PARSER_FLAGS.SET_DEFAULT_CHARSET;
+                        this.write(`<meta charset="utf-8">`);
+                    }
+                }
+
+                if (block.properties.title) {
+                    this.write(`<title>${block.properties.title}</title>`)
+                }
+
+                if (block.properties.description) {
+                    this.write(`<meta name="description" content="${block.properties.description}">`);
+                }
+
+                if (block.properties.keywords) {
+                    this.write(`<meta name="keywords" content="${block.properties.keywords}">`);
+                }
+
+                if (block.properties.author) {
+                    this.write(`<meta name="author" content="${block.properties.author}">`);
+                }
+
+                if (block.properties.copyright) {
+                    this.write(`<meta name="copyright" content="${block.properties.copyright}">`);
+                }
+
+                if (block.properties.themeColor) {
+                    this.write(`<meta name="theme-color" content="${block.properties.themeColor}">`);
+                }
+
+                if (block.properties.rating) {
+                    this.write(`<meta name="rating" content="${block.properties.rating}">`);
+                }
+
+                if (block.properties.viewport) {
+                    this.write(`<meta name="viewport" content="${block.properties.viewport}">`);
+                } else {
+                    if (!(this.data.flags & PARSER_FLAGS.SET_DEFAULT_VIEWPORT)) {
+                        this.data.flags |= PARSER_FLAGS.SET_DEFAULT_VIEWPORT;
+                        this.write(`<meta name="viewport" content="width=device-width, initial-scale=1.0">`);
+                    }
+                }
+
+                let bodyAttributes = (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? "ls" : "";
+
+                if (this.data.flags & PARSER_FLAGS.USING_LS_CSS) {
+                    if (block.properties.theme) {
+                        bodyAttributes += ` ls-theme="${block.properties.theme}"`;
+                    }
+
+                    if (block.properties.accent) {
+                        bodyAttributes += ` ls-accent="${block.properties.accent}"`;
+                    }
+
+                    if (block.properties.style) {
+                        bodyAttributes += ` ls-style="${block.properties.style}"`;
+                    }
+                }
+
+                if (block.properties.font) {
+                    bodyAttributes += (this.data.flags & PARSER_FLAGS.USING_LS_CSS) ? ` style="--font:${block.properties.font}"` : ` style="font-family:${block.properties.font}"`;
+                }
+
+                if (block.properties.favicon) {
+                    const baseName = nodePath.basename(block.properties.favicon);
+                    let extension = baseName, lastIndex = baseName.lastIndexOf('.');
+
+                    if (lastIndex !== -1) {
+                        extension = baseName.slice(lastIndex + 1);
+                    }
+
+                    let mimeType = backend.mime.getType(extension) || "image/x-icon";
+
+                    this.write(`<link rel="shortcut icon" href="${block.properties.favicon}" type="${mimeType}">`);
+                }
+
+                this.setBodyAttributes(bodyAttributes);
+
+                // if(typeof block.properties.meta === "object"){
+                //     for(let key in block.properties.meta){
+                //         this.write(`<meta name="${key}" content="${block.properties.meta[key]}">`);
+                //     }
+                // }
+                break;
+
+            case "import":
+                if (!this.data.path) break;
+
+                const asStyle = block.properties.as === "inline-style";
+                const asScript = block.properties.as === "inline-script";
+
+                for (let item of block.attributes) {
+                    const path = this.data.app.resolvePath(item, this.data.directory).full;
+
+                    if(!asStyle && !asScript) {
+                        try {
+                            this.import(path);
+                        } catch (error) {
+                            this.data.app.warn("Failed to import: " + item + " (" + path + ")", error);
+                        }
+                    } else {
+                        const className = block.properties.class ? ` class="${block.properties.class}"` : "";
+                        try {
+                            let content = fs.readFileSync(path, "utf8");
+                            if(asStyle) {
+                                content = backend.helper.ContentProcessor.buildSync({ content, ext: "css", targets: backend.esbuildTargets, asBuffer: false, filePath: path, app: this.data.app }).result;
+                                this.write(`<style${className}>${content}</style>`);
+                            } else if(asScript) {
+                                content = backend.helper.ContentProcessor.buildSync({ content, ext: "js", targets: backend.esbuildTargets, asBuffer: false, filePath: path, app: this.data.app }).result;
+                                this.write(`<script${className}>${content}</script>`);
+                            }
+                        } catch (error) {
+                            this.data.app.warn("Failed to import (inline): " + item + " (" + path + ")", error);
+                        }
+                    }
+                }
+                break;
+
+            case "importRaw": // TODO:
+                if (!this.data.path) break;
+
+                for (let item of block.attributes) {
+                    const path = this.data.app.resolvePath(item, this.data.directory).full;
+
+                    try {
+                        let content = fs.readFileSync(path, "utf8");
+                        this.write(!!block.properties.escape ? content.replace(/'/g, '&#39;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : content);
+                    } catch (error) {
+                        this.data.app.warn("Failed to import (raw): " + item + " (" + path + ")", error);
+                    }
+                }
+                break;
+
+            case "file-scope-key":
+                if (!this.data.file) break;
+                this.write(xxh3.xxh64(nodePath.dirname(this.data.file)).toString(16));
+                break;
+
+            case "print": case "write": case "echo":
+                for (let attrib of block.attributes) {
+                    this.write(attrib.replace(/\$\w+/, () => { return "" }))
+                }
+                break;
+
+            default:
+                block = null;
+        }
+    }
+}
+
+
+/**
+ * Common libraries that can be directly imported with @use out of the box.
+ * TODO: Should later be moved to a separate addon
+ * 
+ * Includes:
+ * - Google Fonts
+ * - Bootstrap Icons
+ * - Font Awesome
+ * - Highlight.js
+ * - Marked
+ * - PixiJS (+ filters and advanced blend modes)
+ * - Three.js
+ * 
+ * Any other npm library from CDNJS or jsDelivr (custom CDN import syntax):
+ * Usage: @use(npm/libname:version[components]);
+ * 
+ * Note: components are normalized (sorted, deduplicated, and lowercased)
+ */
+{
+    // const PROVIDER = "https://cdnjs.cloudflare.com/ajax/libs";
+    const PROVIDER = "https://cdn.jsdelivr.net/npm";
+
+    const VERSION_SEPARATOR = PROVIDER === "https://cdn.jsdelivr.net/npm" ? "@" : "/";
+
+    // Latest known versions of these modules as of Feb 19 2026
+    // Later should be updated to fetch the latest versions dynamically
+    const FA_VERSION =            "7.0.1";
+    const HLJS_VERSION =          "11.11.1";
+    const BI_VERSION =            "1.13.1";
+    const MARKED_VERSION =        "16.3.0";
+    const PIXI_VERSION =          "8.13.2";
+    const PIXI_FILTERS_VERSION =  "6.1.5";
+    const THREE_VERSION =         "0.180.0";
+
+    /**
+     * Usage: @use(hljs:version[components]);
+     * Components can be languages (lang:javascript) or themes (theme:github)
+     */
+    server.registerModuleProvider("hljs", ({ version, components, scriptAttributes, context }) => {
+        context.write(`<script src="${PROVIDER}/highlight.js${VERSION_SEPARATOR}${version || HLJS_VERSION}/highlight.min.js"${scriptAttributes}></script>`);
+    
+        for (const component of components) {
+            if (component.startsWith("lang:")) {
+                context.write(`<script src="${PROVIDER}/highlight.js${VERSION_SEPARATOR}${version || HLJS_VERSION}/languages/${component.slice(5)}.min.js"${scriptAttributes}></script>`);
+            }
+    
+            if (component.startsWith("theme:")) {
+                context.write(`<link rel=stylesheet href="${PROVIDER}/highlight.js${VERSION_SEPARATOR}${version || HLJS_VERSION}/styles/${component.slice(6)}.min.css">`);
+            }
+        }
+    });
+
+    /**
+     * Usage: @use(google-fonts[fonts]);
+     * Components are font family names (e.g., "Roboto" or "Open Sans")
+     */
+    server.registerModuleProvider("google-fonts", ({ components, context }) => {
+        if (!(context.data.flags & PARSER_FLAGS.GOOGLE_FONTS_PRECONNECT)) {
+            context.write(`<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>`);
+            context.data.flags |= PARSER_FLAGS.GOOGLE_FONTS_PRECONNECT;
+        }
+    
+        if (components.length > 0) context.write(`<link rel=stylesheet href="https://fonts.googleapis.com/css2?${components.map(font => "family=" + font.replaceAll(" ", "+")).join("&")}&display=swap">`);
+    });
+
+    /**
+     * Usage: @use(marked:version);
+     */
+    server.registerModuleProvider("marked", ({ version, scriptAttributes, context }) => {
+        context.write(`<script src="${PROVIDER}/marked${VERSION_SEPARATOR}${version || MARKED_VERSION}/lib/marked.umd.min.js"${scriptAttributes}></script>`);
+    });
+
+    /**
+     * Usage: @use(bootstrap-icons:version);
+     */
+    server.registerModuleProvider("bootstrap-icons", ({ version, context }) => {
+        const LINK = `${PROVIDER}/bootstrap-icons${VERSION_SEPARATOR}${version || BI_VERSION}/font/bootstrap-icons.min.css`;
+        context.write(`<link rel="preload" href="${LINK}" as="style" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="${LINK}"></noscript>`);
+    });
+
+    /**
+     * Usage: @use(fa-icons:version);
+     */
+    server.registerModuleProvider("fa-icons", ({ version, context }) => {
+        context.write(`<link rel="preload" href="${PROVIDER}/font-awesome${VERSION_SEPARATOR}${version || FA_VERSION}/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="${PROVIDER}/font-awesome${VERSION_SEPARATOR}${version || FA_VERSION}/css/all.min.css"></noscript>`);
+    });
+    
+    /**
+     * Usage: @use(fa-solid:version);
+     */
+    server.registerModuleProvider("fa-solid", ({ version, context }) => {
+        context.write(`<link rel=stylesheet href="${PROVIDER}/font-awesome${VERSION_SEPARATOR}${version || FA_VERSION}/css/solid.min.css">`);
+    });
+    
+    /**
+     * Usage: @use(fa-regular:version);
+     */
+    server.registerModuleProvider("fa-regular", ({ version, context }) => {
+        context.write(`<link rel=stylesheet href="${PROVIDER}/font-awesome${VERSION_SEPARATOR}${version || FA_VERSION}/css/regular.min.css">`);
+    });
+    
+    /**
+     * Usage: @use(fa-brands:version);
+     */
+    server.registerModuleProvider("fa-brands", ({ version, context }) => {
+        context.write(`<link rel=stylesheet href="${PROVIDER}/font-awesome${VERSION_SEPARATOR}${version || FA_VERSION}/css/brands.min.css">`);
+    });
+
+    /**
+     * Usage: @use(pixi:version);
+     */
+    server.registerModuleProvider("pixi", ({ version, scriptAttributes, context }) => {
+        context.write(`<script src="${PROVIDER}/pixi.js${VERSION_SEPARATOR}${version || PIXI_VERSION}/pixi.min.js"${scriptAttributes}></script>`);
+    });
+
+    server.registerModuleProvider("pixi-advanced-blend-modes", ({ version, scriptAttributes, context }) => {
+        context.write(`<script src="${PROVIDER}/pixi.js${VERSION_SEPARATOR}${version || PIXI_VERSION}/packages/advanced-blend-modes.min.js"${scriptAttributes}></script>`);
+    });
+
+    server.registerModuleProvider("pixi-filters", ({ version, scriptAttributes, context }) => {
+        context.write(`<script src="${PROVIDER}/pixi-filters${VERSION_SEPARATOR}${version || PIXI_FILTERS_VERSION}/dist/pixi-filters.min.js"${scriptAttributes}></script>`);
+    });
+
+    /**
+     * Usage: @use(three:version);
+     */
+    server.registerModuleProvider("three", ({ version, scriptAttributes, context }) => {
+        context.write(`<script src="${PROVIDER}/three${VERSION_SEPARATOR}${version || THREE_VERSION}/build/three.core.min.js"${scriptAttributes}></script>`);
+    });
+
+    server.registerModuleProvider("three-webgpu", ({ version, scriptAttributes, context }) => {
+        context.write(`<script src="${PROVIDER}/three${VERSION_SEPARATOR}${version || THREE_VERSION}/build/three.webgpu.min.js"${scriptAttributes}></script>`);
+    });
+
+    /**
+     * Any other module from jsDelivr:
+     * Usage: @use(npm/module-name:version[components]);
+     */
+    server.registerModuleProvider("npm", ({ attrib, version, components, scriptAttributes, context }) => {
+        const moduleName = attrib.split("/").slice(1).join("/").split(":")[0];
+        if (!moduleName) {
+            context.data.app.warn("Invalid npm module name in @use: " + attrib);
+            return;
+        }
+
+        const baseURL = `${PROVIDER}/${moduleName}${VERSION_SEPARATOR}${version || "latest"}`;
+        const cssComponents = components.filter(c => c.endsWith(".css"));
+        const jsComponents = components.filter(c => c.endsWith(".js"));
+
+        for (const css of cssComponents) {
+            context.write(`<link rel=stylesheet href="${baseURL}/${css}">`);
+        }
+
+        for (const js of jsComponents) {
+            context.write(`<script src="${baseURL}/${js}"${scriptAttributes}></script>`);
+        }
+    });
+}
+
+// Debug: Hot reloading LS components
+// This is a temporary solution to update the ls_components object in this file, do not actually use this
+if (process.argv.includes("--debug-scan-ls-components")) {
+    if (fs.existsSync(ls_path)) {
+        require(ls_path + "/misc/generate.js");
+
+        const newComponents = JSON.parse(fs.readFileSync(ls_path + "/misc/components.json", "utf8"));
+
+        ls_components.js = newComponents.js;
+        ls_components.css = newComponents.css;
+
+        const thisFile = __filename;
+        const fileContent = fs.readFileSync(thisFile, "utf8");
+
+        // Find the ls_components assignment using regex
+        const updatedContent = fileContent.replace(
+            /const ls_components\s*=\s*\{[\s\S]*?\};/,
+            `const ls_components = ${JSON.stringify(ls_components, null, 4)};`
+        );
+
+        fs.writeFileSync(thisFile, updatedContent, "utf8");
+        console.log(`[DEBUG] Updated ${thisFile} with new ls_components.`);
+    }
+}
+
+server.WebApp = WebApp;
+module.exports = server;

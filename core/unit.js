@@ -6,6 +6,7 @@
     License: GPL-3.0
 
     Units are the core part of Akeno, making it modular, extensible, and easy to debug.
+    There are also some neat helpers (Version, fastUUID) that provide faster utilities as replacements.
 */
 
 // Backend reference
@@ -15,7 +16,7 @@ const spawn = require('child_process').spawn;
 const fs = require('fs');
 const nodepath = require('path');
 
-const { xxh32 } = require("@node-rs/xxhash");  // XXHash
+const crypto = require('crypto'); // For UUID generation
 
 const external = new Map;
 
@@ -30,6 +31,33 @@ let allow_unrestricted_execution = false;
 // Please make sure to use the correct Unit class for the type of object that you are creating.
 // See descriptions or docs for more information on Units.
 
+
+
+
+// Replace slow modules with faster and lighter alternatives.
+// A risk I'm willing to take to avoid bloat
+const NodeModule = require('module');
+const originalLoad = NodeModule._load;
+NodeModule._load = function (request, parent, isMain) {
+    if(request === "uuid") {
+        // Half the load time, double the speed
+        return fastUUID;
+    }
+
+    const originalRequest = request;
+
+    const isSemverPatch = request.startsWith('semver');
+    if (isSemverPatch) {
+        request = __dirname + '/../etc/misc/fast-modules/semver.js';
+    }
+
+    const result = originalLoad.apply(this, [request, parent, isMain]);
+
+    if(isSemverPatch && originalRequest.includes("function")) {
+        return result[originalRequest.split("/").filter(Boolean).pop()];
+    }
+    return result;
+};
 
 
 class Version {
@@ -381,6 +409,98 @@ class Version {
 
         return i === len;
     }
+
+    // Some modules use it
+    static coerce(versionString){
+        if(typeof versionString !== 'string'){
+            return null;
+        }
+
+        for(let i = 0; i < versionString.length; i++){
+            const char = versionString.charCodeAt(i);
+            if((char >= 48 && char <= 57)) { // 0-9
+                return new Version(versionString.slice(i));
+            }
+        }
+        return null;
+    }
+}
+
+// Half the load time compared to Node "uuid", *over 100x smaller in size*, 2x faster generation (we simply use the native crypto.randomUUID), many times faster for other methods.
+// All methods are single-pass, only charcodes, no regex.
+const fastUUID = {
+    v1: () => { throw new Error("UUIDv1 is not supported in the patched uuid module."); },
+    v3: () => { throw new Error("UUIDv3 is not supported in the patched uuid module."); },
+    v4: crypto.randomUUID,
+    v5: () => { throw new Error("UUIDv5 is not supported in the patched uuid module."); },
+
+    // Fast uuidv4 validation, roughly 3.5x faster than uuid.validate
+    validate(uuid) {
+        if(typeof uuid !== 'string' || uuid.length !== 36) return false;
+
+        // Fixed length loop
+        for (let i = 0; i < 36; i++) {
+            const c = uuid.charCodeAt(i);
+            if(i === 14) {
+                // Version check
+                if(c >= 48 && c <= 53) continue; // 0-5
+            } else if(i === 19) {
+                // Variant check
+                if(c === 56 || c === 57 || c === 97 || c === 98 || c === 65 || c === 66) continue; // 8, 9, a, b, A, B
+            } else if ((i === 8 || i === 13 || i === 18 || i === 23) ? c === 45 : ((c >= 48 && c <= 57) || // 0-9
+                (c >= 97 && c <= 102) || // a-f
+                (c >= 65 && c <= 70))) { // A-F
+                continue;
+            }
+            return false;
+        }
+        return true;
+    },
+
+    parse(uuid) {
+        if (typeof uuid !== 'string' || uuid.length !== 36) throw new Error('Invalid UUID');
+
+        const bytes = new Uint8Array(16);
+        let j = 0;
+
+        for (let i = 0; i < 36; i++) {
+            const c = uuid.charCodeAt(i);
+            if (c === 45) continue;
+
+            // Fast hex char => int conversion (15x+ faster than parseInt)
+            const nibble = (c >= 48 && c <= 57)? c - 48: (c >= 97 && c <= 102)? c - 87: (c >= 65 && c <= 70)? c - 55: -1;
+            if (nibble === -1) throw new Error('Invalid UUID character');
+
+            bytes[j >> 1] = (bytes[j >> 1] << 4) | nibble;
+            j++;
+        }
+
+        if (j !== 32) throw new Error('Invalid UUID length');
+        return bytes;
+    },
+
+    stringify(bytes) {
+        if (!(bytes instanceof Uint8Array) || bytes.length !== 16) throw new Error('Invalid bytes');
+
+        let str = '';
+        for (let i = 0; i < 16; i++) {
+            const hex = bytes[i].toString(16).padStart(2, '0');
+            str += hex;
+            if (i === 3 || i === 5 || i === 7 || i === 9) str += '-';
+        }
+        return str;
+    },
+
+    version(uuid) {
+        if (typeof uuid !== 'string' || uuid.length !== 36) throw new Error('Invalid UUID');
+        const versionChar = uuid.charCodeAt(14);
+        if (versionChar >= 48 && versionChar <= 53) { // '0' to '5'
+            return versionChar - 48;
+        }
+        throw new Error('Unsupported UUID version');
+    },
+
+    NIL: '00000000-0000-0000-0000-000000000000',
 }
 
 class IndexedEnum {
@@ -1267,4 +1387,65 @@ class EventHandler {
     }
 }
 
-module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, Server, EventHandler, backend };
+/* BitSet helper */
+class BitSet {
+    constructor(size = 32){
+        this.size = size;
+        this.bits = new Uint32Array(Math.ceil(size / 32));
+    }
+
+    set(index){
+        this.bits[index >>> 5] |= 1 << (index & 31);
+    }
+
+    clear(index){
+        this.bits[index >>> 5] &= ~(1 << (index & 31));
+    }
+
+    toggle(index){
+        this.bits[index >>> 5] ^= 1 << (index & 31);
+    }
+
+    has(index){
+        return (this.bits[index >>> 5] & (1 << (index & 31))) !== 0;
+    }
+
+    clearAll(){
+        this.bits.fill(0);
+    }
+
+    setAll(){
+        this.bits.fill(0xFFFFFFFF);
+    }
+
+    toString(){
+        let str = "";
+        for(let i = 0; i < this.size; i++){
+            str += this.has(i) ? "1" : "0";
+        }
+        return str;
+    }
+
+    toHexString(){
+        let str = "";
+        for(let i = 0; i < this.bits.length; i++){
+            str += this.bits[i].toString(16).padStart(8, "0");
+        }
+        return str;
+    }
+
+    static fromHexString(hexString){
+        const bitSet = new BitSet(hexString.length * 4);
+        for(let i = 0; i < hexString.length; i++){
+            const hexDigit = parseInt(hexString[i], 16);
+            for(let j = 0; j < 4; j++){
+                if((hexDigit & (1 << (3 - j))) !== 0){
+                    bitSet.set(i * 4 + j);
+                }
+            }
+        }
+        return bitSet;
+    }
+}
+
+module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, Server, EventHandler, fastUUID, backend, BitSet };

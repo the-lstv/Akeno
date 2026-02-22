@@ -30,6 +30,9 @@ protocols {
 
         # "dev-only" disables unsecured WebSockets in production.
         websockets: dev-only;
+
+        # Always redirect HTTP to HTTPS in production mode
+        always_redirect: prod-only;
     }
 
     https {
@@ -74,11 +77,10 @@ ssl {
 # Webserver/Web app configuration
 
 web {
-    # Enable compression (brotli, gzip, etc).
-    compress: true;
+    compress: true;       # Enable compression (brotli, gzip, etc).
+    compress-code: true;  # Enable code compression (.html, .js, .css, inline scripts/styles).
 
-    # Enable code compression (.html, .js, .css, inline scripts/styles).
-    compress-code: true;
+    esbuild;              # Enable esbuild for on-the-fly JavaScript and CSS processing and minification.
 
     locations:
         # Web-app locations.
@@ -87,6 +89,6 @@ web {
         # "/*" looks through subdirectories (eg. if you have a folder like /websites/ that contains one website per folder).
 
         "/var/www/akeno/*",
-        "./examples/hello-world-website"
+        "./examples/*"
     ;
 }

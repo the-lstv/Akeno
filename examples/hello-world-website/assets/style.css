@@ -9,3 +9,7 @@ body {
     position: fixed;
     inset: 0;
 }
+
+.welcome {
+    text-align: center;
+}

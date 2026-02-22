@@ -15,20 +15,16 @@
   },
   "dependencies": {
     "@node-rs/xxhash": "^1.7.6",
-    "bcrypt": "^6.0.0",
     "clean-css": "^5.3.3",
-    "esbuild": "^0.27.2",
-    "fast-json-stringify": "^6.2.0",
+    "esbuild": "^0.27.3",
     "fs-extra": "^11.3.3",
-    "jsonwebtoken": "^9.0.3",
-    "lmdb": "^3.5.0",
+    "lmdb": "^3.5.1",
     "minimist": "^1.2.8",
-    "module-alias": "^2.2.3",
+    "module-alias": "^2.3.4",
     "node-addon-api": "^8.5.0",
     "node-lmdb": "^0.10.1",
     "pm2": "^6.0.14",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.56.0",
-    "uglify-js": "^3.19.3",
-    "uuid": "^11.1.0"
+    "uglify-js": "^3.19.3"
   }
 }

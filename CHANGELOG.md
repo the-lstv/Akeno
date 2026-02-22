@@ -12,12 +12,16 @@
 - Streamline build setup
 
 ## New in 1.6.9-beta
-- Shifting to an experimental fork of uWebSockets.js
 - Redesigned the internal API to separate Protocols and Apps
-- Now properly utilizing SNI and native routing; up to this point we were routing twice due to the API limitation, which was wasting work
-- A huge part of the logic is now done natively
+- Shifting hot-path code to C++
+- Removed the native bindings module; moved to Akeno-uWS
+- Removed irrelevant JWT & bcrypt helpers
 - Methods are now case-sensitive by default
-- Removed the native/ bindings; moved to Akeno-uWS
+- Added optimized wrappers for certain modules (uuid, semver) that were too slow/bloated, reducing loadtime and enhancing performance
+- Now properly utilizing SNI and native routing; up to this point we were routing twice due to the API limitation, which was wasting work
+- Fixed broken compression cache (Compression was always being re-applied due to an API change that wasn't implemented everywhere. This made compressed requests 6x slower...)
+- Optimized request path for WebApps and using faster cache
+- Log how long what took time on startup
 
 ## New in 1.6.8-beta
 - A proper build pipeline and server events
@@ -70,7 +74,7 @@
 - Apps can now register hostnames more easily via a uniform API, with group and wildcard support (eg. `*.example.{com,net}`)
 
 ## New in 1.6.0-beta
-- Major changes all around (basically getting ready for a 2.0.0 release)
+- Major changes all around
 - A brand new versioning utility, for consistent versioning and matching for all modules, addons, etc.
 - Added pre-release and build metadata to versioning
 - Complete core redesign around a new modular Unit system
