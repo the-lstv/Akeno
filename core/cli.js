@@ -10,6 +10,8 @@
     Description: Command line interface for Akeno
 */
 
+// Units overwrite some modules
+require(__dirname + "/unit");
 
 const
     minimist = require('minimist'),
@@ -26,8 +28,8 @@ const
     fs = require("fs-extra"),
 
     // Local libraries
-    { parse, stringify, v } = require("./parser"),
-    { Client } = require("./ipc"),
+    { parse, stringify, v } = require(__dirname + "/parser"),
+    { Client } = require(__dirname + "/ipc"),
 
     socketPath = process.platform === "win32"? '\\\\.\\pipe\\akeno.backend.sock' : '/tmp/akeno.backend.sock'
 ;
