@@ -1,6 +1,3 @@
-[submodule "core/parser"]
-	path = core/parser
-	url = https://github.com/the-lstv/Atrium
 [submodule "core/ipc"]
 	path = core/ipc
 	url = https://github.com/the-lstv/advanced-node-ipc
