@@ -10,7 +10,7 @@
 
 // This is temporary
 const fs = require("node:fs");
-const TEMP_AKENO_UWS_PATH = fs.existsSync(__dirname + "/../akeno-uws/dist/uws.js") && __dirname + "/../akeno-uws/dist/uws.js";
+const TEMP_AKENO_UWS_PATH = fs.existsSync(__dirname + "/../akeno-uws-dev/dist/uws.js") && __dirname + "/../akeno-uws-dev/dist/uws.js";
 // Whether to use the new experimental C++ API, or the slow legacy JavaScript one (for now, both are supported, but the legacy one is being deprecated)
 // Everywhere where we check "TEMP_USING_AKENO_UWS" is to be later removed
 const TEMP_USING_AKENO_UWS = !!TEMP_AKENO_UWS_PATH;
@@ -489,7 +489,7 @@ const backend = {
                 if(!this.server || !this.enabled) return;
 
                 // Legacy SNI handling
-                if(!TEMP_USING_AKENO_UWS) {
+                // if(!TEMP_USING_AKENO_UWS) {
                     const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
 
                     if(SNIDomains && SNIDomains.length > 0) for(const domain of SNIDomains) {
@@ -500,7 +500,7 @@ const backend = {
                             this.addSNIRoute(domain.replace("*.", ""));
                         }
                     }
-                }
+                // }
             }
 
             addSNIRoute(domain, key = null, cert = null) {
@@ -512,6 +512,12 @@ const backend = {
                     key_file_name:  key  || backend.config.getBlock("ssl").get("keyBase", String, "") .replace("{domain}", domain.replace("*.", "")),
                     cert_file_name: cert || backend.config.getBlock("ssl").get("certBase", String, "").replace("{domain}", domain.replace("*.", ""))
                 });
+
+                console.log(`Added SNI route for ${domain}`, {
+                    key_file_name:  key  || backend.config.getBlock("ssl").get("keyBase", String, "") .replace("{domain}", domain.replace("*.", "")),
+                    cert_file_name: cert || backend.config.getBlock("ssl").get("certBase", String, "").replace("{domain}", domain.replace("*.", ""))
+                });
+                
 
                 this.SNINames.add(domain);
 
