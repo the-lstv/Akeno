@@ -743,7 +743,8 @@ const PARSER_FLAGS = {
 
 globalApp.registerFileProcessor(async (id, url, path, mimeType) => {
     // TODO: very ugly; should be pointed from C++ rather than looking up
-    const app = [...applications.values()].find(app => path.startsWith(app.path.replace(/\/$/, "")));
+    const npath = nodePath.normalize(path);
+    const app = [...applications.values()].find(app => npath.startsWith(app.path));
 
     const file = (path && path.replace(app.path, "")) || "<not found>";
     app.verbose(`Serving "${url}"${(file && file !== url)? ` (${file})` : ""} as ${mimeType}`);
