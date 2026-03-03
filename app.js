@@ -513,12 +513,6 @@ const backend = {
                     cert_file_name: cert || backend.config.getBlock("ssl").get("certBase", String, "").replace("{domain}", domain.replace("*.", ""))
                 });
 
-                console.log(`Added SNI route for ${domain}`, {
-                    key_file_name:  key  || backend.config.getBlock("ssl").get("keyBase", String, "") .replace("{domain}", domain.replace("*.", "")),
-                    cert_file_name: cert || backend.config.getBlock("ssl").get("certBase", String, "").replace("{domain}", domain.replace("*.", ""))
-                });
-                
-
                 this.SNINames.add(domain);
 
                 if(!TEMP_USING_AKENO_UWS) {
