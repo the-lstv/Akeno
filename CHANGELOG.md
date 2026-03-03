@@ -1,27 +1,40 @@
 ## TO-DO
-- Add a fast C++ side content cache replacing the current temporary one
-- Implement a proper database system (X - not this project's job)
-- Complete package manager for addons/modules
+- Package manager for addons/modules
 - Rework many parts, including the CLI, dynamic content, and the router
 - Write a proper documentation (https://lstv.space/docs/akeno is work in progress now)
 - Add a proper installation script (soon)
 - Allow modules to extend the CLI help menu
-- Re-implement HTTPS, H3 and WS protocols
+- Re-implement H3 and WS protocols
 - Fix jsObject router type
-- Remove native/dist once properly switched to Akeno-uWS
 - Streamline build setup
+- Web management dashboard
 
-## New in 1.6.9-beta
-- Redesigned the internal API to separate Protocols and Apps
-- Shifting hot-path code to C++
-- Removed the native bindings module; moved to Akeno-uWS
-- Removed irrelevant JWT & bcrypt helpers
-- Methods are now case-sensitive by default
-- Added optimized wrappers for certain modules (uuid, semver) that were too slow/bloated, reducing loadtime and enhancing performance
-- Now properly utilizing SNI and native routing; up to this point we were routing twice due to the API limitation, which was wasting work
-- Fixed broken compression cache (Compression was always being re-applied due to an API change that wasn't implemented everywhere. This made compressed requests 6x slower...)
-- Optimized request path for WebApps and using faster cache
-- Log how long what took time on startup
+## New in 1.6.9-beta (major changes, kept as a "buffer" before next major release)
+- Features
+    - Redesigned the internal API to separate Protocols and Apps
+    - Removed the native bindings module; moved to Akeno-uWS
+    - Methods are now case-sensitive by default
+    - Added optimized wrappers for certain modules (uuid, semver) that were too slow
+    - Redesigned @use module sources - addons can now register their own, and npm/module has been added for easy importing of any library on npm
+    - Addons can now register custom preprocessor blocks
+    - Display how much time was spent on what during load
+    - On Linux, file changes are now detected via inotify instead of polling
+    - Updated CLI
+- Performance
+    - Shifting hot-path code to C++
+    - Now properly utilizing SNI and native routing; up to this point we were routing twice due to the limited API
+    - Optimized request path for WebApps and using faster storage (JS Map -> ankerl::unordered_dense). Most hits should now be entirely resolved in C++ without JS callbacks
+    - Removed irrelevant JWT & bcrypt helpers and cleaned up the overall codebase and dependencies
+    - Overall better performance
+- Bug Fixes
+    - Fixed broken compression cache (compression was always being re-computed before due to a typo)
+    - Fixed Markdown parsing bugs
+    - Improved file list linking for cache busting
+    - Now properly utilizing ETags
+    - Removed some old files that weren't needed
+
+Note that this release no longer provides Windows binaries.
+They may be added again in the future, but as of now you must build your own.
 
 ## New in 1.6.8-beta
 - A proper build pipeline and server events

@@ -8,12 +8,14 @@
 */
 
 
-// This is temporary
+// This is temporary - look for a build of Akeno-uWS
 const fs = require("node:fs");
-const TEMP_AKENO_UWS_PATH = fs.existsSync(__dirname + "/../akeno-uws-dev/dist/uws.js") && __dirname + "/../akeno-uws-dev/dist/uws.js";
-// Whether to use the new experimental C++ API, or the slow legacy JavaScript one (for now, both are supported, but the legacy one is being deprecated)
-// Everywhere where we check "TEMP_USING_AKENO_UWS" is to be later removed
-const TEMP_USING_AKENO_UWS = !!TEMP_AKENO_UWS_PATH;
+let t, TEMP_AKENO_UWS_PATH = fs.existsSync(t = __dirname + "/../akeno-uws-dev/dist/akeno.js")? t: fs.existsSync(t = __dirname + "/../akeno-uws/dist/akeno.js")? t: fs.existsSync(t = __dirname + "/../akeno-uws-dev/dist/uws.js")? t: fs.existsSync(t = __dirname + "/../akeno-uws/dist/uws.js")? t: null;;
+
+if(!TEMP_AKENO_UWS_PATH) {
+    console.error("No Akeno-uWS build found, please build Akeno-uWS from the source code in the 'akeno-uws-dev' directory. As of now no prebuilt binaries are provided (this is temporary).\nAlternatively you can temporarily downgrade to Akeno 1.6.8, which does not require Akeno-uWS, but this is not recommended as it has many known issues.");
+    process.exit(1);
+}
 
 // Module aliases
 const moduleAlias = require('module-alias');
@@ -21,13 +23,13 @@ const moduleAlias = require('module-alias');
 moduleAlias.addAliases({
     "akeno:backend" : __dirname + "/app.js",
     "akeno:units"   : __dirname + "/core/unit.js",
-    "akeno:web"     : __dirname + (TEMP_USING_AKENO_UWS? "/core/web.js": "/core/legacy/web.js"),
+    "akeno:web"     : __dirname + "/core/web.js",
     "akeno:bucket"  : __dirname + "/core/bucket",
     "akeno:ipc"     : __dirname + "/core/ipc",
     "akeno:mime"    : __dirname + "/core/mime.js",
     "akeno:kvdb"    : __dirname + "/core/kvdb.js",
     "akeno:router"  : __dirname + "/core/router.js", // This is being moved to akeno:server (C++ side router)
-    "akeno:server"  : (TEMP_USING_AKENO_UWS? TEMP_AKENO_UWS_PATH: 'uWebSockets.js'), // Note that these are *not* API compatible between legacy and Akeno-uWS
+    "akeno:server"  : TEMP_AKENO_UWS_PATH, // Note that these are *not* API compatible between legacy and Akeno-uWS
     "atrium"        : __dirname + "/core/parser"
 });
 
@@ -46,18 +48,22 @@ const
     // fs = require("node:fs"),                                  // File system
     crypto = require('crypto'),                               // Cryptographic utilities
 
-    uws = require('akeno:server'),                            // uWebSockets
+    server = require('akeno:server'),                         // Native server
     uuid = crypto.randomUUID,                                 // UUIDv4
     { xxh32, xxh64, xxh3 } = require("@node-rs/xxhash"),      // XXHash
 
     MimeTypes = require("akeno:mime"),                        // MIME types
     Router = require("akeno:router"),                         // Router utilities
 
-    domainRouter = TEMP_USING_AKENO_UWS? {
+    /**
+     * Temporary legacy API for compatibility
+     * @deprecated
+     */
+    domainRouter = {
         add(pattern, handler) {
             backend.globalApp.route(pattern, handler);
         }
-    }: new Router.DomainRouter(),                             // Global router instance (temporary backward compatibility)
+    },
 
     // Compression
     zlib = require("node:zlib"),                              // Gzip compression (TODO: Akeno-uWS already has native compression, we can remove this dependency later)
@@ -67,35 +73,25 @@ const
 
     // Local modules
     { Server: IPCServer } = require("akeno:ipc"),             // IPC server
-    { parse, configTools } = require("atrium"),               // Config parser
-
-    // Native bindings
-    // Warning: The last legacy build had a broken Markdown parser. Akeno-uWS fixes that.
-    native = !TEMP_USING_AKENO_UWS? require(`./core/legacy/native/akeno-native-${process.platform}-${process.arch}.node`): {
-        get parser() { return uws.HTMLParser; }
-    } // <- The native bindings module has been replaced by Akeno-uWS. TODO: Remove once API is replaced.
+    { parse, configTools } = require("atrium")                // Config parser
 ;
 
-if(TEMP_USING_AKENO_UWS) {
-    if(!uws.isAkeno) {
-        throw new Error("Invalid Akeno-uWS build.");
-    }
-
-    if(!version.compare(uws.akenoCompatibility)) {
-        throw new Error(`Incompatible Akeno-uWS build, expected ${uws.akenoCompatibility}, but is running ${version}.`);
-    }
-
-    console.warn(`[system] Using experimental Akeno-uWS build`);
-    
-    // Tempoarary
-    globalApp = new uws.App();
-
-    globalApp.onObject((req, res, object) => {
-        resolveJS(req, res, object);
-    });
-} else {
-    console.warn(`[system] Using legacy JavaScript resolver - you are mising on high performance.`);
+if(!server.isAkeno) {
+    throw new Error("Invalid Akeno-uWS build.");
 }
+
+if(!version.compare(server.akenoCompatibility)) {
+    throw new Error(`Incompatible Akeno-uWS build, expected ${server.akenoCompatibility}, but is running ${version}.`);
+}
+
+console.warn(`[system] Using experimental Akeno-uWS build`);
+
+// Tempoarary
+globalApp = new server.App();
+
+globalApp.onObject((req, res, object) => {
+    resolveHandler(req, res, null, object);
+});
 
 
 // Misc global constants
@@ -109,25 +105,22 @@ const IS_NODE_INSPECTOR_ENABLED = process.execArgv.indexOf("--inspect") !== -1;
 
 
 // Open databases [TODO: to be updated]
-const db = {
-    storages: {
-        // - Main database
-        main: KeyStorage.openDb(PATH, "db/main"),
-
-        // - Data database
-        data: KeyStorage.openDb(PATH, "db/data"),
-
-        // - Cache database
-        cache: KeyStorage.openDb(PATH, "db/cache")
-    }
-}
+const db = {}
 
 /**
  * Handles object calls to JS; mostly not needed with Akeno-uWS, but could still be used in some edge cases
  * @deprecated
  */
 function resolveHandler(req, res, wsContext, handler = null) {
+    res.onAborted(() => { });
+
     const isWs = wsContext !== null && typeof wsContext !== "undefined";
+
+    if(isWs) {
+        console.error("Sorry, WebSocket upgrade handling is not yet implemented in the new resolver, please check for updates");
+        res.writeStatus("503 Service Unavailable").end("503 Service Unavailable");
+        return;
+    }
 
     while (handler && typeof handler === "object" && handler instanceof Router.PathMatcher) {
         handler = handler.match(req.path);
@@ -201,69 +194,6 @@ function resolveHandler(req, res, wsContext, handler = null) {
     res.writeStatus("400 Bad Request").end("400 Bad Request");
 }
 
-let resolve = resolveJS; // Akeno-uWS skips the JS resolver completely
-if(!TEMP_USING_AKENO_UWS) {
-    /**
-    * This is the legacy JS resolver compatible with vanilla uWebSockets.js.
-    * @deprecated
-    */
-    resolve = function (res, req, wsContext = null) {
-        if(!(this instanceof Units.Protocol)) {
-            throw new TypeError("resolve() must be called with Units.Protocol as context");
-        }
-
-        if(!wsContext && (backend.mode === backend.modes.DEVELOPMENT || backend.mode === backend.modes.TESTING)){
-            req.begin = performance.now();
-        }
-
-        // Method string; GET, POST, etc. - is case-sensitive, as per RFC standards. Thus we don't need to normalize (previously I was stupidly normalizing TWICE...).
-        req.method = req.getCaseSensitiveMethod();
-        req.origin = req.getHeader('origin');
-
-        const flags = this.requestFlags;
-        req.secure = !!(flags && flags.secure);
-
-        const _host = req.getHeader("host") || "", _colon_index = _host.lastIndexOf(":");
-        req.domain = _colon_index === -1? _host: _host.slice(0, _colon_index);
-        req.host = _host;
-
-        if(req.domain.startsWith("www.")) {
-            res.writeStatus("301 Moved Permanently");
-            res.writeHeader("Location", `${req.secure ? "https" : "http"}://${req.domain.slice(4)}${req.getUrl()}`);
-            res.end();
-            return;
-        }
-
-        if(req.method === "OPTIONS"){
-            backend.helper.corsHeaders(req, res);
-            res.writeHeader("Cache-Control", "max-age=1382400");
-            res.writeHeader("Access-Control-Max-Age", "1382400");
-            res.end();
-            return;
-        }
-
-        const url = req.getUrl();
-        req.path = url.indexOf("%") === -1? url: decodeURIComponent(url);
-
-        if(req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE") {
-            req.contentType = req.getHeader("content-type");
-            req.contentLength = req.getHeader("content-length");
-        }
-
-        res.onAborted(() => {
-            req.abort = true; // This doesn't even make sense
-        });
-
-        resolveHandler(req, res, wsContext, domainRouter.match(req.domain));
-    }
-}
-
-// This one has the correct order.
-function resolveJS(req, res, target) {
-    res.onAborted(() => { });
-    resolveHandler(req, res, null, target);
-}
-
 // Central backend object
 const backend = {
     version,
@@ -272,12 +202,6 @@ const backend = {
      * @deprecated
      */
     db,
-
-    /**
-     * Legacy only, to be removed
-     * @deprecated
-     */
-    native,
 
     /**
      * You should use `require("akeno:mime")`
@@ -320,6 +244,10 @@ const backend = {
      * @deprecated
      */
     protocols: {
+        /**
+         * Legacy protocol unit for IPC, used for internal communication and the CLI
+         * @deprecated To be replaced
+         */
         ipc: new class IPCProtocol extends Units.Protocol {
             constructor(){
                 super({
@@ -432,7 +360,8 @@ const backend = {
         },
 
         /**
-         * @deprecated To be replaced by the new Protocol API
+         * Legacy protocol unit for HTTP
+         * @deprecated To be replaced with just uws.HTTPProtocol
          */
         http: new class HTTPProtocol extends Units.HTTPProtocol {
             constructor(){
@@ -446,26 +375,20 @@ const backend = {
                     secure: false
                 }
 
-                if(!TEMP_USING_AKENO_UWS) this.defaultResolver = resolve.bind(this);
-
                 // @deprecated
                 this.ports = [];
             }
 
             init() {
-                if(TEMP_USING_AKENO_UWS) {
-                    // There is finally a proper API for this
-                    this.server = new uws.HTTPProtocol();
-                    this.server.bind(globalApp);
-                } else {
-                    this.server = uws.App();
-                    this.server.any("/*", this.defaultResolver);
-    
-                    if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
-                }
+                this.server = new server.HTTPProtocol();
+                this.server.bind(globalApp);
             }
         },
 
+        /**
+         * Legacy protocol unit for HTTPS
+         * @deprecated To be replaced
+         */
         https: new class HTTPSProtocol extends Units.HTTPProtocol {
             constructor(){
                 super({
@@ -478,8 +401,6 @@ const backend = {
                     secure: true
                 }
 
-                if(!TEMP_USING_AKENO_UWS) this.defaultResolver = resolve.bind(this);
-
                 this.ports = [];
 
                 this.SNINames = new Set();
@@ -489,20 +410,21 @@ const backend = {
                 if(!this.server || !this.enabled) return;
 
                 // Legacy SNI handling
-                // if(!TEMP_USING_AKENO_UWS) {
-                    const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
+                const SNIDomains = backend.config.getBlock("ssl").get("domains", Array, []);
 
-                    if(SNIDomains && SNIDomains.length > 0) for(const domain of SNIDomains) {
-                        this.addSNIRoute(domain);
+                if(SNIDomains && SNIDomains.length > 0) for(const domain of SNIDomains) {
+                    this.addSNIRoute(domain);
 
-                        // Not sure if we should be adding a root domain handler by default.
-                        if(domain.startsWith("*.")){
-                            this.addSNIRoute(domain.replace("*.", ""));
-                        }
+                    // Not sure if we should be adding a root domain handler by default.
+                    if(domain.startsWith("*.")){
+                        this.addSNIRoute(domain.replace("*.", ""));
                     }
-                // }
+                }
             }
 
+            /**
+             * @deprecated Use app.addServerName()
+             */
             addSNIRoute(domain, key = null, cert = null) {
                 if(this.SNINames.has(domain)) {
                     return false;
@@ -514,14 +436,6 @@ const backend = {
                 });
 
                 this.SNINames.add(domain);
-
-                if(!TEMP_USING_AKENO_UWS) {
-                    const route = this.server.domain(domain);
-                    route.any("/*", this.defaultResolver);
-
-                    if(this.enableWebSockets) route.ws("/*", backend.protocols.ws.options);
-                    return true;
-                }
             }
 
             init() {
@@ -535,21 +449,15 @@ const backend = {
                     cert_file_name: default_cert
                 }: null;
 
-                if(TEMP_USING_AKENO_UWS) {
-                    // There is finally a proper API for this
-                    this.server = ssl_config? new uws.HTTPSProtocol(ssl_config): new uws.HTTPSProtocol();
-                    this.server.bind(globalApp);
-                } else {
-                    // No, you can't put the ternary inside the constructor.
-                    this.server = ssl_config? uws.SSLApp(ssl_config): uws.SSLApp();
-                    this.server.any("/*", this.defaultResolver);
-
-                    // TODO: Distinguish WS over HTTP/s
-                    if(this.enableWebSockets) this.server.ws("/*", backend.protocols.ws.options);
-                }
+                this.server = ssl_config? new server.HTTPSProtocol(ssl_config): new server.HTTPSProtocol();
+                this.server.bind(globalApp);
             }
         },
 
+        /**
+         * Legacy protocol unit for HTTP/3
+         * @deprecated To be replaced
+         */
         h3: new class H3Protocol extends Units.HTTPProtocol {
             constructor(){
                 super({
@@ -558,33 +466,32 @@ const backend = {
                     type: "http"
                 })
 
-                this.requestFlags = {
-                    secure: true,
-                    h3: true
-                }
-
-                this.defaultResolver = resolve.bind(this);
-
                 this.ports = [];
             }
 
             init() {
                 this.warn("HTTP/3 support is still experimental and may not work correctly.");
 
-                const key = backend.config.getBlock("ssl").get("key", String, null);
-                const cert = backend.config.getBlock("ssl").get("cert", String, null);
-                console.log(key, cert);
+                // TODO: To be implemented
+
+                // const key = backend.config.getBlock("ssl").get("key", String, null);
+                // const cert = backend.config.getBlock("ssl").get("cert", String, null);
+                // console.log(key, cert);
                 
 
-                this.server = uws.H3App({
-                    key_file_name: key,
-                    cert_file_name: cert
-                });
+                // this.server = uws.H3App({
+                //     key_file_name: key,
+                //     cert_file_name: cert
+                // });
 
-                this.server.any("/*", this.defaultResolver);
+                // this.server.any("/*", this.defaultResolver);
             }
         },
 
+        /**
+         * Legacy protocol unit for WebSockets
+         * @deprecated To be replaced
+         */
         ws: new class WebSocketProtocol extends Units.Protocol {
             constructor(){
                 super({
@@ -592,8 +499,6 @@ const backend = {
                     protocol: "ws",
                     type: "ws"
                 })
-
-                this.defaultResolver = resolve.bind(this);
             }
 
             init() {
@@ -606,14 +511,15 @@ const backend = {
                     maxBackpressure: backend.config.getBlock("websocket").get("maxBackpressure", Number) || 1024 * 1024,
                     maxLifetime: backend.config.getBlock("websocket").get("maxLifetime", Number) || 0,
                     closeOnBackpressureLimit: backend.config.getBlock("websocket").get("closeOnBackpressureLimit", Boolean, false),
-                    compression: uws[backend.config.getBlock("websocket").get("compression", String, "DEDICATED_COMPRESSOR_32KB").toLowerCase()] || uws.DEDICATED_COMPRESSOR_32KB,
+                    compression: server[backend.config.getBlock("websocket").get("compression", String, "DEDICATED_COMPRESSOR_32KB").toLowerCase()] || server.DEDICATED_COMPRESSOR_32KB,
 
                     upgrade: (res, req, context) => {
                         if(!this.enabled) {
                             return res.writeStatus("503 Service Unavailable").end("503 Service Unavailable");
                         }
 
-                        this.defaultResolver(res, req, context);
+                        // TODO: Re-implement WebSocket upgrade handling
+                        resolveHandler(req, res, context);
                     },
 
                     open(ws) {
@@ -841,7 +747,7 @@ const backend = {
         backend.config = configTools(backend.configRaw);
 
         backend.mode = backend.modes[backend.config.getBlock("system").get("mode", String, "production").toUpperCase()] || backend.modes.PRODUCTION;
-        backend.logLevel = backend.config.getBlock("system").get("logLevel", Number) || (backend.mode === backend.modes.DEVELOPMENT? 5 : 3);
+        backend.logLevel = backend.config.getBlock("system").get("logLevel", Number) ?? (backend.mode === backend.modes.DEVELOPMENT? 5 : 3);
         backend._fancyLogEnabled = backend.config.getBlock("system").get("fancyLog", Boolean, true);
 
         // Enable/disable protocols
@@ -899,19 +805,18 @@ const backend = {
 
     trustedOrigins: new Set,
 
-    resolve,
-
     resolveHandler,
-
     domainRouter,
 
     uuid,
 
-    uws,
+    server,
+    uws: server,
 
     globalApp,
 
-    TEMP_USING_AKENO_UWS
+    // To be removed from addons
+    TEMP_USING_AKENO_UWS: true
 }
 
 
@@ -934,6 +839,18 @@ if(true) {
 
     const timeAfterConfig = process.hrtime.bigint();
 
+    // Temporary
+    db.storages = {
+        // - Main database
+        main: KeyStorage.openDb(PATH, "db/main"),
+
+        // - Data database
+        data: KeyStorage.openDb(PATH, "db/data"),
+
+        // - Cache database
+        cache: KeyStorage.openDb(PATH, "db/cache")
+    }
+
     db.storages.cache.open();
     db.storages.data.open();
 
@@ -943,16 +860,11 @@ if(true) {
 
     const timeAfterDb = process.hrtime.bigint();
 
-    Units.Manager.loadModule((TEMP_USING_AKENO_UWS? "/core/web.js": "/core/legacy/web.js"));
-
-    if(!TEMP_USING_AKENO_UWS) {
-        backend.webServerHandler = Units.Manager.module("akeno.web").onRequest;
-        domainRouter.fallback = backend.webServerHandler;
-    }
+    Units.Manager.loadModule("/core/web.js");
 
     // FIXME: Remove this
     // But I mean... it's better than just instantly crashing
-    // The reason I implemented this is that some stupid modules throw on random minor errors and are nearly impossible to catch
+    // The reason I implemented this is that some stupid modules throw on random errors on minor things and are nearly impossible to catch
     process.on('uncaughtException', (error) => {
         backend.fatal("[uncaught error] This might be a fatal error, in which case you may want to reload (Or you just forgot to catch it somewhere).\nMessager: ", error);
     });
@@ -965,7 +877,7 @@ if(true) {
 
     try {
         // Disable uWebSockets version header, remove to re-enable
-        uws._cfg('999999990007');
+        server._cfg('999999990007');
     } catch (error) {}
 
     if(backend.mode === backend.modes.DEVELOPMENT && IS_NODE_INSPECTOR_ENABLED) {
@@ -998,5 +910,5 @@ if(true) {
         dbTime > 1 ? `${dbTime.toFixed(2)}ms db` : null,
     ].filter(Boolean).join(', ');
 
-    backend.log(`Starting \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${totalTime.toFixed(2)}ms\x1b[0m${breakdown ? ` (${breakdown})` : ''}.`);
+    backend.log(`Started \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${totalTime.toFixed(2)}ms\x1b[0m${breakdown ? ` (${breakdown})` : ''}.`);
 }

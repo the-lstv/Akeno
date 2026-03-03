@@ -702,16 +702,14 @@ module.exports = {
     writeHeaders(req, res, headers){
         if(!headers) return backend.helper;
 
-        if(backend.TEMP_USING_AKENO_UWS && !req.h3) {
-            // Write all at once
+        if(!req.h3) {
+            // Write headers all at once
             res.cork(() => {
                 res.writeRaw(Object.entries(headers).map((h) => `${h[0]}: ${h[1]}\r\n`).join(''));
             });
             return backend.helper;
         }
 
-        // Fill one by one
-        // This sadly has to be done for HTTP/3 (no writeRaw)
         res.cork(() => {
             for(let header in headers){
                 if(!headers[header]) return;
@@ -794,11 +792,6 @@ module.exports = {
         });
     },
 
-    errorPageBuffers: !backend.TEMP_USING_AKENO_UWS && [
-        Buffer.from(`<!DOCTYPE html><html><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:2rem;box-sizing:border-box;background:#fff4f7;color:#90435b;--dark-color:#be7b90;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}h2{margin:0 0 2rem;font-size:64px;font-weight:600;background:#ffdbe6;padding:8px 30px;border-radius:100px;font-family:monospace}@media(prefers-color-scheme: dark){body{background:#1b1617;color:#ddb6c2;--dark-color:#726468}h2{background:#292122}}p{margin:0;color:var(--dark-color)}hr{border:none;height:1px;background:currentColor;opacity:.2;width:100%;max-width:300px;margin:2rem 0 1rem}footer{font-size:.9rem;color:var(--dark-color)}a{color:inherit}</style>`),
-        Buffer.from(`<hr><footer>Powered by <a href="https://github.com/the-lstv/akeno" target="_blank">Akeno/${backend.version}</a></footer></html>`),
-    ],
-
     /**
      * Change the default error page. The provided string should include a "{{message}}" placeholder, which will be replaced with the error message when sending an error page.
      * @param {*} html String containing the template
@@ -807,44 +800,24 @@ module.exports = {
      * @deprecated Use app.setDefaultErrorPage
      */
     setDefaultErrorPage(html, app){
-        if(backend.TEMP_USING_AKENO_UWS) {
-            if(!app) {
-                console.warn("setDefaultErrorPage called without an app instance. Prefer doing app.setDefaultErrorPage");
-            } else {
-                app.setDefaultErrorPage(html);
-            }
-            return;
+        if(!app) {
+            console.warn("setDefaultErrorPage called without an app instance. Prefer doing app.setDefaultErrorPage");
+        } else {
+            app.setDefaultErrorPage(html);
         }
-
-        const chunks = html.split("{{message}}");
-        this.errorPageBuffers = [
-            Buffer.from(chunks[0]),
-            Buffer.from(chunks[1])
-        ];
     },
 
+    /**
+     * Send an error page
+     * @param {*} req HTTP request
+     * @param {*} res HTTP response
+     * @param {*} status HTTP status code
+     * @param {*} message Error message to display
+     * @param {*} title Optional title for the error page
+     * @deprecated Use res.sendErrorPage(status, message) instead
+     */
     sendErrorPage(req, res, status, message, title = null){
-        if(backend.TEMP_USING_AKENO_UWS) {
-            res.sendErrorPage(status, message);
-            return;
-        }
-
-        if(req.abort) return;
-
-        if(typeof status !== "string") {
-            status = String(status || "500 Internal Server Error");
-        }
-
-        res.cork(() => {
-            const messageData = `<h2>${title || status || "Error"}</h2><p>${message || (status === "404"? "The requested page could not be found on this server." : "Internal Server Error")}</p>`;
-            const cl = this.errorPageBuffers[0].length + this.errorPageBuffers[1].length + messageData.length;
-
-            res.writeStatus(status).writeHeader('Content-Length', String(cl)).writeHeader('Content-Type', 'text/html');
-
-            res.write(this.errorPageBuffers[0]);
-            res.write(messageData);
-            res.end(this.errorPageBuffers[1]);
-        });
+        res.sendErrorPage(status, message);
     },
 
     getUsedCompression(acceptEncoding, mimeType){
@@ -959,7 +932,7 @@ module.exports = {
      * @param {string} [status] - Optional HTTP status.
      * @deprecated You should use res.sendJSONError(error, code, status) instead
      */
-    error: backend.TEMP_USING_AKENO_UWS? (req, res, error, code, status) => {
+    error(req, res, error, code, status) {
         // Legacy support (if you can just use res.sendJSONError directly)
 
         if(!code && code !== 0 && typeof error === "number" && LEGACY_ERRORS[error]) {
@@ -972,25 +945,8 @@ module.exports = {
             code = code || -1;
         }
 
-        // Faster method for JSON errors, avoids some JS work
+        // Faster method for sending JSON errors, avoids some JS work. Small benefit but no reason not to do it.
         res.sendJSONError(error, code, status);
-    }:
-    // Legacy version
-    (req, res, error, code, status) => {
-        if(req.abort) return;
-
-        if(!code && code !== 0 && typeof error === "number" && LEGACY_ERRORS[error]) {
-            code = error;
-            error = LEGACY_ERRORS[code];
-        }
-
-        res.cork(() => {
-            res.writeStatus(status || (code >= 400 && code <= 599 ? String(code) : '400'));
-
-            backend.helper.corsHeaders(req, res);
-
-            res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":${(JSON.stringify(error) || '"Unknown error"')}}`);
-        });
     },
 
 

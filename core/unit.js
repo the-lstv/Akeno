@@ -584,7 +584,7 @@ const Manager = {
         for (const path of paths) {
             // First try to treat the path itself as an addon, then scan for addons inside
             if(Manager.loadAddon(path) === null){
-                backend.verbose("Scanning for addons: " + path);
+                backend.verbose("Looking for addons in " + path);
 
                 const directories = fs.readdirSync(path, { withFileTypes: true })
                     .filter(dirent => dirent.isDirectory())
@@ -649,6 +649,7 @@ const Manager = {
                 // }
             }
 
+            const start = process.hrtime.bigint();
             const addon = _mainfile? require(_mainfile): new Addon;
 
             if(!(addon instanceof Unit)){
@@ -666,7 +667,7 @@ const Manager = {
 
             addons.set(addon.id, addon);
 
-            backend.verbose(`Loaded addon: ${addon.name} (${addon.id}) v${addon.version}`);
+            backend.verbose(`Loaded addon "${addon.name}" (${addon.id}) v${addon.version} in ${(Number(process.hrtime.bigint() - start) / 1e6).toFixed(2)}ms.`);
 
             if(addon.onLoad){
                 try {

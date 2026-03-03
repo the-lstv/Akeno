@@ -35,7 +35,7 @@ class WebApp extends Units.App {
         super();
 
         this.path = nodePath.normalize(path); path = null;
-        this.basename = nodePath.basename(this.path);
+        this.basename = this.name = nodePath.basename(this.path);
         this.root = this.path;
         this.type = "akeno.web.WebApp";
 
@@ -124,8 +124,8 @@ class WebApp extends Units.App {
 
         if (this.loaded) this.verbose("Hot-reloading");
 
-        // const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean);
-        // this.enabled = (is_enabled === null ? true : is_enabled) || false;
+        const is_enabled = backend.db.apps.get(`${this.path}.enabled`, Boolean);
+        this.enabled = (is_enabled === null ? true : is_enabled) || false;
 
         const serverBlock = this.config.getBlock("server");
 
@@ -190,7 +190,7 @@ class WebApp extends Units.App {
 
             if(this.config.data.has("route")) {
                 for(const route of this.config.getBlocks("route")) {
-                    this.warn("Route-to blocks are replaced by location-alias and will be removed. Implicitly converting to an alias, which may have different behavior.\nOffending block:\n" + stringifyBlock(route) + "\n(App " + this.path + ")");
+                    this.warn("Route-to blocks are replaced by location-alias and will be removed. Implicitly converting to an alias, which may have different behavior.\nApp " + this.path + ", offending block:\n" + stringifyBlock(route));
 
                     for(const pattern of route.attributes) {
                         const target = route.get("to", String);
@@ -505,7 +505,7 @@ const server = module.exports = new class WebServer extends Units.Module {
                     basename: app.basename,
                     path: app.path,
                     enabled: app.enabled,
-                    ports: [...app.ports],
+                    // ports: [...app.ports],
                     domains: [...app.domains],
                     modules: [...app.modules.keys()],
                 })));
