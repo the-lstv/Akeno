@@ -466,8 +466,6 @@ const backend = {
             }
         },
 
-        // TODO: Allow multiple App/SSLApp/H3App instances, maybe through some abstract interface
-
         https: new class HTTPSProtocol extends Units.HTTPProtocol {
             constructor(){
                 super({
@@ -513,7 +511,7 @@ const backend = {
                 this.server.addServerName(domain, {
                     key_file_name:  key  || backend.config.getBlock("ssl").get("keyBase", String, "") .replace("{domain}", domain.replace("*.", "")),
                     cert_file_name: cert || backend.config.getBlock("ssl").get("certBase", String, "").replace("{domain}", domain.replace("*.", ""))
-                })
+                });
 
                 this.SNINames.add(domain);
 
