@@ -101,6 +101,7 @@ class ContentProcessor {
                     loader: options.ext,
                     target: options.targets || defaultTargets,
                     format: options.format || 'iife', // We default to IIFE
+                    platform: 'neutral',
                     minify: backend.mode !== backend.modes.DEVELOPMENT,
                     sourcefile: options.filePath || undefined,
                 });
@@ -403,6 +404,23 @@ class CacheManager extends Units.Server {
         entry[0][2] = entry[0][3] = entry[0][8] = Date.now();
         return true;
     }
+    
+    replaceContent(key, newContent) {
+        const entry = this.cache.get(key);
+        if (!entry) {
+            throw new Error('Cache entry does not exist: ' + key);
+        }
+        entry[0][0] = newContent;
+        entry[0][2] = Date.now(); // Update lastChecked to force refresh
+    }
+
+    getContent(key) {
+        const entry = this.cache.get(key);
+        if (!entry) {
+            throw new Error('Cache entry does not exist: ' + key);
+        }
+        return entry[0][0];
+    }
 
     /**
      * Wire into a router as a handler.
@@ -423,7 +441,7 @@ class CacheManager extends Units.Server {
      */
     async transpile(content, ext, filePath, app) {
         if (!this.esbuildEnabled) return { result: content, success: false };
-        return await ContentProcessor.build({ content, ext, targets: (app && app.esbuildTargets) || this.esbuildTargets, asBuffer: true, filePath, app });
+        return await ContentProcessor.build({ content, ext, targets: (app && app.esbuildTargets) || this.esbuildTargets, asBuffer: true, filePath, app, format: this.esbuildFormat || undefined });
     }
 }
 
@@ -733,7 +751,7 @@ module.exports = {
         // const trusted = backend.trustedOrigins.has(req.origin);
 
         res.cork(() => {
-            res.writeHeader('X-Powered-By', 'Akeno Server/' + backend.version);
+            // res.writeHeader('X-Powered-By', 'Akeno Server/' + backend.version);
 
             if(!hasCors) {
                 if(credentials){
@@ -741,8 +759,8 @@ module.exports = {
                         throw new Error(`Can't allow credentials for ${req.origin} because it is not on the trusted list`);
                     }
 
-                    res.writeHeader("Access-Control-Allow-Credentials", "true");
                     res.writeHeader("Access-Control-Allow-Origin", req.origin);
+                    res.writeHeader("Access-Control-Allow-Credentials", "true");
                     res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
                 } else {
                     res.writeHeader("Access-Control-Allow-Origin", "*");
@@ -752,9 +770,9 @@ module.exports = {
                 res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
             }
 
-            if(backend.protocols.h3.enabled){
-                res.writeHeader("alt-svc", `h3=":${backend.protocols.h3.ports[0]}"; ma=86400`);
-            }
+            // if(backend.protocols.h3.enabled){
+            //     res.writeHeader("alt-svc", `h3=":${backend.protocols.h3.ports[0]}"; ma=86400`);
+            // }
         });
 
         return backend.helper;
