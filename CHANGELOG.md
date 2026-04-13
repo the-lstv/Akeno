@@ -19,13 +19,14 @@
     - Addons can now register custom preprocessor blocks
     - Display how much time was spent on what during load
     - On Linux, file changes are now detected via inotify instead of polling
+    - Binary downloader
     - Updated CLI
 - Performance
-    - Shifting hot-path code to C++
+    - Shifted a lot of hot-path code to C++
     - Now properly utilizing SNI and native routing; up to this point we were routing twice due to the limited API
     - Optimized request path for WebApps and using faster storage (JS Map -> ankerl::unordered_dense). Most hits should now be entirely resolved in C++ without JS callbacks
     - Removed irrelevant JWT & bcrypt helpers and cleaned up the overall codebase and dependencies
-    - Overall better performance
+    - Overall better performance, + updates from uWS
 - Bug Fixes
     - Fixed broken compression cache (compression was always being re-computed before due to a typo)
     - Fixed Markdown parsing bugs
@@ -37,7 +38,7 @@ Note that this release no longer provides Windows binaries.
 They may be added again in the future, but as of now you must build your own.
 
 ## New in 1.6.8-beta
-- A proper build pipeline and server events
+- A "proper" build pipeline and server events
 - Added a neat WebSocket authentication helper
 - Added more options to the WebSocket interface
 - WebSockets can now be easily enabled or disabled
