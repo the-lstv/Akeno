@@ -733,6 +733,7 @@ const server = module.exports = new class WebServer extends Units.Module {
 }
 
 const PARSER_FLAGS = {
+    // LS flags should maybe be kept separate or via a reserved namespace
     USING_LS_CSS: 1,
     USING_LS_JS: 2,
     USING_LS: 3,
@@ -789,11 +790,11 @@ globalApp.registerFileProcessor(async (id, url, path, mimeType) => {
         } else {
             [buffer, newLinkedPaths] = parser.fromMarkdownFile(path, parserContext, false, false);
         }
-        
+
         // Paths given by the parser
         linkedPaths.push(...newLinkedPaths);
 
-        app.warn(`Linked to ${file}:\n${newLinkedPaths.join('\n')}`);
+        // app.warn(`Linked to ${file}:\n${newLinkedPaths.join('\n')}`);
     }
 
     // Processing hooks go here

@@ -135,13 +135,13 @@ And of course, Akeno provides a full JS API to create your own servers.
 const backend = require('akeno:backend');
 
 // Basic handler
-backend.domainRouter.add("{www,}.example.*", (req, res) => {
+backend.globalApp.route("{www,}.example.*", (req, res) => {
     res.end("Hello world!");
 });
 
 // File server with automatic cache, ETag, and compression support
 // TIP: FileServer can also be used manually (in any other handler, as needed) via the .serve(req, res, ?file) method, and files can be added and pre-cached with .add(), including defining custom headers etc. - the API is very flexible.
-backend.domainRouter.add("localhost", new backend.helper.FileServer({
+backend.globalApp.route("localhost", new backend.helper.FileServer({
     root: "/path/to/files",
     automatic: true
 }));

@@ -2,9 +2,9 @@
  * A wrapper around the node semver module.
  * 
  * Why? Because the "semver" module is bloated and slow.
- * Somehow it takes 10ms just to load.
+ * Somehow it takes 10ms just to load, which is not acceptable in high-performance scenarios.
  * 
- * Our implementation in core/unit.js is a lot faster and only 350 lines, compared to semver's 110Kb monolith of a library.
+ * Our implementation in core/unit.js is a lot faster and in only 350 lines, compared to semver's 110Kb monolith of a library.
  * It is not a perfect semver implementation (far from), but it covers 99% of common use cases, and avoids Regex.
  */
 
@@ -20,7 +20,10 @@ function inc(v, type, copy = true) {
 
 class SemVer extends Version {
     get version() { return `${this.major}.${this.minor}.${this.patch}`; } // whatever i guses 🤷
-    get raw() { return this.toString(); } // kind of a stupid API design; it's not really "raw" (processing still happens)
+    get raw() { return this.toString(); } // kind of a stupid API design; it's not really "raw" (processing still happens, and it isn't "raw")
+    get prerelease() { return this.release || "" } // In the semver module it has to always return a string for whatever reason
+    get build() { return super._build || "" } // Just learn to use null 🙏
+    set build(v) { super._build = v; }
     inc(type) { inc(this, type, false); return this; }
     compare(other) { return this.diff(other); }
 }
@@ -33,7 +36,7 @@ class Range {
 
 // Map semver API to Units.Version
 module.exports = {
-    parse(v, opts) { if(! Version.isValid(v)) return null; return new SemVer(v); },
+    parse(v, opts) { if(!Version.isValid(v)) return null; return new SemVer(v); },
     valid(v, opts) { return Version.isValid(v) ? new SemVer(v).toString() : null },
     major(v) { return new SemVer(v).major; },
     minor(v) { return new SemVer(v).minor; },
