@@ -488,81 +488,6 @@ const backend = {
             }
         },
 
-        /**
-         * Legacy protocol unit for WebSockets
-         * @deprecated To be replaced
-         */
-        ws: new class WebSocketProtocol extends Units.Protocol {
-            constructor(){
-                super({
-                    name: "WebSocket",
-                    protocol: "ws",
-                    type: "ws"
-                })
-            }
-
-            init() {
-                // TODO: In the future, this could be moved to the C++ side
-                // Default WS handler
-                this.options = {
-                    idleTimeout: backend.config.getBlock("websocket").get("idleTimeout", Number) || 60,
-                    sendPingsAutomatically: backend.config.getBlock("websocket").get("sendPingsAutomatically", Boolean, true),
-                    maxPayloadLength: backend.config.getBlock("websocket").get("maxPayloadLength", Number) || 32 * 1024,
-                    maxBackpressure: backend.config.getBlock("websocket").get("maxBackpressure", Number) || 1024 * 1024,
-                    maxLifetime: backend.config.getBlock("websocket").get("maxLifetime", Number) || 0,
-                    closeOnBackpressureLimit: backend.config.getBlock("websocket").get("closeOnBackpressureLimit", Boolean, false),
-                    compression: server[backend.config.getBlock("websocket").get("compression", String, "DEDICATED_COMPRESSOR_32KB").toLowerCase()] || server.DEDICATED_COMPRESSOR_32KB,
-
-                    upgrade: (res, req, context) => {
-                        if(!this.enabled) {
-                            return res.writeStatus("503 Service Unavailable").end("503 Service Unavailable");
-                        }
-
-                        // TODO: Re-implement WebSocket upgrade handling
-                        resolveHandler(req, res, context);
-                    },
-
-                    open(ws) {
-                        if(ws.handler.open) ws.handler.open(ws);
-                    },
-
-                    message(ws, message, isBinary) {
-                        if(ws.handler.message) ws.handler.message(ws, message, isBinary);
-                    },
-                    
-                    close(ws, code, message) {
-                        if(ws.handler.close) ws.handler.close(ws, code, message);
-                    },
-
-                    drain(ws) {
-                        if(ws.handler.drain) ws.handler.drain(ws);
-                    },
-
-                    dropped(ws, message, isBinary) {
-                        if(ws.handler.dropped) ws.handler.dropped(ws, message, isBinary);
-                    },
-
-                    ping(ws, message) {
-                        if(ws.handler.ping) ws.handler.ping(ws, message);
-                    },
-
-                    pong(ws, message) {
-                        if(ws.handler.pong) ws.handler.pong(ws, message);
-                    },
-
-                    subscription(ws, topic, newCount, oldCount) {
-                        if(ws.handler.subscription) ws.handler.subscription(ws, topic, newCount, oldCount);
-                    }
-                };
-            }
-
-            enable() {
-                if(!this._initialized){
-                    this._initialized = true;
-                    this.init();
-                }
-            }
-        }
     },
 
     /**
@@ -764,7 +689,7 @@ const backend = {
 
         // TODO: Better handling of ports (due to apps being able to request custom ports)
 
-        // Note: setting "enabled" has to be last, as it calls the init() method. Also, ws has to be enabled before HTTP.
+        // Note: setting "enabled" has to be last, as it calls the init() method.
 
         const http_ws_enabled = protocols.getBlock("http").get("websockets", String, "false");
         backend.protocols.http.ports = protocols.getBlock("http").get(["port", "ports"], Array, [80]);
@@ -775,7 +700,6 @@ const backend = {
 
         backend.protocols.h3.ports = protocols.getBlock("h3").get(["port", "ports"], Array, [443]);
 
-        backend.protocols.ws.enabled = backend.protocols.http.enableWebSockets || backend.protocols.https.enableWebSockets;
         backend.protocols.http.enabled = protocols.getBlock("http").get("enabled", Boolean, true);
         backend.protocols.https.enabled = protocols.getBlock("https").get("enabled", Boolean, false);
         backend.protocols.h3.enabled = protocols.getBlock("h3").get("enabled", Boolean, false);

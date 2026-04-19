@@ -100,7 +100,7 @@ class ContentProcessor {
                 const result = await esbuild.transform(options.content, {
                     loader: options.ext,
                     target: options.targets || defaultTargets,
-                    format: options.format || 'iife', // We default to IIFE
+                    format: options.format || 'iife', // We default to IIFE, sadly, because cjs is for Node only
                     platform: 'neutral',
                     minify: backend.mode !== backend.modes.DEVELOPMENT,
                     sourcefile: options.filePath || undefined,
@@ -120,7 +120,7 @@ class ContentProcessor {
      * Some build tools are async only (postcss), so we must preffer async.
      * Annoyingly, our HTML parser is currently sync only, which means we need sync processing for inline tags.
      */
-    static buildSync({ content, ext, targets = defaultTargets, asBuffer = true, filePath, app }) {
+    static buildSync({ content, ext, targets = defaultTargets, asBuffer = true, filePath, app, format }) {
         let originalBuffer = null, success = false;
         if (Buffer.isBuffer(content)) {
             originalBuffer = content;
@@ -132,6 +132,7 @@ class ContentProcessor {
         // Currently no support for hooks in sync mode
 
         if(ext === "mjs" || ext === "cjs") {
+            if (!format) format = ext === "mjs" ? "esm" : "cjs";
             ext = 'js';
         }
 
@@ -140,7 +141,7 @@ class ContentProcessor {
                 const result = esbuild.transformSync(content, {
                     loader: ext,
                     target: targets || defaultTargets,
-                    format: 'iife',
+                    format: format || 'iife', // We default to IIFE, sadly, because cjs is for Node only
                     minify: backend.mode !== backend.modes.DEVELOPMENT
                 });
                 return { result: asBuffer ? Buffer.from(result.code) : result.code, success: true };
@@ -1026,6 +1027,10 @@ module.exports = {
     CacheManager,
     FileServer,
 
+    readBody(req, res, callback, options = {}) {
+        // TBA
+    },
+
     /**
      * Parses the request body, optionally as a stream.
      * @class
@@ -1038,10 +1043,8 @@ module.exports = {
             this.type = req.contentType;
             this.length = req.contentLength || 0;
 
-            // Old behavior
-            if(options === true) {
-                options = { stream: true };
-            }
+            // Legacy behavior
+            if(options === true) options = { stream: true };
 
             this.options = options;
 
@@ -1056,16 +1059,18 @@ module.exports = {
             }
 
             if (!options.stream) {
-                let chunks = [];
                 let totalLength = 0;
                 let aborted = false;
 
+                const body = new Uint8Array(this.length);
+
+                // TODO: Update to the new uWS body stream methods
+                // Receives ArrayBuffers
                 res.onData((chunk, isLast) => {
                     if (aborted) return;
 
-                    const buffer = Buffer.from(chunk.slice(chunk.byteOffset || 0, (chunk.byteOffset || 0) + chunk.byteLength));
-                    chunks.push(buffer);
-                    totalLength += buffer.length || 0;
+                    body.set(new Uint8Array(chunk), totalLength);
+                    totalLength += chunk.byteLength;
 
                     if(totalLength > (options.maxSize || backend.constants.MAX_BODY_SIZE)) {
                         // Handle max body size exceeded
@@ -1076,14 +1081,12 @@ module.exports = {
                             // Forcefully close the connection to stop uploading (better, but user won't get an error message)
                             this.res.close();
                         }
-                        chunks = null;
                         aborted = true;
                         return;
                     }
 
                     if (isLast) {
-                        req.fullBody = Buffer.concat(chunks, totalLength);
-                        chunks = null;
+                        req.fullBody = Buffer.from(body.buffer, body.byteOffset, totalLength);
                         callback(this);
                     }
                 });

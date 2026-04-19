@@ -611,6 +611,11 @@ const server = module.exports = new class WebServer extends Units.Module {
                 continue;
             }
 
+            if(!fs.existsSync(nodePath.join(location, "app.conf"))) {
+                this.warn("Web application (at " + location + ") does not contain an app.conf file - skipped. You can add one (see docs), or switch from WebApp to a simple FileServer instead");
+                continue;
+            }
+
             this.load(location);
         }
 
@@ -845,13 +850,40 @@ function initParser(header) {
             if (!text || text.length === 0) return;
 
             // Inline script compression
-            // TODO: Handle script type
             if (parent === "script") {
+                const scriptType = (typeof context?.getTagAttribute === "function" ? context.getTagAttribute("type") : "")?.toLowerCase?.() || "";
+                const scriptFormat = (typeof context?.getTagAttribute === "function" ? context.getTagAttribute("format") : "")?.toLowerCase?.() || "";
+
+                if (scriptType.includes("json") || scriptType === "importmap") {
+                    try {
+                        return JSON.stringify(JSON.parse(text)).replace(/</g, "\\u003c");
+                    } catch {
+                        return text.replace(/</g, "\\u003c");
+                    }
+                }
+
                 if (!backend.compression.codeEnabled) {
                     return true;
                 }
 
-                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "js", targets: backend.esbuildTargets, asBuffer: false, filePath: this?.data?.path, app: this?.data?.app }).result;
+                const buildOptions = {
+                    content: text,
+                    ext: "js",
+                    targets: backend.esbuildTargets,
+                    asBuffer: false,
+                    filePath: context?.data?.path,
+                    app: context?.data?.app
+                };
+
+                if (scriptType === "module") {
+                    buildOptions.format = "esm";
+                }
+
+                if (scriptFormat === "iife") {
+                    buildOptions.format = "iife";
+                }
+
+                return backend.helper.ContentProcessor.buildSync(buildOptions).result;
             }
 
             // Inline style compression
@@ -861,7 +893,7 @@ function initParser(header) {
                 }
 
                 // TODO: Idea; could have a special attribute to support inline scss (editor won't like it though)
-                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "css", targets: backend.esbuildTargets, asBuffer: false, filePath: this?.data?.path, app: this?.data?.app }).result;
+                return backend.helper.ContentProcessor.buildSync({ content: text, ext: "css", targets: backend.esbuildTargets, asBuffer: false, filePath: context?.data?.path, app: context?.data?.app }).result;
             }
 
             // Parse with Atrium, text gets sent back to C++, blocks get handled via onBlock
@@ -972,7 +1004,13 @@ function initParser(header) {
                                 this.write(`<link rel=stylesheet href="${link}${mtime}" ${components.join(" ")}>`)
                                 break;
                             case "json":
-                                this.write(`<script type="application/json" id="${components.length ? components.join(",") : attrib}">${fs.readFileSync(path)}</script>`)
+                                let content = fs.readFileSync(path, "utf8");
+                                try {
+                                    content = JSON.stringify(JSON.parse(content));
+                                } catch { }
+                                content.replace(/</g, "\\u003c"); // Prevent script tag injection
+
+                                this.write(`<script type="application/json" id="${components.length ? components.join(",") : attrib}">${content}</script>`)
                                 break;
                             default:
                                 this.data.app.warn("Error: Unknown file extension \"" + extension + "\" for file \"" + attrib + "\"");
