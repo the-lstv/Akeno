@@ -849,10 +849,14 @@ function initParser(header) {
         onText(text, parent, context) {
             if (!text || text.length === 0) return;
 
+            // Skip processing for code blocks and plaintext. mdState 4 = code block in markdown, mdState 3 = inline code in markdown
+            const mdState = context.getMarkdownState();
+            if(parent === "code" || parent === "plaintext" || mdState === 4 || mdState === 3) return true;
+
             // Inline script compression
             if (parent === "script") {
-                const scriptType = (typeof context?.getTagAttribute === "function" ? context.getTagAttribute("type") : "")?.toLowerCase?.() || "";
-                const scriptFormat = (typeof context?.getTagAttribute === "function" ? context.getTagAttribute("format") : "")?.toLowerCase?.() || "";
+                const scriptType = context.getTagAttribute("type")?.toLowerCase?.() || "";
+                const scriptFormat = context.getTagAttribute("format")?.toLowerCase?.() || "";
 
                 if (scriptType.includes("json") || scriptType === "importmap") {
                     try {
@@ -1220,15 +1224,16 @@ function initParser(header) {
      * Components can be languages (lang:javascript) or themes (theme:github)
      */
     server.registerModuleProvider("hljs", ({ version, components, scriptAttributes, context }) => {
-        context.write(`<script src="${PROVIDER}/highlight.js${VERSION_SEPARATOR}${version || HLJS_VERSION}/highlight.min.js"${scriptAttributes}></script>`);
+        const PROVIDER = "https://cdn.jsdelivr.net/gh/highlightjs";
+        context.write(`<script src="${PROVIDER}/cdn-release${VERSION_SEPARATOR}${version || HLJS_VERSION}/build/highlight.min.js"${scriptAttributes}></script>`);
     
         for (const component of components) {
             if (component.startsWith("lang:")) {
-                context.write(`<script src="${PROVIDER}/highlight.js${VERSION_SEPARATOR}${version || HLJS_VERSION}/languages/${component.slice(5)}.min.js"${scriptAttributes}></script>`);
+                context.write(`<script src="${PROVIDER}/cdn-release${VERSION_SEPARATOR}${version || HLJS_VERSION}/build/languages/${component.slice(5)}.min.js"${scriptAttributes}></script>`);
             }
     
             if (component.startsWith("theme:")) {
-                context.write(`<link rel=stylesheet href="${PROVIDER}/highlight.js${VERSION_SEPARATOR}${version || HLJS_VERSION}/styles/${component.slice(6)}.min.css">`);
+                context.write(`<link rel=stylesheet href="${PROVIDER}/cdn-release${VERSION_SEPARATOR}${version || HLJS_VERSION}/build/styles/${component.slice(6)}.min.css">`);
             }
         }
     });
