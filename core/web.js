@@ -834,7 +834,7 @@ globalApp.registerFileProcessor(async (id, url, path, mimeType) => {
 
     // Notify that a file has been cached
     // TODO: Optimize
-    const evData = [path, null, app];
+    const evData = [path, buffer, app];
     server.emit(server.cacheStoreEvref, evData);
     app.emit(app.cacheStoreEvref, evData);
 });
