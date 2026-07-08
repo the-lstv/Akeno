@@ -768,7 +768,7 @@ module.exports = {
                     res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");
                 }
 
-                res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+                res.writeHeader("Access-Control-Allow-Methods", "GET,QUERY,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
             }
 
             // if(backend.protocols.h3.enabled){

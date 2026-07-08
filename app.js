@@ -66,10 +66,11 @@ const
     },
 
     // Compression
-    zlib = require("node:zlib"),                              // Gzip compression (TODO: Akeno-uWS already has native compression, we can remove this dependency later)
+    // TODO - Akeno-uWS already has native compression, we can remove this dependency later
+    zlib = require("node:zlib"),                              // Gzip compression
 
     // - Database (deprecated)
-    KeyStorage = require("akeno:kvdb"),                       // Key-value database (WARNING: will soon be deprecated)
+    KeyStorage = require("akeno:kvdb"),                       // Key-value database (WARNING: will soon be removed or replaced)
 
     // Local modules
     { Server: IPCServer } = require("akeno:ipc"),             // IPC server

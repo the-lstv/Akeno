@@ -142,6 +142,28 @@ class WebApp extends Units.App {
         // TODO: Handle ports; the block should be redesigned as a protocol instead
         // const enabledPorts = this.config.getBlock("server").get("port") || [];
 
+        /**
+         * Proposals on how to handle ports & protocols:
+         * Note; Omitting protocols uses the global server config just like it does now.
+         * 
+         * 1) Defined once per block in arguments. 
+         * server (http:80, https:443, h3:443) {
+         *     domains: example.com;
+         * }
+         * 
+         * 2) Per-domain, flexible but verbose.
+         * domain example.com (http:80, https:443, h3:443);
+         * 
+         * 3) Nginx-style
+         * server {
+         *     listen: 80, 443 https, 443 h3;
+         *     domains: example.com;
+         * }
+         * 
+         * Issue is that all of the above aren't quite compatible with how Akeno treats protocols.
+         * So we wither need a separate mode for static configs or use a different config approach entirely, where the domains & ports are not defined by web applications themselves, but by an external config or script file.
+         */
+
         // TODO: Implement the rest of features
 
         // TODO: Module system
@@ -1211,13 +1233,13 @@ function initParser(header) {
 
     // Latest known versions of these modules as of Feb 19 2026
     // Later should be updated to fetch the latest versions dynamically
-    const FA_VERSION =            "7.0.1";
+    const FA_VERSION =            "7.3.0";
     const HLJS_VERSION =          "11.11.1";
     const BI_VERSION =            "1.13.1";
-    const MARKED_VERSION =        "16.3.0";
-    const PIXI_VERSION =          "8.16.0";
+    const MARKED_VERSION =        "18.0.5";
+    const PIXI_VERSION =          "8.19.0";
     const PIXI_FILTERS_VERSION =  "6.1.5";
-    const THREE_VERSION =         "0.180.0";
+    const THREE_VERSION =         "0.185.1";
 
     /**
      * Usage: @use(hljs:version[components]);

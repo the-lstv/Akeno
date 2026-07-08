@@ -16,15 +16,14 @@
   "dependencies": {
     "@node-rs/xxhash": "^1.7.6",
     "clean-css": "^5.3.3",
-    "esbuild": "^0.27.3",
-    "fs-extra": "^11.3.4",
-    "lmdb": "^3.5.1",
+    "esbuild": "^0.27.7",
+    "fs-extra": "^11.3.6",
+    "lmdb": "^3.5.6",
     "minimist": "^1.2.8",
     "module-alias": "^2.3.4",
-    "node-addon-api": "^8.6.0",
+    "node-addon-api": "^8.9.0",
     "node-lmdb": "^0.10.1",
     "pm2": "^6.0.14",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.56.0",
     "uglify-js": "^3.19.3"
   }
 }
