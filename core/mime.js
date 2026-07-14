@@ -4,13 +4,15 @@
 
     Last modified: 2026
     License: GPL-3.0
-    Version: 1.1.0
+    Version: 1.2.0
     Description: A very simple MIME type module for Akeno.
 */
 
 const fs = require("fs");
+const nodePath = require("path");
 
 const types = new Map();
+const categories = new Set;
 const extensions = new Map();
 
 let loaded = false;
@@ -26,6 +28,8 @@ function load(){
                 continue;
             }
 
+            categories.add(mimetype.split("/")[0]);
+
             extensions.set(mimetype, extensions_);
 
             for (const ext of extensions_) {
@@ -40,8 +44,20 @@ function load(){
 }
 
 module.exports = {
-    types,
-    extensions,
+    get types(){
+        if(!loaded) load();
+        return types;
+    },
+
+    get extensions(){
+        if(!loaded) load();
+        return extensions;
+    },
+
+    get categories(){
+        if(!loaded) load();
+        return categories;
+    },
 
     /**
      * Get the MIME type associated with a given file extension.
@@ -55,6 +71,22 @@ module.exports = {
     getType(extension){
         if(!loaded) load();
         return types.get(extension) || null;
+    },
+
+    /**
+     * Get the MIME type associated with a given file path based on it's extension.
+     * Note: This doesn't perform a header based lookup, just gets the type from the provided extension.
+     * Same as getType but accepts a regular file path.
+     * 
+     * @param {*} path - The file path to look up.
+     * @returns {string|null} - The corresponding MIME type or null if not found.
+     * 
+     * @example
+     * const type = mime.fromPath('/hello/file.html'); // Returns 'text/html'
+     */
+    fromPath(path) {
+        if(!loaded) load();
+        return types.get(nodePath.extname(path).slice(1)) || null;
     },
 
     /**

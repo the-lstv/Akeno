@@ -21,16 +21,16 @@ if(!TEMP_AKENO_UWS_PATH) {
 const moduleAlias = require('module-alias');
 
 moduleAlias.addAliases({
-    "akeno:backend" : __dirname + "/app.js",
-    "akeno:units"   : __dirname + "/core/unit.js",
-    "akeno:web"     : __dirname + "/core/web.js",
-    "akeno:bucket"  : __dirname + "/core/bucket",
-    "akeno:ipc"     : __dirname + "/core/ipc",
-    "akeno:mime"    : __dirname + "/core/mime.js",
-    "akeno:kvdb"    : __dirname + "/core/kvdb.js",
-    "akeno:router"  : __dirname + "/core/router.js", // This is being moved to akeno:server (C++ side router)
-    "akeno:server"  : TEMP_AKENO_UWS_PATH, // Note that these are *not* API compatible between legacy and Akeno-uWS
-    "atrium"        : __dirname + "/core/parser"
+    "akeno:backend"      : __dirname + "/app.js",
+    "akeno:units"        : __dirname + "/core/unit.js",
+    "akeno:web"          : __dirname + "/core/web.js",
+    "akeno:bucket"       : __dirname + "/core/bucket",
+    "akeno:ipc"          : __dirname + "/core/ipc",
+    "akeno:mime"         : __dirname + "/core/mime.js",
+    "akeno:kvdb"         : __dirname + "/core/kvdb.js",
+    "akeno:router"       : __dirname + "/core/router.js", // This is being moved to akeno:server (C++ side router)
+    "akeno:server"       : TEMP_AKENO_UWS_PATH, // Note that these are *not* API compatible between legacy and Akeno-uWS
+    "atrium"             : __dirname + "/core/parser"
 });
 
 // Units need to be loaded before everything else
