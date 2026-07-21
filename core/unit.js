@@ -31,17 +31,21 @@ let allow_unrestricted_execution = false;
 // Please make sure to use the correct Unit class for the type of object that you are creating.
 // See descriptions or docs for more information on Units.
 
-
-
-
 // Replace slow modules with faster and lighter alternatives.
 // A risk I'm willing to take to avoid bloat
 const NodeModule = require('module');
 const originalLoad = NodeModule._load;
+
+const fastUUID = require(__dirname + '/../etc/misc/fast-modules/uuid.js');
+const stripJsonComments = require(__dirname + '/../etc/misc/fast-modules/strip-json-comments.js');
 NodeModule._load = function (request, parent, isMain) {
     if(request === "uuid") {
         // Half the load time, double the speed
         return fastUUID;
+    }
+
+    if(request === "strip-json-comments") {
+        return stripJsonComments;
     }
 
     const originalRequest = request;
@@ -426,83 +430,6 @@ class Version {
     }
 }
 
-// Half the load time compared to Node "uuid", *over 100x smaller in size*, 2x faster generation (we simply use the native crypto.randomUUID), many times faster for other methods.
-// All methods are single-pass, only charcodes, no regex.
-const fastUUID = {
-    v1: () => { throw new Error("UUIDv1 is not supported in the patched uuid module."); },
-    v3: () => { throw new Error("UUIDv3 is not supported in the patched uuid module."); },
-    v4: crypto.randomUUID,
-    v5: () => { throw new Error("UUIDv5 is not supported in the patched uuid module."); },
-
-    // Fast uuidv4 validation, roughly 3.5x faster than uuid.validate
-    validate(uuid) {
-        if(typeof uuid !== 'string' || uuid.length !== 36) return false;
-
-        // Fixed length loop
-        for (let i = 0; i < 36; i++) {
-            const c = uuid.charCodeAt(i);
-            if(i === 14) {
-                // Version check
-                if(c >= 48 && c <= 53) continue; // 0-5
-            } else if(i === 19) {
-                // Variant check
-                if(c === 56 || c === 57 || c === 97 || c === 98 || c === 65 || c === 66) continue; // 8, 9, a, b, A, B
-            } else if ((i === 8 || i === 13 || i === 18 || i === 23) ? c === 45 : ((c >= 48 && c <= 57) || // 0-9
-                (c >= 97 && c <= 102) || // a-f
-                (c >= 65 && c <= 70))) { // A-F
-                continue;
-            }
-            return false;
-        }
-        return true;
-    },
-
-    parse(uuid) {
-        if (typeof uuid !== 'string' || uuid.length !== 36) throw new Error('Invalid UUID');
-
-        const bytes = new Uint8Array(16);
-        let j = 0;
-
-        for (let i = 0; i < 36; i++) {
-            const c = uuid.charCodeAt(i);
-            if (c === 45) continue;
-
-            // Fast hex char => int conversion (15x+ faster than parseInt)
-            const nibble = (c >= 48 && c <= 57)? c - 48: (c >= 97 && c <= 102)? c - 87: (c >= 65 && c <= 70)? c - 55: -1;
-            if (nibble === -1) throw new Error('Invalid UUID character');
-
-            bytes[j >> 1] = (bytes[j >> 1] << 4) | nibble;
-            j++;
-        }
-
-        if (j !== 32) throw new Error('Invalid UUID length');
-        return bytes;
-    },
-
-    stringify(bytes) {
-        if (!(bytes instanceof Uint8Array) || bytes.length !== 16) throw new Error('Invalid bytes');
-
-        let str = '';
-        for (let i = 0; i < 16; i++) {
-            const hex = bytes[i].toString(16).padStart(2, '0');
-            str += hex;
-            if (i === 3 || i === 5 || i === 7 || i === 9) str += '-';
-        }
-        return str;
-    },
-
-    version(uuid) {
-        if (typeof uuid !== 'string' || uuid.length !== 36) throw new Error('Invalid UUID');
-        const versionChar = uuid.charCodeAt(14);
-        if (versionChar >= 48 && versionChar <= 53) { // '0' to '5'
-            return versionChar - 48;
-        }
-        throw new Error('Unsupported UUID version');
-    },
-
-    NIL: '00000000-0000-0000-0000-000000000000',
-}
-
 class IndexedEnum {
     constructor(values){
         if(!Array.isArray(values)){
@@ -607,78 +534,81 @@ const Manager = {
 
     // TODO: Enhance
     loadAddon(path){
-        if(fs.existsSync(path) && fs.statSync(path).isDirectory() && fs.existsSync(path + "/addon.json")){
-            const addonConfig = JSON.parse(fs.readFileSync(path + "/addon.json", "utf8"));
+        if(!fs.existsSync(path) || !fs.statSync(path).isDirectory()) return null;
 
-            if(!addonConfig.id || !addonConfig.name){
-                throw new Error("Addon must have an id and name");
-            }
+        const configFile = fs.existsSync(path + "/addon.jsonc")? path + "/addon.jsonc": fs.existsSync(path + "/addon.json")? path + "/addon.json": null;
+        if(!configFile) return null;
 
-            // TODO: Protect & manage namespaces
+        console.log(stripJsonComments(fs.readFileSync(configFile, "utf8")))
+        const addonConfig = JSON.parse(stripJsonComments(fs.readFileSync(configFile, "utf8")));
 
-            if(addons.has(addonConfig.id)){
-                throw new Error(`Addon with id ${addonConfig.id} already exists`);
-            }
-
-            if(!(addonConfig.version instanceof Version)){
-                addonConfig.version = new Version(addonConfig.version || 1)
-            }
-
-            if(addonConfig.akenoVersion && !backend.version.compare(addonConfig.akenoVersion)){
-                throw new Error(`Addon ${addonConfig.id} requires Akeno version ${addonConfig.akenoVersion}, but current version is ${backend.version}`);
-            }
-
-            let _mainfile = null;
-            if(addonConfig.main) {
-                _mainfile = nodepath.normalize(path + "/" + addonConfig.main);
-
-                if(!fs.existsSync(_mainfile)){
-                    throw new Error(`Addon main file ${_mainfile} does not exist.`);
-                }
-            }
-
-            // Validate security of the main file
-            if(_mainfile && !allow_unrestricted_execution){
-                // const mainFileContent = fs.readFileSync(_mainfile, "utf8");
-
-                // const hash = xxh32(mainFileContent).toString(16);
-
-                // // TODO: This needs a better solution
-                // if(![123].includes(hash)){
-                //     throw new Error(`Addon ${addonConfig.id} tried to load an unrestricted script file: "${_mainfile}" but was not allowed to for security reasons, or possible tampering was detected. If you are developing this addon or are sure that it is safe, please add an exception in the config, switch to developer mode, or if you 100% trust your environment, set "modules { allow_unrestricted_execution: true }" in the config.`);
-                // }
-            }
-
-            const start = process.hrtime.bigint();
-            const addon = _mainfile? require(_mainfile): new Addon;
-
-            if(!(addon instanceof Unit)){
-                Manager.toUnit(addon, Addon);
-            }
-
-            if(!(addon instanceof Addon)){
-                throw new Error("Unit must be of type Addon");
-            }
-
-            addon._initialize(addonConfig);
-
-            addon.path = path;
-            addon.type = "addon";
-
-            addons.set(addon.id, addon);
-
-            backend.verbose(`Loaded addon "${addon.name}" (${addon.id}) v${addon.version} in ${(Number(process.hrtime.bigint() - start) / 1e6).toFixed(2)}ms.`);
-
-            if(addon.onLoad){
-                try {
-                    addon.onLoad(addon, backend);
-                } catch (error) {
-                    addon.error(`Error during onLoad:`, error);
-                }
-            }
-            return addon;
+        if(!addonConfig.id || !addonConfig.name){
+            throw new Error("Addon must have an id and name");
         }
-        return null;
+
+        // TODO: Protect & manage namespaces
+
+        if(addons.has(addonConfig.id)){
+            throw new Error(`Addon with id ${addonConfig.id} already exists`);
+        }
+
+        if(!(addonConfig.version instanceof Version)){
+            addonConfig.version = new Version(addonConfig.version || 1)
+        }
+
+        if(addonConfig.akenoVersion && !backend.version.compare(addonConfig.akenoVersion)){
+            throw new Error(`Addon ${addonConfig.id} requires Akeno version ${addonConfig.akenoVersion}, but current version is ${backend.version}`);
+        }
+
+        let _mainfile = null;
+        if(addonConfig.main) {
+            _mainfile = nodepath.normalize(path + "/" + addonConfig.main);
+
+            if(!fs.existsSync(_mainfile)){
+                throw new Error(`Addon main file ${_mainfile} does not exist.`);
+            }
+        }
+
+        // Validate security of the main file
+        if(_mainfile && !allow_unrestricted_execution){
+            // const mainFileContent = fs.readFileSync(_mainfile, "utf8");
+
+            // const hash = xxh32(mainFileContent).toString(16);
+
+            // // TODO: This needs a better solution
+            // if(![123].includes(hash)){
+            //     throw new Error(`Addon ${addonConfig.id} tried to load an unrestricted script file: "${_mainfile}" but was not allowed to for security reasons, or possible tampering was detected. If you are developing this addon or are sure that it is safe, please add an exception in the config, switch to developer mode, or if you 100% trust your environment, set "modules { allow_unrestricted_execution: true }" in the config.`);
+            // }
+        }
+
+        const start = process.hrtime.bigint();
+        const addon = _mainfile? require(_mainfile): new Addon;
+
+        if(!(addon instanceof Unit)){
+            Manager.toUnit(addon, Addon);
+        }
+
+        if(!(addon instanceof Addon)){
+            throw new Error("Unit must be of type Addon");
+        }
+
+        addon._initialize(addonConfig);
+
+        addon.path = path;
+        addon.type = "addon";
+
+        addons.set(addon.id, addon);
+
+        backend.verbose(`Loaded addon "${addon.name}" (${addon.id}) v${addon.version} in ${(Number(process.hrtime.bigint() - start) / 1e6).toFixed(2)}ms.`);
+
+        if(addon.onLoad){
+            try {
+                addon.onLoad(addon, backend);
+            } catch (error) {
+                addon.error(`Error during onLoad:`, error);
+            }
+        }
+        return addon;
     },
 
     loadModule(path) {

@@ -14,11 +14,13 @@
     - Redesigned the internal API to separate Protocols and Apps
     - Removed the native bindings module; moved to Akeno-uWS
     - Methods are now case-sensitive by default
-    - Added optimized wrappers for certain modules (uuid, semver) that were too slow
+    - Added optimized wrappers for certain Node.js modules (uuid, semver, jsonc) that reduce size, memory usage, load time, and are faster than the originals.
     - Redesigned @use module sources - addons can now register their own, and npm/module has been added for easy importing of any library on npm
     - Addons can now register custom preprocessor blocks
     - Display how much time was spent on what during load
     - On Linux, file changes are now detected via inotify instead of polling
+    - Comments are now allowed in config files (JSONC)
+    - Webserver now removes comments from application/jsonc scripts
     - Binary downloader
     - Updated CLI
 - Performance

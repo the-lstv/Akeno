@@ -30,7 +30,12 @@ moduleAlias.addAliases({
     "akeno:kvdb"         : __dirname + "/core/kvdb.js",
     "akeno:router"       : __dirname + "/core/router.js", // This is being moved to akeno:server (C++ side router)
     "akeno:server"       : TEMP_AKENO_UWS_PATH, // Note that these are *not* API compatible between legacy and Akeno-uWS
-    "atrium"             : __dirname + "/core/parser"
+    "atrium"             : __dirname + "/core/parser",
+
+    // Optimized versions of certain Node.js modules
+    "akeno:fast-modules/uuid"                : __dirname + "/etc/misc/fast-modules/uuid.js",
+    "akeno:fast-modules/strip-json-comments" : __dirname + "/etc/misc/fast-modules/strip-json-comments.js",
+    "akeno:fast-modules/semver"              : __dirname + "/etc/misc/fast-modules/semver.js",
 });
 
 // Units need to be loaded before everything else

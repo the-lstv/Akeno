@@ -21,7 +21,9 @@ let
     { parse, configTools, stringifyBlock } = require("atrium"),
     Units = require("akeno:units"),
     backend = require("akeno:backend"),
-    akeno = require("akeno:server")
+    akeno = require("akeno:server"),
+
+    stripJsonComments = require("akeno:fast-modules/strip-json-comments")
 ;
 
 // May be removed later
@@ -882,7 +884,7 @@ function initParser(header) {
 
                 if (scriptType.includes("json") || scriptType === "importmap") {
                     try {
-                        return JSON.stringify(JSON.parse(text)).replace(/</g, "\\u003c");
+                        return JSON.stringify(JSON.parse(scriptType === "application/jsonc"? stripJsonComments(text): text)).replace(/</g, "\\u003c");
                     } catch {
                         return text.replace(/</g, "\\u003c");
                     }
