@@ -16,11 +16,13 @@
   "dependencies": {
     "module-alias": "^2.3.4",
     "@node-rs/xxhash": "^1.7.6",
-    "clean-css": "^5.3.3",
-    "esbuild": "^0.27.7",
+
     "lmdb": "^3.5.6",
     "node-lmdb": "^0.10.1",
+
     "uglify-js": "^3.19.3",
+    "clean-css": "^5.3.3",
+    "esbuild": "^0.27.7",
 
     "node-addon-api": "^8.9.0",
     "pm2": "^6.0.14",

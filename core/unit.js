@@ -539,7 +539,6 @@ const Manager = {
         const configFile = fs.existsSync(path + "/addon.jsonc")? path + "/addon.jsonc": fs.existsSync(path + "/addon.json")? path + "/addon.json": null;
         if(!configFile) return null;
 
-        console.log(stripJsonComments(fs.readFileSync(configFile, "utf8")))
         const addonConfig = JSON.parse(stripJsonComments(fs.readFileSync(configFile, "utf8")));
 
         if(!addonConfig.id || !addonConfig.name){

@@ -35,7 +35,7 @@ moduleAlias.addAliases({
     // Optimized versions of certain Node.js modules
     "akeno:fast-modules/uuid"                : __dirname + "/etc/misc/fast-modules/uuid.js",
     "akeno:fast-modules/strip-json-comments" : __dirname + "/etc/misc/fast-modules/strip-json-comments.js",
-    "akeno:fast-modules/semver"              : __dirname + "/etc/misc/fast-modules/semver.js",
+    "akeno:fast-modules/semver"              : __dirname + "/etc/misc/fast-modules/semver.js"
 });
 
 // Units need to be loaded before everything else
