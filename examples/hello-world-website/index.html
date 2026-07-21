@@ -1,19 +1,20 @@
 <head>
 
-    @use (bootstrap-icons:1.11.3, /assets/style.css, google-fonts[Poppins]);
+    <!-- In the @use block, we can include js/css files and various libraries. -->
+    @use (bootstrap-icons:1.11.3, /assets/style.css);
 
     @page {
         title: "Hello world!";
         favicon: /icon.svg;
-
-        # Apply the added font
-        font: Poppins;
+        font: "sans-serif";
     }
 
 </head>
 
 <body>
-    <div #id .class>
-        <h1>Hello world! <i .bi-stars /></h1>
+    <div .welcome markdown>
+        <!-- Server side markdown. -->
+        # Hello world! <i .bi-stars />
+        This is a simple website running on __**Akeno**__!
     </div>
 </body>

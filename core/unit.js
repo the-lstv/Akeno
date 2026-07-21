@@ -6,6 +6,7 @@
     License: GPL-3.0
 
     Units are the core part of Akeno, making it modular, extensible, and easy to debug.
+    There are also some neat helpers (Version, fastUUID) that provide faster utilities as replacements.
 */
 
 // Backend reference
@@ -15,7 +16,7 @@ const spawn = require('child_process').spawn;
 const fs = require('fs');
 const nodepath = require('path');
 
-const { xxh32 } = require("@node-rs/xxhash");  // XXHash
+const crypto = require('crypto'); // For UUID generation
 
 const external = new Map;
 
@@ -30,6 +31,37 @@ let allow_unrestricted_execution = false;
 // Please make sure to use the correct Unit class for the type of object that you are creating.
 // See descriptions or docs for more information on Units.
 
+// Replace slow modules with faster and lighter alternatives.
+// A risk I'm willing to take to avoid bloat
+const NodeModule = require('module');
+const originalLoad = NodeModule._load;
+
+const fastUUID = require(__dirname + '/../etc/misc/fast-modules/uuid.js');
+const stripJsonComments = require(__dirname + '/../etc/misc/fast-modules/strip-json-comments.js');
+NodeModule._load = function (request, parent, isMain) {
+    if(request === "uuid") {
+        // Half the load time, double the speed
+        return fastUUID;
+    }
+
+    if(request === "strip-json-comments") {
+        return stripJsonComments;
+    }
+
+    const originalRequest = request;
+
+    const isSemverPatch = request.startsWith('semver');
+    if (isSemverPatch) {
+        request = __dirname + '/../etc/misc/fast-modules/semver.js';
+    }
+
+    const result = originalLoad.apply(this, [request, parent, isMain]);
+
+    if(isSemverPatch && originalRequest.includes("function")) {
+        return result[originalRequest.split("/").filter(Boolean).pop()];
+    }
+    return result;
+};
 
 
 class Version {
@@ -381,6 +413,21 @@ class Version {
 
         return i === len;
     }
+
+    // Some modules use it
+    static coerce(versionString){
+        if(typeof versionString !== 'string'){
+            return null;
+        }
+
+        for(let i = 0; i < versionString.length; i++){
+            const char = versionString.charCodeAt(i);
+            if((char >= 48 && char <= 57)) { // 0-9
+                return new Version(versionString.slice(i));
+            }
+        }
+        return null;
+    }
 }
 
 class IndexedEnum {
@@ -464,7 +511,7 @@ const Manager = {
         for (const path of paths) {
             // First try to treat the path itself as an addon, then scan for addons inside
             if(Manager.loadAddon(path) === null){
-                backend.verbose("Scanning for addons: " + path);
+                backend.verbose("Looking for addons in " + path);
 
                 const directories = fs.readdirSync(path, { withFileTypes: true })
                     .filter(dirent => dirent.isDirectory())
@@ -487,77 +534,80 @@ const Manager = {
 
     // TODO: Enhance
     loadAddon(path){
-        if(fs.existsSync(path) && fs.statSync(path).isDirectory() && fs.existsSync(path + "/addon.json")){
-            const addonConfig = JSON.parse(fs.readFileSync(path + "/addon.json", "utf8"));
+        if(!fs.existsSync(path) || !fs.statSync(path).isDirectory()) return null;
 
-            if(!addonConfig.id || !addonConfig.name){
-                throw new Error("Addon must have an id and name");
-            }
+        const configFile = fs.existsSync(path + "/addon.jsonc")? path + "/addon.jsonc": fs.existsSync(path + "/addon.json")? path + "/addon.json": null;
+        if(!configFile) return null;
 
-            // TODO: Protect & manage namespaces
+        const addonConfig = JSON.parse(stripJsonComments(fs.readFileSync(configFile, "utf8")));
 
-            if(addons.has(addonConfig.id)){
-                throw new Error(`Addon with id ${addonConfig.id} already exists`);
-            }
-
-            if(!(addonConfig.version instanceof Version)){
-                addonConfig.version = new Version(addonConfig.version || 1)
-            }
-
-            if(addonConfig.akenoVersion && !backend.version.compare(addonConfig.akenoVersion)){
-                throw new Error(`Addon ${addonConfig.id} requires Akeno version ${addonConfig.akenoVersion}, but current version is ${backend.version}`);
-            }
-
-            let _mainfile = null;
-            if(addonConfig.main) {
-                _mainfile = nodepath.normalize(path + "/" + addonConfig.main);
-
-                if(!fs.existsSync(_mainfile)){
-                    throw new Error(`Addon main file ${_mainfile} does not exist.`);
-                }
-            }
-
-            // Validate security of the main file
-            if(_mainfile && !allow_unrestricted_execution){
-                // const mainFileContent = fs.readFileSync(_mainfile, "utf8");
-
-                // const hash = xxh32(mainFileContent).toString(16);
-
-                // // TODO: This needs a better solution
-                // if(![123].includes(hash)){
-                //     throw new Error(`Addon ${addonConfig.id} tried to load an unrestricted script file: "${_mainfile}" but was not allowed to for security reasons, or possible tampering was detected. If you are developing this addon or are sure that it is safe, please add an exception in the config, switch to developer mode, or if you 100% trust your environment, set "modules { allow_unrestricted_execution: true }" in the config.`);
-                // }
-            }
-
-            const addon = _mainfile? require(_mainfile): new Addon;
-
-            if(!(addon instanceof Unit)){
-                Manager.toUnit(addon, Addon);
-            }
-
-            if(!(addon instanceof Addon)){
-                throw new Error("Unit must be of type Addon");
-            }
-
-            addon._initialize(addonConfig);
-
-            addon.path = path;
-            addon.type = "addon";
-
-            addons.set(addon.id, addon);
-
-            backend.verbose(`Loaded addon: ${addon.name} (${addon.id}) v${addon.version}`);
-
-            if(addon.onLoad){
-                try {
-                    addon.onLoad(addon, backend);
-                } catch (error) {
-                    addon.error(`Error during onLoad:`, error);
-                }
-            }
-            return addon;
+        if(!addonConfig.id || !addonConfig.name){
+            throw new Error("Addon must have an id and name");
         }
-        return null;
+
+        // TODO: Protect & manage namespaces
+
+        if(addons.has(addonConfig.id)){
+            throw new Error(`Addon with id ${addonConfig.id} already exists`);
+        }
+
+        if(!(addonConfig.version instanceof Version)){
+            addonConfig.version = new Version(addonConfig.version || 1)
+        }
+
+        if(addonConfig.akenoVersion && !backend.version.compare(addonConfig.akenoVersion)){
+            throw new Error(`Addon ${addonConfig.id} requires Akeno version ${addonConfig.akenoVersion}, but current version is ${backend.version}`);
+        }
+
+        let _mainfile = null;
+        if(addonConfig.main) {
+            _mainfile = nodepath.normalize(path + "/" + addonConfig.main);
+
+            if(!fs.existsSync(_mainfile)){
+                throw new Error(`Addon main file ${_mainfile} does not exist.`);
+            }
+        }
+
+        // Validate security of the main file
+        if(_mainfile && !allow_unrestricted_execution){
+            // const mainFileContent = fs.readFileSync(_mainfile, "utf8");
+
+            // const hash = xxh32(mainFileContent).toString(16);
+
+            // // TODO: This needs a better solution
+            // if(![123].includes(hash)){
+            //     throw new Error(`Addon ${addonConfig.id} tried to load an unrestricted script file: "${_mainfile}" but was not allowed to for security reasons, or possible tampering was detected. If you are developing this addon or are sure that it is safe, please add an exception in the config, switch to developer mode, or if you 100% trust your environment, set "modules { allow_unrestricted_execution: true }" in the config.`);
+            // }
+        }
+
+        const start = process.hrtime.bigint();
+        const addon = _mainfile? require(_mainfile): new Addon;
+
+        if(!(addon instanceof Unit)){
+            Manager.toUnit(addon, Addon);
+        }
+
+        if(!(addon instanceof Addon)){
+            throw new Error("Unit must be of type Addon");
+        }
+
+        addon._initialize(addonConfig);
+
+        addon.path = path;
+        addon.type = "addon";
+
+        addons.set(addon.id, addon);
+
+        backend.verbose(`Loaded addon "${addon.name}" (${addon.id}) v${addon.version} in ${(Number(process.hrtime.bigint() - start) / 1e6).toFixed(2)}ms.`);
+
+        if(addon.onLoad){
+            try {
+                addon.onLoad(addon, backend);
+            } catch (error) {
+                addon.error(`Error during onLoad:`, error);
+            }
+        }
+        return addon;
     },
 
     loadModule(path) {
@@ -705,8 +755,8 @@ class App extends Unit {}
 
 /**
  * @description Protocol is describing a communication protocol like HTTP, WebSocket, etc.
+    TODO: Revamp Protocol API for the new Akeno-uWS protocol API
  */
-
 class Protocol extends Unit {
     constructor(options = {}){
         super(options);
@@ -750,7 +800,6 @@ class HTTPProtocol extends Protocol {
             this._initialized = true;
             this.init();
         }
-
 
         for(const port of this.ports){
             this.server.listen(port, (listenSocket) => {
@@ -1268,4 +1317,65 @@ class EventHandler {
     }
 }
 
-module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, Server, EventHandler, backend };
+/* BitSet helper */
+class BitSet {
+    constructor(size = 32){
+        this.size = size;
+        this.bits = new Uint32Array(Math.ceil(size / 32));
+    }
+
+    set(index){
+        this.bits[index >>> 5] |= 1 << (index & 31);
+    }
+
+    clear(index){
+        this.bits[index >>> 5] &= ~(1 << (index & 31));
+    }
+
+    toggle(index){
+        this.bits[index >>> 5] ^= 1 << (index & 31);
+    }
+
+    has(index){
+        return (this.bits[index >>> 5] & (1 << (index & 31))) !== 0;
+    }
+
+    clearAll(){
+        this.bits.fill(0);
+    }
+
+    setAll(){
+        this.bits.fill(0xFFFFFFFF);
+    }
+
+    toString(){
+        let str = "";
+        for(let i = 0; i < this.size; i++){
+            str += this.has(i) ? "1" : "0";
+        }
+        return str;
+    }
+
+    toHexString(){
+        let str = "";
+        for(let i = 0; i < this.bits.length; i++){
+            str += this.bits[i].toString(16).padStart(8, "0");
+        }
+        return str;
+    }
+
+    static fromHexString(hexString){
+        const bitSet = new BitSet(hexString.length * 4);
+        for(let i = 0; i < hexString.length; i++){
+            const hexDigit = parseInt(hexString[i], 16);
+            for(let j = 0; j < 4; j++){
+                if((hexDigit & (1 << (3 - j))) !== 0){
+                    bitSet.set(i * 4 + j);
+                }
+            }
+        }
+        return bitSet;
+    }
+}
+
+module.exports = { Version, Protocol, HTTPProtocol, IndexedEnum, Manager, External, Unit, App, Module, Addon, Server, EventHandler, fastUUID, backend, BitSet };

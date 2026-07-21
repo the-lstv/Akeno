@@ -10,6 +10,8 @@
     Description: Command line interface for Akeno
 */
 
+// Units overwrite some modules
+require(__dirname + "/unit");
 
 const
     minimist = require('minimist'),
@@ -26,8 +28,8 @@ const
     fs = require("fs-extra"),
 
     // Local libraries
-    { parse, stringify, v } = require("./parser"),
-    { Client } = require("./ipc"),
+    { parse, stringify, configTools } = require(__dirname + "/parser"),
+    { Client } = require(__dirname + "/ipc"),
 
     socketPath = process.platform === "win32"? '\\\\.\\pipe\\akeno.backend.sock' : '/tmp/akeno.backend.sock'
 ;
@@ -197,6 +199,19 @@ const ROOT_COMMANDS = [
                     {
                         name: "--stringify",
                         description: "Return stringified (converted back to a readable syntax)"
+                    }
+                ]
+            },
+            {
+                name: ["validate", "validate-config"],
+                type: "command",
+                description: "Validate a config file. Defaults to the main config",
+                args: ["file"],
+                options: [
+                    {
+                        name: ["-t", "--text"],
+                        description: "Validate from text input instead of a file",
+                        args: ["text"]
                     }
                 ]
             }
@@ -376,7 +391,7 @@ if(process.argv.length < 3 || argv.h || argv.help || argv._[0] === "help" || arg
             }
         })))
     } else {
-        log(logo + box(`${generateHelp(ROOT_COMMANDS)}\x1b[93m•\x1b[0m = Supports JSON output\nLegend: \x1b[90makeno command <required> [optional] "{object}" --arguments "value"\x1b[0m`));
+        log(logo + box(`${generateHelp(ROOT_COMMANDS)}\x1b[93m•\x1b[0m = Supports JSON output\n\x1b[90mLegend: akeno command <required> [optional] "{object}" --arguments "value"\x1b[0m`));
     }
 
     process.exit()
@@ -419,8 +434,8 @@ async function resolve(argv){
                     return log(JSON.stringify(response));
                 }
 
-                log(logo + box(`You are running the Akeno backend - an open source, fast, modern and fully automated
-web application, API and content delivery management system / server!
+                log(logo + box(`You are running Akeno - an open source, fast, modern and fully automated
+webserver/web application framework!
 
 \x1b[95mCreated with <3 by \x1b[1mTheLSTV\x1b[0m\x1b[95m (https://lstv.space).\x1b[0m
 
@@ -433,7 +448,7 @@ Currently using \x1b[36m\x1b[1m${(mem_used / 1000000).toFixed(2)} MB\x1b[0m RAM 
 \x1b[36m\x1b[1m${response.modules.count}\x1b[0m module${response.modules.count > 1? "s": ""} loaded: ${response.modules.sample.join(", ")}
 ---`: ''}
 Some examples:
-    akeno\x1b[1m reload              \x1b[90m│\x1b[0m  Hot-reload the API server without downtime
+    akeno\x1b[1m reload              \x1b[90m│\x1b[0m  Hot-reload applications/addons without downtime
     akeno\x1b[1m logs                \x1b[90m│\x1b[0m  Show (and stream) logs
     akeno\x1b[1m disable <id>        \x1b[90m│\x1b[0m  Disable an application
     ...
@@ -656,7 +671,7 @@ WantedBy=multi-user.target`;
                     return log(data);
                 }
 
-                return log(box(data.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ app.ports.length > 0? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`).join("\n---\n")))
+                return log(box(data.map(app => `\x1b[93m\x1b[1m${app.basename}\x1b[0m \x1b[90m${app.path}\x1b[0m\n${app.enabled? "\x1b[32m✔ Enabled\x1b[0m": "\x1b[31m✘ Disabled\x1b[0m"}${ (app.ports && app.ports.length > 0)? `\n\n\x1b[1mPorts:\x1b[0m\n${app.ports.join("\n")}`: "" }`).join("\n---\n")))
             })
         break;
 
@@ -724,7 +739,59 @@ WantedBy=multi-user.target`;
             data = parse(input, argv.stringify? { asLookupTable: true }: { asArray: true });
 
             if(argv.stringify) data = stringify(data); else if(argv.p) data = JSON.stringify(data, null, 4); else data = JSON.stringify(data);
-            return log(data)
+            return log(data);
+
+        case "validate-config": case "validate":
+            let validateInput = argv.t || argv.text;
+
+            if(typeof validateInput !== "string"){
+                let path = argv._[1] || nodePath.resolve(__dirname, "../config");
+
+                if(!fs.existsSync(path)) return log_error(`${signature} Could not find file "${path}"`);
+                validateInput = fs.readFileSync(path, "utf8")
+            }
+
+            if(typeof validateInput !== "string") return log_error(`${signature} No input provided! Use the -t option to provide text input, or specify a file path as the first argument.`);
+
+            try {
+                data = configTools(parse(validateInput, { strict: true, onError: (err) => { throw err }, asLookupTable: true }));
+
+                // Validate the config content (todo: refactor this, this is just a temporary patched together code)
+
+                const validBlocks = new Set(["server", "system", "protocols", "ssl", "web"]);
+                data.data.keys().forEach(blockName => {
+                    if (!validBlocks.has(blockName)) {
+                        throw new Error(`Unknown block "${blockName}"`);
+                    }
+                });
+
+                if(data.getBlock("server").has("modules")) {
+                    log(`${signature} Warning: "server.modules" is temporary and should not be used, it will be replaced in the future.`);
+                }
+
+                if(data.getBlock("system").has("mode")) {
+                    const mode = data.getBlock("system").get("mode");
+                    if(mode !== "production") log(`${signature} Note: "${mode}" mode is used.`);
+                }
+
+                const protoBlock = data.has("protocols") ? data.getBlock("protocols") : null;
+                if(protoBlock) {
+                    if(protoBlock.has("h3") && protoBlock.get("h3").get("enabled", Boolean)) {
+                        log(`${signature} HTTP/3 is enabled, this is a highly experimental feature`);
+                    }
+                    
+                    if(!data.has("ssl") && (protoBlock.has("https") || protoBlock.has("h3"))) {
+                        log(`${signature} Warning: HTTPS or HTTP/3 is enabled but no SSL block found! Please add an SSL block with the necessary certificate/key, otherwise HTTPS will not work.`);
+                    }
+                } else {
+                    log(`${signature} Warning: No "protocols" block found - no servers will be setup. This is fine if you create servers programmatically, otherwise you should add a protocols block to your config.`);
+                }
+
+                return log(`${signature} Configuration is valid!`);
+            } catch (err) {
+                return log_error(`${signature} Configuration is invalid:`, err.message || err);
+            }
+            break;
 
         case "enable":
             client.request(["akeno.web/enable", argv._[1]], (error, response) => {

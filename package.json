@@ -3,7 +3,7 @@
   "id": "akeno.backend",
   "description": "Akeno Backend",
   "main": "app.js",
-  "version": "1.6.8-beta",
+  "version": "1.6.9-beta",
   "author": "TheLSTV",
   "license": "GPL-3.0-only",
   "repository": {
@@ -14,21 +14,21 @@
     "start": "node app.js"
   },
   "dependencies": {
+    "module-alias": "^2.3.4",
     "@node-rs/xxhash": "^1.7.6",
-    "bcrypt": "^6.0.0",
-    "clean-css": "^5.3.3",
-    "esbuild": "^0.27.2",
-    "fast-json-stringify": "^6.2.0",
-    "fs-extra": "^11.3.3",
-    "jsonwebtoken": "^9.0.3",
-    "lmdb": "^3.5.0",
-    "minimist": "^1.2.8",
-    "module-alias": "^2.2.3",
-    "node-addon-api": "^8.5.0",
+
+    "lmdb": "^3.5.6",
     "node-lmdb": "^0.10.1",
-    "pm2": "^6.0.14",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.56.0",
+
     "uglify-js": "^3.19.3",
-    "uuid": "^11.1.0"
-  }
+    "clean-css": "^5.3.3",
+    "esbuild": "^0.27.7",
+
+    "node-addon-api": "^8.9.0",
+    "pm2": "^6.0.14",
+    "fs-extra": "^11.3.6",
+    "minimist": "^1.2.8"
+  },
+
+  "-- The last 4 dependencies are mainly for the CLI":0
 }

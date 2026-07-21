@@ -55,24 +55,28 @@ And on top of that you get WebSocket support out of the box, with no extra setup
 
 ⚡ To ensure minimal latency, fast response times, and high throughput, Akeno is designed to be extremely optimized and lightweight.<br>
 
-In the core, it uses [uWebSockets](https://github.com/uNetworking/uWebSockets) (a low-level, incredibly optimized web server written in C++) - which is one of the fastest standard-compliant servers in the world, **~8.5x** faster than the already fast framework Fastify. <br>
+In it's core, it uses a customized fork of [uWebSockets](https://github.com/uNetworking/uWebSockets), which is a low-level, incredibly optimized web server written in C++ - one of the fastest standard-compliant servers in the world, **~8.5x** faster than the already fast framework Fastify. <br>
 
-Even with a full setup including routing, caching, dynamic content and encryption, Akeno is still multiple times faster than even the most minimal Express.js server with just a single response, out of the box, offering sub-millisecond requests.
+Even with a full setup including routing, caching, dynamic content and encryption, Akeno is still multiple times faster than even the most minimal Express.js server with just a single response, out of the box, offering sub-millisecond requests.<br>
+We went as far as rewriting many Node.JS modules to optimize for every last bit of performance.
+
+Akeno offers a fast memory cache that allows it to ship out requests basically in an instant - with it's fast router, the path from connection to response is very tight, even when routing through JavaScript (though JS callbacks are minimized for static content).<br>
 
 Akeno's powerful content preprocessor, which handles complex HTML templates and custom syntax, can prepare a full response including parsing without cache in less than a few milliseconds, then caches it.<br>
-This makes Akeno faster than most frameworks out there.<br>
-
-(For instance, the homepage of [this site](https://lstv.space) uses templates and dynamic content including automatic code compression, and only takes ~4ms to compile, with subsequent requests taking <0.5ms.)
-
-Akeno offers a fast memory cache to avoid doing work twice (in the future this will be an even lower-level direct cache) that allows it to ship out requests in an instant.<br>
 The automatic cache system also ensures that your clients always get the latest version of your content, while still utilizing caching to the fullest extent, without you having to worry about it yourself.<br>
+This makes Akeno faster than most frameworks out there and offers neat features that set it apart.<br>
 
-Other neat features include:
-- Cache management and automatic invalidation on changes
-- Code minification for HTML, CSS, and JS
+(Example: the homepage of [this site](https://lstv.space) uses templates and dynamic content including automatic code compression, only takes ~4ms to compile, with subsequent requests taking <0.5ms.)
+
+Other awesome out-of-the-box features include:
+- Code minification & compilation pipeline for HTML, CSS, SCSS, JS, JSON and more (including inline code in HTML)
+- Support for Markdown & custom syntax in HTML
+- Cache management and automatic invalidation on file changes with automatic dependency tracking
 - Automatic Brotli and Gzip compression support
-- Streaming support for realtime content or large files
-- Small overhead and shared instances per application or context, allowing you to scale to thousands of applications without any issues (hosting an extra website has very little overhead thanks to the unified router).
+- Streaming support for realtime content (SSE) or large files
+- Small overhead and shared instances per application or context, allowing you to scale to thousands of applications without any issues (hosting an extra website has very little to no overhead thanks to the unified router).
+- Very fast & low memory APIs that can scale to thousands of requests per second even on low-end hardware
+- Addon system for easy modularity and extensibility
 - Can run multithreaded (though please note that multithreading is not currently 100% implemented across the board)
 
 All of this is done automatically, and is neatly integrated using robust methods.
@@ -105,15 +109,18 @@ It also offers modules and libraries you can use to control and manage the serve
 2. Create an `app.conf` file, example:
    ```nginx
    server {
+      # Unless configured otherwise, the app will listen on the globally defined protocols (eg. http:80, https:443, h3 etc.)
+      # So all you need to do is define the domains (hostnames) that this app should respond to:
       domains: "{www,}.example.{com, net, localhost}";
    }
 
-   # ...
-
    # Example redirect;
    redirect (/path) to: "https://example.com";
+
    # Deny access to a path
    location (/private) deny;
+
+   # ...there's more of course
    ```
 3. Reload Akeno (Either with a hot reload `akeno reload`, or `akeno restart` for a full server restart)<br>
 And, done! Your app is now accessible from the domains you have entered, as long as they are pointing to your server's IP. No further configuration needed.
@@ -123,25 +130,31 @@ And, done! Your app is now accessible from the domains you have entered, as long
 - ### Quick webserver
 To quickly spin up a temporary web server anywhere, you can use the `akeno serve` command:
 ```sh
-akeno serve ./ -h "localhost"
+akeno serve . -h "localhost"
 # Or to listen on a specific port:
-akeno serve ./ -p 8080
+akeno serve . -p 8080
 ```
 
 
 - ### Custom webserver
 And of course, Akeno provides a full JS API to create your own servers.
+
+Web apps can also be accessed & controlled programatically, eg. changing specific paths to route elsewhere.
+
 ```js
+// (This is a very basic example of what's possible)
+
 const backend = require('akeno:backend');
 
-// Basic handler
-backend.domainRouter.add("{www,}.example.*", (req, res) => {
+// Basic handler; simply responds with "Hello world!" to any request to the given domain(s)
+backend.globalApp.route("{www,}.example.*", (req, res) => {
     res.end("Hello world!");
 });
 
 // File server with automatic cache, ETag, and compression support
-// TIP: FileServer can also be used manually (in any other handler, as needed) via the .serve(req, res, ?file) method, and files can be added and pre-cached with .add(), including defining custom headers etc. - the API is very flexible.
-backend.domainRouter.add("localhost", new backend.helper.FileServer({
+// TIP: FileServer can also be used manually (in any other handler, as needed) via the .serve(req, res, ?file) method, and files can be added and pre-cached with .add(), including defining custom headers etc.
+// The API is very flexible for custom use cases.
+backend.globalApp.route("localhost", new backend.helper.FileServer({
     root: "/path/to/files",
     automatic: true
 }));
@@ -169,9 +182,9 @@ Let's say that you want to make a simple page with a title, favicon and a font f
 
 </head>
 
-<body>
+<body markdown>
     <div #id .class>
-        <h1>Hello world! <i .bi-stars /></h1>
+        # Hello world! <i .bi-stars />
     </div>
 </body>
 ```
@@ -192,7 +205,14 @@ There's more:
   - Element ID can be defined with a hash: `<div #id>`.
   - Self-closing tags on any element are supported, eg. `<i .bi-stars />`.
   - There is a `<template::syntax>` reserved for future use.
+  - Server-side compiled Markdown is supported - enabled by either using the `<markdown>` tag, the `markdown` attribute, or `#markdown` directive at the top (or the `.md` file extension).
 
 <br>
 
 _The only thing left is to pair it with [LS](https://github.com/the-lstv/LS/) ;)_
+
+---
+
+<img src=https://cdn.extragon.cloud/file/a771e02dfb37f618.svg> <br>
+Akeno is made by a human, not by AI.<br>
+This is not a vibecoded project and all code is authored by me.

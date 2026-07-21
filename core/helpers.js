@@ -100,8 +100,10 @@ class ContentProcessor {
                 const result = await esbuild.transform(options.content, {
                     loader: options.ext,
                     target: options.targets || defaultTargets,
-                    format: options.format || 'iife',
-                    minify: backend.mode !== backend.modes.DEVELOPMENT
+                    format: options.format || 'iife', // We default to IIFE, sadly, because cjs is for Node only
+                    platform: 'neutral',
+                    minify: backend.mode !== backend.modes.DEVELOPMENT,
+                    sourcefile: options.filePath || undefined,
                 });
                 return { result: options.asBuffer ? Buffer.from(result.code) : result.code, success: true };
             } catch (e) {
@@ -118,7 +120,7 @@ class ContentProcessor {
      * Some build tools are async only (postcss), so we must preffer async.
      * Annoyingly, our HTML parser is currently sync only, which means we need sync processing for inline tags.
      */
-    static buildSync({ content, ext, targets = defaultTargets, asBuffer = true, filePath, app }) {
+    static buildSync({ content, ext, targets = defaultTargets, asBuffer = true, filePath, app, format }) {
         let originalBuffer = null, success = false;
         if (Buffer.isBuffer(content)) {
             originalBuffer = content;
@@ -130,6 +132,7 @@ class ContentProcessor {
         // Currently no support for hooks in sync mode
 
         if(ext === "mjs" || ext === "cjs") {
+            if (!format) format = ext === "mjs" ? "esm" : "cjs";
             ext = 'js';
         }
 
@@ -138,7 +141,7 @@ class ContentProcessor {
                 const result = esbuild.transformSync(content, {
                     loader: ext,
                     target: targets || defaultTargets,
-                    format: 'iife',
+                    format: format || 'iife', // We default to IIFE, sadly, because cjs is for Node only
                     minify: backend.mode !== backend.modes.DEVELOPMENT
                 });
                 return { result: asBuffer ? Buffer.from(result.code) : result.code, success: true };
@@ -153,6 +156,9 @@ class ContentProcessor {
 }
 
 
+/**
+ * TODO: Use the C++ cache manager
+ */
 class CacheManager extends Units.Server {
     /**
      * @param {object} options
@@ -284,7 +290,7 @@ class CacheManager extends Units.Server {
         cache[0][8] = Date.now();
 
         // If it's cached compressed already and no refresh
-        if (!needsUpdate && cache[algo]) {
+        if (!needsUpdate && cache[algo] && cache[algo].length > 0) {
             backend.helper.send(req, res, cache[algo][0], cache[algo][1], status);
             return;
         }
@@ -295,8 +301,11 @@ class CacheManager extends Units.Server {
         if(!cResult) return; // req aborted
 
         // Store if new
-        if (!cache[cResult.usedAlgo]) {
-            cache[cResult.usedAlgo] = [cResult.buffer, cResult.headers];
+        if (!cache[cResult[0]]) {
+            cache[cResult[0]] = [cResult[1], cResult[2]];
+        } else {
+            cache[cResult[0]][0] = cResult[1];
+            cache[cResult[0]][1] = cResult[2];
         }
     }
 
@@ -348,7 +357,7 @@ class CacheManager extends Units.Server {
     async refresh(key, headers = null, cacheBreaker = null, content = null, mimeType = null) {
         let entry = this.cache.get(key);
         if (!entry) {
-            entry = [[]];
+            entry = [[], [], [], []]; // Pre-allocate entries for compressed variants
             this.cache.set(key, entry);
         } else {
             // Clear out any old compressed variants
@@ -396,6 +405,23 @@ class CacheManager extends Units.Server {
         entry[0][2] = entry[0][3] = entry[0][8] = Date.now();
         return true;
     }
+    
+    replaceContent(key, newContent) {
+        const entry = this.cache.get(key);
+        if (!entry) {
+            throw new Error('Cache entry does not exist: ' + key);
+        }
+        entry[0][0] = newContent;
+        entry[0][2] = Date.now(); // Update lastChecked to force refresh
+    }
+
+    getContent(key) {
+        const entry = this.cache.get(key);
+        if (!entry) {
+            throw new Error('Cache entry does not exist: ' + key);
+        }
+        return entry[0][0];
+    }
 
     /**
      * Wire into a router as a handler.
@@ -416,7 +442,7 @@ class CacheManager extends Units.Server {
      */
     async transpile(content, ext, filePath, app) {
         if (!this.esbuildEnabled) return { result: content, success: false };
-        return await ContentProcessor.build({ content, ext, targets: (app && app.esbuildTargets) || this.esbuildTargets, asBuffer: true, filePath, app });
+        return await ContentProcessor.build({ content, ext, targets: (app && app.esbuildTargets) || this.esbuildTargets, asBuffer: true, filePath, app, format: this.esbuildFormat || undefined });
     }
 }
 
@@ -454,7 +480,7 @@ class FileServer extends CacheManager {
      * static.serve(req, res, '/path/to/file.txt');
      * @example
      * // It can also be used as a full standalone file server:
-     * backend.domainRouter.add("mycoolwebsite.com", new backend.helper.FileServer({ root: "/my_cool_website/", automatic: true }));
+     * backend.globalApp.route("mycoolwebsite.com", new backend.helper.FileServer({ root: "/my_cool_website/", automatic: true }));
      * // mycoolwebsite.com now serves files from /my_cool_website/, with caching and compression.
      */
     constructor({
@@ -491,7 +517,8 @@ class FileServer extends CacheManager {
      */
     needsUpdate(resolvedPath, fileEntry) {
         const now = Date.now();
-        const minCheckInterval = backend.mode === backend.modes.DEVELOPMENT ? 1000 : 30000;
+        // const minCheckInterval = backend.mode === backend.modes.DEVELOPMENT ? 1000 : 30000;
+        const minCheckInterval = 1000;
         if (now - fileEntry[0][2] < minCheckInterval) {
             return false;
         }
@@ -525,7 +552,7 @@ class FileServer extends CacheManager {
 
         let file = this.cache.get(resolvedPath);
         if (!file) {
-            file = [[]];
+            file = [[], [], [], []]; // Pre-allocate entries for compressed variants
             this.cache.set(resolvedPath, file);
         } else {
             // Clear out any old compressed variants
@@ -658,6 +685,7 @@ class FileServer extends CacheManager {
 module.exports = {
     ContentProcessor,
     TRANSPILE_EXTENSIONS,
+    JAVASCRIPT_EXTENSIONS,
 
     /**
      * Returns the path segments of the request.
@@ -691,14 +719,22 @@ module.exports = {
      * @returns {object} The backend helper object.
      */
     writeHeaders(req, res, headers){
-        if(headers) {
+        if(!headers) return backend.helper;
+
+        if(!req.h3) {
+            // Write headers all at once
             res.cork(() => {
-                for(let header in headers){
-                    if(!headers[header]) return;
-                    res.writeHeader(header, headers[header])
-                }
+                res.writeRaw(Object.entries(headers).map((h) => `${h[0]}: ${h[1]}\r\n`).join(''));
             });
+            return backend.helper;
         }
+
+        res.cork(() => {
+            for(let header in headers){
+                if(!headers[header]) return;
+                res.writeHeader(header, headers[header])
+            }
+        });
 
         return backend.helper;
     },
@@ -716,7 +752,7 @@ module.exports = {
         // const trusted = backend.trustedOrigins.has(req.origin);
 
         res.cork(() => {
-            res.writeHeader('X-Powered-By', 'Akeno Server/' + backend.version);
+            // res.writeHeader('X-Powered-By', 'Akeno Server/' + backend.version);
 
             if(!hasCors) {
                 if(credentials){
@@ -724,20 +760,20 @@ module.exports = {
                         throw new Error(`Can't allow credentials for ${req.origin} because it is not on the trusted list`);
                     }
 
-                    res.writeHeader("Access-Control-Allow-Credentials", "true");
                     res.writeHeader("Access-Control-Allow-Origin", req.origin);
+                    res.writeHeader("Access-Control-Allow-Credentials", "true");
                     res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
                 } else {
-                    res.writeHeader('Access-Control-Allow-Origin', '*');
+                    res.writeHeader("Access-Control-Allow-Origin", "*");
                     res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");
                 }
 
-                res.writeHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+                res.writeHeader("Access-Control-Allow-Methods", "GET,QUERY,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
             }
 
-            if(backend.protocols.h3.enabled){
-                res.writeHeader("alt-svc", `h3=":${backend.protocols.h3.ports[0]}"; ma=86400`);
-            }
+            // if(backend.protocols.h3.enabled){
+            //     res.writeHeader("alt-svc", `h3=":${backend.protocols.h3.ports[0]}"; ma=86400`);
+            // }
         });
 
         return backend.helper;
@@ -752,6 +788,8 @@ module.exports = {
      * @param {*} data - The data to send.
      * @param {object} [headers={}] - Optional headers.
      * @param {string} [status] - Optional HTTP status.
+     * 
+     * @deprecated
      */
     send(req, res, data, headers = {}, status){
         if(req.abort) return;
@@ -773,36 +811,32 @@ module.exports = {
         });
     },
 
-    errorPageBuffers: [
-        Buffer.from(`<!DOCTYPE html><html><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:2rem;box-sizing:border-box;background:#fff4f7;color:#90435b;--dark-color:#be7b90;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}h2{margin:0 0 2rem;font-size:64px;font-weight:600;background:#ffdbe6;padding:8px 30px;border-radius:100px;font-family:monospace}@media(prefers-color-scheme: dark){body{background:#1b1617;color:#ddb6c2;--dark-color:#726468}h2{background:#292122}}p{margin:0;color:var(--dark-color)}hr{border:none;height:1px;background:currentColor;opacity:.2;width:100%;max-width:300px;margin:2rem 0 1rem}footer{font-size:.9rem;color:var(--dark-color)}a{color:inherit}</style>`),
-        Buffer.from(`<hr><footer>Powered by <a href="https://github.com/the-lstv/akeno" target="_blank">Akeno/${backend.version}</a></footer></html>`),
-    ],
-
-    setDefaultErrorPage(html){
-        const chunks = html.split("{{message}}");
-        this.errorPageBuffers = [
-            Buffer.from(chunks[0]),
-            Buffer.from(chunks[1])
-        ];
+    /**
+     * Change the default error page. The provided string should include a "{{message}}" placeholder, which will be replaced with the error message when sending an error page.
+     * @param {*} html String containing the template
+     * @param {*} app Required if using Akeno UWS, though just use app.setDefaultErrorPage
+     * @returns {void}
+     * @deprecated Use app.setDefaultErrorPage
+     */
+    setDefaultErrorPage(html, app){
+        if(!app) {
+            console.warn("setDefaultErrorPage called without an app instance. Prefer doing app.setDefaultErrorPage");
+        } else {
+            app.setDefaultErrorPage(html);
+        }
     },
 
+    /**
+     * Send an error page
+     * @param {*} req HTTP request
+     * @param {*} res HTTP response
+     * @param {*} status HTTP status code
+     * @param {*} message Error message to display
+     * @param {*} title Optional title for the error page
+     * @deprecated Use res.sendErrorPage(status, message) instead
+     */
     sendErrorPage(req, res, status, message, title = null){
-        if(req.abort) return;
-
-        if(typeof status !== "string") {
-            status = String(status || "500 Internal Server Error");
-        }
-
-        res.cork(() => {
-            const messageData = `<h2>${title || status || "Error"}</h2><p>${message || (status === "404"? "The requested page could not be found on this server." : "Internal Server Error")}</p>`;
-            const cl = this.errorPageBuffers[0].length + this.errorPageBuffers[1].length + messageData.length;
-
-            res.writeStatus(status).writeHeader('Content-Length', String(cl)).writeHeader('Content-Type', 'text/html');
-
-            res.write(this.errorPageBuffers[0]);
-            res.write(messageData);
-            res.end(this.errorPageBuffers[1]);
-        });
+        res.sendErrorPage(status, message);
     },
 
     getUsedCompression(acceptEncoding, mimeType){
@@ -841,7 +875,9 @@ module.exports = {
      * @param {string} [status] - Optional HTTP status.
      * @param {string} [compressionAlgorithm] - Optional compression algorithm.
      * @throws {Error} If buffer is not a Buffer instance.
-     * @returns {Array} A tuple containing a cache key and the result buffer.
+     * @returns {Array} An array containing the used algorithm, the result buffer, and headers.
+     * 
+     * @deprecated This can now be done from C++ with better caching
      */
     sendCompressed(req, res, buffer, mimeType, headers = {}, status, compressionAlgorithm){
         if(req.abort) return;
@@ -890,54 +926,6 @@ module.exports = {
         return [algorithm, buffer, headers];
     },
 
-
-    /**
-     * Send a templated response.
-     * @param {object} req - The request object.
-     * @param {object} res - The response object.
-     * @param {Array} template - The template.
-     * @experimental
-     */
-    sendTemplate(req, res, template, data){
-        _isJSON = false; // Reserved for later
-
-        // const result = [];
-
-        res.cork(() => {
-            if(template && template.length > 0) {
-                for(const part of template) {
-                    if(part === null || part === undefined) continue;
-
-                    if(typeof part === "string") {
-                        if(!data || !data.hasOwnProperty(part)) {
-                            if(_isJSON) {
-                                res.write(nullStringBuffer);
-                                // result.push(nullStringBuffer);
-                            }
-                            continue;
-                        }
-
-                        let value = data[part];
-
-                        if(!(value instanceof Buffer) && typeof value !== "string") {
-                            value = _isJSON? JSON.stringify(value): String(value);
-                        }
-
-                        res.write(value);
-                        // result.push(Buffer.from(value));
-                    } else if(part instanceof Buffer) {
-                        res.write(part);
-                        // result.push(part);
-                    }
-                }
-            }
-
-            res.end();
-            // res.end(result.length === 0? nullStringBuffer : Buffer.concat(result));
-        });
-    },
-
-
     /**
      * Returns the next path segment from the request.
      * @param {object} req - The request object.
@@ -955,34 +943,38 @@ module.exports = {
 
 
     /**
-     * Sends an error response.
+     * Sends a JSON error response.
      * @param {object} req - The request object.
      * @param {object} res - The response object.
      * @param {string|number} error - The error message or code.
      * @param {number} [code] - Optional error code.
      * @param {string} [status] - Optional HTTP status.
+     * @deprecated You should use res.sendJSONError(error, code, status) instead
      */
-    error(req, res, error, code, status){
-        if(req.abort) return;
-        
-        if(!code && code !== 0 && typeof error === "number" && backend.Errors[error]) {
+    error(req, res, error, code, status) {
+        // Legacy support (if you can just use res.sendJSONError directly)
+
+        if(!code && code !== 0 && typeof error === "number" && LEGACY_ERRORS[error]) {
             code = error;
-            error = backend.Errors[code];
+            error = LEGACY_ERRORS[code];
         }
 
-        res.cork(() => {
-            res.writeStatus(status || (code >= 400 && code <= 599 ? String(code) : '400'));
+        if(typeof error !== "string") {
+            error = "Unknown error";
+            code = code || -1;
+        }
 
-            backend.helper.corsHeaders(req, res);
-
-            res.writeHeader("content-type", "application/json").end(`{"success":false,"code":${code || -1},"error":${(JSON.stringify(error) || '"Unknown error"')}}`);
-        });
+        // Faster method for sending JSON errors, avoids some JS work. Small benefit but no reason not to do it.
+        res.sendJSONError(error, code, status);
     },
 
 
     /**
      * Streams data from a readable stream to the response.
      * Handles backpressure and client aborts.
+     * 
+     * NOTE: For streaming files, always prefer res.streamFile(fd | path), as it is handled entirely within C++.
+     * 
      * @param {object} req - The request object.
      * @param {object} res - The response object.
      * @param {ReadableStream} stream - The stream to pipe.
@@ -1035,6 +1027,10 @@ module.exports = {
     CacheManager,
     FileServer,
 
+    readBody(req, res, callback, options = {}) {
+        // TBA
+    },
+
     /**
      * Parses the request body, optionally as a stream.
      * @class
@@ -1047,10 +1043,8 @@ module.exports = {
             this.type = req.contentType;
             this.length = req.contentLength || 0;
 
-            // Old behavior
-            if(options === true) {
-                options = { stream: true };
-            }
+            // Legacy behavior
+            if(options === true) options = { stream: true };
 
             this.options = options;
 
@@ -1065,16 +1059,18 @@ module.exports = {
             }
 
             if (!options.stream) {
-                let chunks = [];
                 let totalLength = 0;
                 let aborted = false;
 
+                const body = new Uint8Array(this.length);
+
+                // TODO: Update to the new uWS body stream methods
+                // Receives ArrayBuffers
                 res.onData((chunk, isLast) => {
                     if (aborted) return;
 
-                    const buffer = Buffer.from(chunk.slice(chunk.byteOffset || 0, (chunk.byteOffset || 0) + chunk.byteLength));
-                    chunks.push(buffer);
-                    totalLength += buffer.length || 0;
+                    body.set(new Uint8Array(chunk), totalLength);
+                    totalLength += chunk.byteLength;
 
                     if(totalLength > (options.maxSize || backend.constants.MAX_BODY_SIZE)) {
                         // Handle max body size exceeded
@@ -1085,14 +1081,12 @@ module.exports = {
                             // Forcefully close the connection to stop uploading (better, but user won't get an error message)
                             this.res.close();
                         }
-                        chunks = null;
                         aborted = true;
                         return;
                     }
 
                     if (isLast) {
-                        req.fullBody = Buffer.concat(chunks, totalLength);
-                        chunks = null;
+                        req.fullBody = Buffer.from(body.buffer, body.byteOffset, totalLength);
                         callback(this);
                     }
                 });
@@ -1166,11 +1160,11 @@ module.exports = {
         }
 
         static hasBody(req){
-            return req.contentLength > 0 || req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || (req.hasBody && req.transferProtocol === "qblaze")
+            return req.contentLength > 0 || req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || (req.hasBody && req.transferProtocol === "qblaze");
         }
 
         get data(){
-            return this.req.fullBody
+            return this.req.fullBody;
         }
 
         get string(){
@@ -1192,6 +1186,7 @@ module.exports = {
 
     /**
      * Basic rate limiter.
+     * TODO: Should be C++ side
      */
     RateLimiter: class {
         constructor(limit, interval = 60000) {
@@ -1200,79 +1195,45 @@ module.exports = {
             this.requests = new Map();
         }
 
-        /**
-         * Checks if the request exceeds the rate limit.
-         * @param {object} req - The request object.
-         * @param {object} res - The response object.
-         * @returns {boolean} True if the request is allowed, false if it exceeds the rate limit.
-         */
         check(req, res) {
             const now = Date.now();
             const key = backend.helper.getRequestIP(res) || req.getHeader("x-forwarded-for") || "anonymous";
 
-            if (!this.requests.has(key)) {
-                this.requests.set(key, []);
+            const entry = this.requests.get(key);
+
+            if (!entry) {
+                this.requests.set(key, { count: 1, reset: now + this.interval });
+                return true;
             }
 
-            const timestamps = this.requests.get(key);
-            timestamps.push(now);
-
-            // Remove timestamps older than the interval
-            while (timestamps.length > 0 && timestamps[0] < now - this.interval) {
-                timestamps.shift();
+            if (now > entry.reset) {
+                entry.count = 1;
+                entry.reset = now + this.interval;
+                return true;
             }
 
-            if (timestamps.length > this.limit) {               
+            if (++entry.count > this.limit) {
                 return false;
             }
 
             return true;
         }
 
-        /**
-         * Checks if the request exceeds the rate limit.
-         * If it does, sends a 429 response.
-         * @param {object} req - The request object.
-         * @param {object} res - The response object.
-         * @returns {boolean} True if the request is allowed, false if it exceeds the rate limit.
-         * 
-         * @example
-         * // Usage in a route handler:
-         * if (!rateLimiter.pass(req, res)) {
-         *     return;
-         * }
-         */
         pass(req, res) {
-            if (this.check(req, res)) {
-                return true;
-            }
+            if (this.check(req, res)) return true;
 
             res.cork(() => {
-                res.writeStatus("429").end('Rate limit exceeded');
+                res.writeStatus("429").end("Rate limit exceeded");
             });
             return false;
         }
 
-        /**
-         * Resets the request count for a specific key or all keys.
-         * @param {string} [key] - The key to reset. If not provided, resets all keys.
-         */
         reset(key) {
-            if(!key) {
+            if (!key) {
                 this.requests.clear();
                 return;
             }
-
             this.requests.delete(key);
-        }
-
-        /**
-         * Returns the number of requests made by a specific key.
-         * @param {string} key - The key to check.
-         * @returns {number} The number of requests made by the key.
-         */
-        getRequestCount(key) {
-            return this.requests.has(key) ? this.requests.get(key).length : 0;
         }
     },
 
@@ -1439,4 +1400,77 @@ module.exports = {
             this._message?.(ws, data, isBinary);
         }
     }
+}
+
+/**
+ * @deprecated
+ */
+const LEGACY_ERRORS = {
+    0: "Unknown API version",
+    1: "Invalid API endpoint",
+    2: "Missing parameters in request body/query string.",
+    3: "Internal Server Error.",
+    4: "Access denied.",
+    5: "You do not have access to this endpoint.",
+    6: "User not found.",
+    7: "Username already taken.",
+    8: "Email address is already registered.",
+    9: null,
+    10: "Incorrect verification code.",
+    11: "Invalid password.",
+    12: "Authentication failed.",
+    13: "Your login session is missing or expired.",
+    14: "This account is suspended.",
+    15: "Forbidden action.",
+    16: "Entity not found.",
+    17: "Request timed out.",
+    18: "Too many requests. Try again in a few seconds.", // FIXME: Use 429
+    19: "Service temporarily unavailable.",
+    20: "Service/Feature not enabled. It might first require setup from your panel, is not available (or is paid and you don't have access).",
+    21: "Unsupported media type.",
+    22: "Deprecated endpoint. Consult documentation for a replacement.",
+    23: "Not implemented.",
+    24: "Conflict.",
+    25: "Data already exist.",
+    26: "Deprecated endpoint. Consult documentation for a replacement.",
+    27: "This endpoint has been removed from this version of the API. Please migrate your code to the latest API version to keep using it.",
+    28: "Access blocked for the suspicion of fraudulent/illegal activity. Contact our support team to get this resolved.",
+    29: "This endpoint requires an additional parametter (cannot be called directly)",
+    30: "Invalid method.", // FIXME: Use 405
+    31: "Underlying host could not be resolved.",
+    32: null,
+    33: "Temporarily down due to high demand. Please try again in a few moments.",
+    34: null,
+    35: "Unsecured access is not allowed on this endpoint. Please use HTTPS instead.",
+    36: null,
+    37: null,
+    38: null,
+    39: null,
+    40: "This is a WebSocket-only endpoint. Use the ws:// or wss:// protocol instead of http.",
+    41: "Wrong protocol.",
+    42: "Internal error: Configured backend type doesn't have a driver for it. Please contact support.",
+    43: "File not found.",
+    44: "The request contains wrong data",
+    45: "Wrong data type",
+    46: "Invalid email address.",
+    47: "Username must be within 2 to 200 characters in range and only contain bare letters, numbers, and _, -, .",
+    48: "Weak password.",
+    49: "Sent data exceed maximum allowed size.",
+
+    // HTTP-compatible error codes, this does not mean this list is for HTTP status codes.
+    404: "Not found.",
+    500: "Internal server error.",
+    503: "Service unavailable.",
+    504: "Gateway timeout.",
+    429: "Too many requests.",
+    403: "Forbidden.",
+    401: "Unauthorized.",
+    400: "Bad request.",
+    408: "Request timeout.",
+    409: "Conflict.",
+    415: "Unsupported media type.",
+    501: "Not implemented.",
+    406: "Not acceptable.",
+    405: "Method not allowed.",
+    502: "Bad gateway.",
 }

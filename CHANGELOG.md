@@ -1,18 +1,46 @@
 ## TO-DO
-- Add a fast C++ side content cache replacing the current temporary one
-- Implement a proper database system
-- Complete package manager for addons/modules
+- Package manager for addons/modules
 - Rework many parts, including the CLI, dynamic content, and the router
 - Write a proper documentation (https://lstv.space/docs/akeno is work in progress now)
 - Add a proper installation script (soon)
-- Stop relying on napi and use v8 directly
 - Allow modules to extend the CLI help menu
+- Re-implement H3 and WS protocols
+- Fix jsObject router type
+- Streamline build setup
+- Web management dashboard
 
-## New in 1.6.9-beta
-- Shifting to an experimental fork of uWebSockets.js
+## New in 1.6.9-beta (major changes, kept as a "buffer" before next major release)
+- Features
+    - Redesigned the internal API to separate Protocols and Apps
+    - Removed the native bindings module; moved to Akeno-uWS
+    - Methods are now case-sensitive by default
+    - Added optimized wrappers for certain Node.js modules (uuid, semver, jsonc) that reduce size, memory usage, load time, and are faster than the originals.
+    - Redesigned @use module sources - addons can now register their own, and npm/module has been added for easy importing of any library on npm
+    - Addons can now register custom preprocessor blocks
+    - Display how much time was spent on what during load
+    - On Linux, file changes are now detected via inotify instead of polling
+    - Comments are now allowed in config files (JSONC)
+    - Webserver now removes comments from application/jsonc scripts
+    - Binary downloader
+    - Updated CLI
+- Performance
+    - Shifted a lot of hot-path code to C++
+    - Now properly utilizing SNI and native routing; up to this point we were routing twice due to the limited API
+    - Optimized request path for WebApps and using faster storage (JS Map -> ankerl::unordered_dense). Most hits should now be entirely resolved in C++ without JS callbacks
+    - Removed irrelevant JWT & bcrypt helpers and cleaned up the overall codebase and dependencies
+    - Overall better performance, + updates from uWS
+- Bug Fixes
+    - Fixed broken compression cache (compression was always being re-computed before due to a typo)
+    - Fixed Markdown parsing bugs
+    - Improved file list linking for cache busting
+    - Now properly utilizing ETags
+    - Removed some old files that weren't needed
+
+Note that this release no longer provides Windows binaries.
+They may be added again in the future, but as of now you must build your own.
 
 ## New in 1.6.8-beta
-- A proper build pipeline and server events
+- A "proper" build pipeline and server events
 - Added a neat WebSocket authentication helper
 - Added more options to the WebSocket interface
 - WebSockets can now be easily enabled or disabled
@@ -62,7 +90,7 @@
 - Apps can now register hostnames more easily via a uniform API, with group and wildcard support (eg. `*.example.{com,net}`)
 
 ## New in 1.6.0-beta
-- Major changes all around (basically getting ready for a 2.0.0 release)
+- Major changes all around
 - A brand new versioning utility, for consistent versioning and matching for all modules, addons, etc.
 - Added pre-release and build metadata to versioning
 - Complete core redesign around a new modular Unit system

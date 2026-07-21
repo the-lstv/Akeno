@@ -903,11 +903,11 @@ const benchmark = new BenchmarkWrapper((collector) => {
     // collector.runBenchmarks(LS_EventEmitter, 'LS:EventEmitter (deopt)'); // Always uses loops instead of compiled functions to see the loop path performance
     // collector.runBenchmarks(OldLS_EventEmitter, 'LS:EventEmitter (old)');       // Old version for reference, which was only made to compete with DOM events.. so not a very high bar :P
 
-    collector.runBenchmarks(Tseep, 'Tseep');                        // Tseep is still the king here and is very consistent (though EventHandler2.quickEmit(ref) is beats it slightly thanks to avoiding Map lookup)
-    // collector.runBenchmarks(TseepSafe, 'TseepSafe');                // Loop-based variant of Tseep, EventHandler2's loop variant beats it about 2x :D
+    collector.runBenchmarks(Tseep, 'Tseep');                        // Tseep is still the king here and is very consistent (though LS:EventEmitter.quickEmit(ref) is beats it slightly thanks to avoiding Map lookup)
+    // collector.runBenchmarks(TseepSafe, 'TseepSafe');                // Loop-based variant of Tseep, LS:EventEmitter's loop variant beats it about 2x :D
 
     // collector.runBenchmarks(EventEmitter, 'EventEmitter1');         // Node.js built-in, today seems to actually be faster than both EE2 and EE3, so you may acually prefer EE1 over those.
-    // collector.runBenchmarks(EventEmitter2, 'EventEmitter2');        // All EE1, EE2 and EE3 perform very similarly and are beaten by EventHandler2 & Tseep in every test case, even the loop variants, likely due to their internal structure
+    // collector.runBenchmarks(EventEmitter2, 'EventEmitter2');        // All EE1, EE2 and EE3 perform very similarly and are beaten by LS:EventEmitter & Tseep in every test case, even the loop variants, likely due to their internal structure
     // collector.runBenchmarks(EventEmitter3, 'EventEmitter3');
 
     // // The following libraries seem to no longer be maintained and have issues, so the benchmarks are more for education rather than practical use.
