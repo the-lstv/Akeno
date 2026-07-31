@@ -99,6 +99,19 @@ class Version {
         };
     }
 
+    /**
+     * Sets the version components.
+     * 
+     * "major" can instead be a semver string (or array/object/other version instance), which will be correctly parsed into major, minor, patch, release, and build components using the following syntax:
+     * major.minor.patch-release+build
+     * 
+     * @param {number|string|array<number|string>|object} major Major version number, or a string, array or object containing version information
+     * @param {number} minor Minor version number
+     * @param {number} patch Patch version number
+     * @param {string} release Pre-release version string
+     * @param {string} build Build metadata string
+     * @returns {Version} The updated Version instance
+     */
     set(major = 0, minor = 0, patch = 0, release = null, build = null){
         if(Array.isArray(major)){
             this.major = major[0];
@@ -113,28 +126,45 @@ class Version {
             this.release = major.release || null;
             this.build = major.build || null;
         } else if(typeof major === 'string'){
-            const versionParts = major.split('.');
-            const mainVersion = versionParts[0] || "0";
-            const minorVersion = versionParts[1] || "0";
-            let patchVersion = versionParts[2] || "0";
-            let release = null;
-            let build = null;
-
-            // Handle pre-release and build metadata
-            if (patchVersion && typeof patchVersion === "string") {
-                const patchMatch = patchVersion.match(/^(\d+|[x*]+)?(?:-([0-9A-Za-z-.]+))?(?:\+([0-9A-Za-z-.]+))?$/);
-                if (patchMatch) {
-                    patchVersion = patchMatch[1] || patchVersion;
-                    release = patchMatch[2] || null;
-                    build = patchMatch[3] || null;
-                }
+            const firstIndex = major.indexOf(".");
+            if(firstIndex === -1){
+                this.major = major;
+                this.minor = 0;
+                this.patch = 0;
+                this.release = null;
+                this.build = null;
+                return this;
             }
 
-            this.major = mainVersion;
-            this.minor = minorVersion;
-            this.patch = patchVersion;
-            this.release = release;
-            this.build = build;
+            const secondIndex = major.indexOf(".", firstIndex + 1);
+            if(secondIndex === -1){
+                this.major = major.substring(0, firstIndex);
+                this.minor = major.substring(firstIndex + 1);
+                this.patch = 0;
+                this.release = null;
+                this.build = null;
+                return this;
+            }
+
+            this.major = major.substring(0, firstIndex) || "0";
+            this.minor = major.substring(firstIndex + 1, secondIndex) || "0";
+
+            this.release = null;
+            this.build = null;
+
+            // Handle pre-release and build metadata
+            const preReleaseIndex = major.indexOf("-", secondIndex + 1);
+            const buildIndex = major.indexOf("+", preReleaseIndex !== -1? preReleaseIndex + 1: secondIndex + 1);
+
+            if (preReleaseIndex !== -1) {
+                this.release = major.substring(preReleaseIndex + 1, buildIndex !== -1 ? buildIndex : undefined);
+            }
+
+            if (buildIndex !== -1) {
+                this.build = major.substring(buildIndex + 1);
+            }
+
+            this.patch = major.substring(secondIndex + 1, buildIndex !== -1 ? buildIndex : preReleaseIndex !== -1 ? preReleaseIndex : undefined) || "0";
         } else {
             this.major = major;
             this.minor = minor;

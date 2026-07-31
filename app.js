@@ -42,7 +42,7 @@ moduleAlias.addAliases({
 const Units = require("akeno:units");
 
 // Global variables
-let version = new Units.Version("1.6.9-beta");
+let version = new Units.Version("1.6.9-beta.1");
 
 // Tempoary
 let globalApp;
@@ -118,7 +118,9 @@ const db = {}
  * @deprecated
  */
 function resolveHandler(req, res, wsContext, handler = null) {
-    res.onAborted(() => { });
+    // ! This is a deprecated handler, most requests should be handled directly by the Akeno-uWS resolver
+
+    res.onAborted(() => { }); // TODO
 
     const isWs = wsContext !== null && typeof wsContext !== "undefined";
 
@@ -191,12 +193,14 @@ function resolveHandler(req, res, wsContext, handler = null) {
             return;
         }
 
-        if(handler instanceof Units.App){
-            backend.webServerHandler(req, res, handler);
-            return;
-        }
+        // This is unsupported since 1.6.9
+        // if(handler instanceof Units.App) {
+        //     backend.webServerHandler(req, res, handler);
+        //     return;
+        // }
     }
 
+    console.error("Invalid request handler for path:", req.path, "Handler:", handler);
     res.writeStatus("400 Bad Request").end("400 Bad Request");
 }
 

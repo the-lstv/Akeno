@@ -9,7 +9,7 @@
 - Streamline build setup
 - Web management dashboard
 
-## New in 1.6.9-beta (major changes, kept as a "buffer" before next major release)
+## New in 1.6.9-beta.1 (major changes, kept as a "buffer" before next major release)
 - Features
     - Redesigned the internal API to separate Protocols and Apps
     - Removed the native bindings module; moved to Akeno-uWS
