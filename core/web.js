@@ -273,9 +273,14 @@ class WebApp extends Units.App {
         }
 
         if (this.config.data.has("esbuild")) {
+            const enabled = this.config.getBlock("esbuild").get("enabled", Boolean, true);
             const targets = this.config.getBlock("esbuild").get("targets", Array, []);
             this.esbuildTargets = targets.length > 0 && targets;
-        } else delete this.esbuildTargets;
+            this.esbuildEnabled = enabled;
+        } else {
+            delete this.esbuildTargets;
+            delete this.esbuildEnabled;
+        }
 
         // TODO: This could be set by a generic module settings block
         if (this.config.data.has("ls")) {
@@ -837,7 +842,7 @@ globalApp.registerFileProcessor(async (id, url, path, mimeType) => {
             (ext === 'js' || ext === 'css') ? 'utf8' : null
         )
 
-        if(backend.helper.TRANSPILE_EXTENSIONS.has(ext)) {
+        if(backend.helper.TRANSPILE_EXTENSIONS.has(ext) && (app && app.esbuildEnabled)) {
             // Calls any build hooks, addons & tranpiles with esbuild
             // TODO: Let apps disable or config esbuild again
             const result = await backend.helper.ContentProcessor.build({ content: buffer, ext, targets: (app && app.esbuildTargets) || backend.esbuildTargets, asBuffer: true, filePath: path, app });
@@ -1271,8 +1276,10 @@ function initParser(header) {
             context.write(`<link rel=preconnect href="https://fonts.googleapis.com"><link rel=preconnect href="https://fonts.gstatic.com" crossorigin>`);
             context.data.flags.set(PARSER_FLAGS.GOOGLE_FONTS_PRECONNECT);
         }
+
+        const LINK = `https://fonts.googleapis.com/css2?${components.map(font => "family=" + font.replaceAll(" ", "+")).join("&")}&display=swap`;
     
-        if (components.length > 0) context.write(`<link rel=stylesheet href="https://fonts.googleapis.com/css2?${components.map(font => "family=" + font.replaceAll(" ", "+")).join("&")}&display=swap">`);
+        if (components.length > 0) context.write(`<link rel="preload" as="style" onload="this.onload=null;this.rel='stylesheet'" href="${LINK}"><noscript><link rel="stylesheet" href="${LINK}"></noscript>`);
     });
 
     /**
