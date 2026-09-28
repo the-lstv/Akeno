@@ -762,7 +762,7 @@ module.exports = {
 
                     res.writeHeader("Access-Control-Allow-Origin", req.origin);
                     res.writeHeader("Access-Control-Allow-Credentials", "true");
-                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier");
+                    res.writeHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Credentials,Data-Auth-Identifier,Cache-Control");
                 } else {
                     res.writeHeader("Access-Control-Allow-Origin", "*");
                     res.writeHeader("Access-Control-Allow-Headers", "Authorization,*");

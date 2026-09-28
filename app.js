@@ -87,7 +87,8 @@ if(!server.isAkeno) {
 }
 
 if(!version.compare(server.akenoCompatibility)) {
-    throw new Error(`Incompatible Akeno-uWS build, expected ${server.akenoCompatibility}, but is running ${version}.`);
+    console.warn(`[system] Incompatible Akeno-uWS build, expected ${server.akenoCompatibility}, but is running ${version}!`);
+    // This should eventually throw and exit
 }
 
 console.warn(`[system] Using experimental Akeno-uWS build`);
@@ -102,9 +103,9 @@ globalApp.onObject((req, res, object) => {
 
 // Misc global constants
 const PATH = __dirname + "/";
-const EMPTY_OBJECT = Object.freeze({});
-const EMPTY_ARRAY = Object.freeze([]);
-const EMPTY_BUFFER = Buffer.alloc(0);
+const EMPTY_OBJECT  = Object.freeze({});
+const EMPTY_ARRAY   = Object.freeze([]);
+const EMPTY_BUFFER  = Buffer.alloc(0);
 const SINCE_STARTUP = process.hrtime.bigint();
 
 const IS_NODE_INSPECTOR_ENABLED = process.execArgv.indexOf("--inspect") !== -1;
@@ -844,5 +845,5 @@ if(true) {
         dbTime > 1 ? `${dbTime.toFixed(2)}ms db` : null,
     ].filter(Boolean).join(', ');
 
-    backend.log(`Started \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${totalTime.toFixed(2)}ms\x1b[0m${breakdown ? ` (${breakdown})` : ''}.`);
+    backend.log(`Started \x1b[35mAkeno v${version}\x1b[0m in \x1b[36m${backend.modes.get(backend.mode).toLowerCase()}\x1b[0m mode. Startup took \x1b[36m${totalTime.toFixed(2)}ms\x1b[0m${breakdown ? ` (${breakdown})` : ''}. Node.JS version: ${process.version}.`);
 }
